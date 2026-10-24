@@ -12,6 +12,7 @@ members = [
     "crates/gazabridge-connector-sqlite",
     "crates/gazabridge-connector-postgres",
     "crates/gazabridge-application",
+    "crates/gazabridge-connector-mysql",
     "apps/desktop/src-tauri",
     "apps/desktop/ui",
 ]
@@ -38,6 +39,7 @@ gazabridge-ipc = { path = "crates/gazabridge-ipc" }
 gazabridge-connector-sqlite = { path = "crates/gazabridge-connector-sqlite" }
 gazabridge-connector-postgres = { path = "crates/gazabridge-connector-postgres" }
 gazabridge-application = { path = "crates/gazabridge-application" }
+gazabridge-connector-mysql = { path = "crates/gazabridge-connector-mysql" }
 
 # External crates
 async-trait = "0.1.89"
