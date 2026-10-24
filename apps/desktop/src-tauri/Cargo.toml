@@ -1,0 +1,38 @@
+[package]
+name = "gazabridge-desktop"
+description = "GazaBridge desktop application (Tauri backend)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+default-run = "gazabridge-desktop"
+
+[lib]
+name = "gazabridge_desktop"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+gazabridge-connector-sqlite.workspace = true
+gazabridge-connectors.workspace = true
+gazabridge-domain.workspace = true
+gazabridge-ipc.workspace = true
+gazabridge-observability.workspace = true
+gazabridge-plugin-sdk.workspace = true
+gazabridge-secrets.workspace = true
+gazabridge-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2.9", features = [] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

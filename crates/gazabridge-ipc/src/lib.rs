@@ -1,0 +1,170 @@
+//! Data exchanged between the desktop backend (Tauri commands) and the UI.
+//!
+//! Everything here is plain data with no secrets: the backend redacts
+//! connection targets before they cross the IPC boundary.
+
+use serde::{Deserialize, Serialize};
+
+/// Names of the Tauri commands, shared so both sides agree.
+pub mod commands {
+    pub const APP_INFO: &str = "app_info";
+    pub const GET_PREFERENCES: &str = "get_preferences";
+    pub const SET_PREFERENCES: &str = "set_preferences";
+    pub const LIST_CONNECTIONS: &str = "list_connections";
+    pub const LIST_PROFILES: &str = "list_profiles";
+    pub const QUERY_LOGS: &str = "query_logs";
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppInfo {
+    pub name: String,
+    pub version: String,
+    pub connector_api: String,
+    pub metadata_schema_version: i64,
+    pub data_directory: String,
+    pub log_directory: String,
+    pub telemetry_enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Locale {
+    #[default]
+    En,
+    Ar,
+}
+
+impl Locale {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::En => "en",
+            Self::Ar => "ar",
+        }
+    }
+
+    pub fn is_rtl(&self) -> bool {
+        matches!(self, Self::Ar)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Preferences {
+    pub theme: Theme,
+    pub locale: Locale,
+    pub high_contrast: bool,
+    /// Default row limit for data views; queries are never unbounded.
+    pub default_row_limit: u32,
+    pub sidebar_collapsed: bool,
+    pub onboarding_done: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            theme: Theme::System,
+            locale: Locale::En,
+            high_contrast: false,
+            default_row_limit: 200,
+            sidebar_collapsed: false,
+            onboarding_done: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionSummary {
+    pub id: String,
+    pub name: String,
+    pub family: String,
+    pub profile_id: String,
+    pub profile_name: String,
+    /// Redacted target, e.g. `postgres://db.example:5432/app`.
+    pub target: String,
+    pub read_only: bool,
+    pub favorite: bool,
+    pub tags: Vec<String>,
+    pub color: Option<String>,
+    /// Last known state label, if a health check has run.
+    pub state: Option<String>,
+    pub latency_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileSummary {
+    pub id: String,
+    pub family: String,
+    pub family_name: String,
+    pub display_name: String,
+    pub status: String,
+    pub tested_versions: Vec<String>,
+    pub known_limitations: Vec<String>,
+    pub unsupported_operations: Vec<String>,
+    pub auth_methods: Vec<String>,
+    pub documentation_url: String,
+    /// Whether a connector for this family is available in this build.
+    pub connector_available: bool,
+    pub cdc_available: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogFilter {
+    /// `error`, `warn`, `info`, `debug` or `trace`.
+    pub max_level: Option<String>,
+    pub search: Option<String>,
+    pub run_id: Option<String>,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogLine {
+    pub timestamp: Option<String>,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub run_id: Option<String>,
+    pub job_id: Option<String>,
+}
+
+/// Errors returned by commands: a stable code plus a redacted message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandError {
+    pub code: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preferences_default_is_safe() {
+        let p = Preferences::default();
+        assert!(p.default_row_limit > 0 && p.default_row_limit <= 10_000);
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Preferences = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn arabic_is_rtl() {
+        assert!(Locale::Ar.is_rtl());
+        assert!(!Locale::En.is_rtl());
+    }
+}

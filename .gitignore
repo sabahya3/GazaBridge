@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+/apps/desktop/ui/dist
+/apps/desktop/src-tauri/gen
+*.db-shm
+*.db-wal
+.DS_Store
+/.env
+/.env.*

@@ -1,0 +1,28 @@
+[package]
+name = "gazabridge-secrets"
+description = "OS-native secret storage, session secrets and redaction for GazaBridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gazabridge-domain.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))'.dependencies]
+keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

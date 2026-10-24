@@ -1,0 +1,29 @@
+[package]
+name = "gazabridge-connector-sqlite"
+description = "SQLite connector for GazaBridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
+gazabridge-domain.workspace = true
+gazabridge-plugin-sdk.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bigdecimal.workspace = true
+serde_json.workspace = true
+gazabridge-testkit.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

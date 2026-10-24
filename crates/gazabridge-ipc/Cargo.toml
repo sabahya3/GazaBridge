@@ -1,0 +1,18 @@
+[package]
+name = "gazabridge-ipc"
+description = "Serializable types shared by the GazaBridge desktop backend and UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Compiled for both native (Tauri backend) and wasm32 (UI): serde only.
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

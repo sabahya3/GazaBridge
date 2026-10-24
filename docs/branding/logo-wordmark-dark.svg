@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-labelledby="t">
+  <title id="t">GazaBridge — Connect. Explore. Transform. Migrate. Sync.</title>
+  <!-- For dark backgrounds. -->
+  <g transform="translate(20 22) scale(0.5)">
+    <rect width="512" height="512" rx="112" fill="#1F7A45"/>
+    <g fill="none" stroke="#F4F7F5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M96 300 C 170 150, 342 150, 416 300" stroke-width="30"/>
+      <path d="M72 300 H 440" stroke-width="30"/>
+      <path d="M150 300 V 392 M362 300 V 392" stroke-width="30"/>
+      <path d="M208 222 V 300 M256 206 V 300 M304 222 V 300" stroke-width="16"/>
+    </g>
+    <path d="M112 420 H 400" stroke="#86EFAC" stroke-width="14" stroke-linecap="round"/>
+  </g>
+  <text x="310" y="160" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="112" font-weight="700" fill="#E8F5EC">GazaBridge</text>
+  <text x="314" y="225" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="38" fill="#B5C4BB">Connect. Explore. Transform. Migrate. Sync.</text>
+</svg>

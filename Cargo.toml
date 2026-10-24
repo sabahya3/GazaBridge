@@ -1,0 +1,82 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/gazabridge-domain",
+    "crates/gazabridge-plugin-sdk",
+    "crates/gazabridge-connectors",
+    "crates/gazabridge-secrets",
+    "crates/gazabridge-storage",
+    "crates/gazabridge-observability",
+    "crates/gazabridge-testkit",
+    "crates/gazabridge-ipc",
+    "crates/gazabridge-connector-sqlite",
+    "apps/desktop/src-tauri",
+    "apps/desktop/ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/gazabridge/gazabridge"
+authors = ["GazaBridge contributors"]
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+gazabridge-domain = { path = "crates/gazabridge-domain" }
+gazabridge-plugin-sdk = { path = "crates/gazabridge-plugin-sdk" }
+gazabridge-connectors = { path = "crates/gazabridge-connectors" }
+gazabridge-secrets = { path = "crates/gazabridge-secrets" }
+gazabridge-storage = { path = "crates/gazabridge-storage" }
+gazabridge-observability = { path = "crates/gazabridge-observability" }
+gazabridge-testkit = { path = "crates/gazabridge-testkit" }
+gazabridge-ipc = { path = "crates/gazabridge-ipc" }
+gazabridge-connector-sqlite = { path = "crates/gazabridge-connector-sqlite" }
+
+# External crates
+async-trait = "0.1.89"
+base64 = "0.22"
+bigdecimal = { version = "0.4.11", features = ["serde"] }
+chrono = { version = "0.4.42", default-features = false, features = ["std", "clock", "serde"] }
+chrono-tz = "0.10"
+futures = "0.3.31"
+hex = "0.4.3"
+indexmap = { version = "2.12", features = ["serde"] }
+keyring = { version = "3.6.3" }
+proptest = "1.9"
+regex = "1.12"
+secrecy = "0.10.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["preserve_order"] }
+sha2 = "0.10.9"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono", "uuid", "json"] }
+tempfile = "3.23"
+thiserror = "2.0.17"
+tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "signal"] }
+tokio-util = { version = "0.7.17", features = ["rt"] }
+toml = "0.9"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json", "fmt", "registry"] }
+url = "2.5.7"
+uuid = { version = "1.18", features = ["v4", "v7", "serde"] }
+zeroize = { version = "1.8.2", features = ["zeroize_derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

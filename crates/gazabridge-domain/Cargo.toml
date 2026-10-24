@@ -1,0 +1,27 @@
+[package]
+name = "gazabridge-domain"
+description = "GazaBridge domain model: canonical values, types, conversions, jobs and connections"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+bigdecimal.workspace = true
+chrono.workspace = true
+hex.workspace = true
+indexmap.workspace = true
+percent-encoding = "2.3"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

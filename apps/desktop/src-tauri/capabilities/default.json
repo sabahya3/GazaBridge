@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the main window. No filesystem, shell or HTTP plugins are exposed to the WebView; all data access goes through audited Rust commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

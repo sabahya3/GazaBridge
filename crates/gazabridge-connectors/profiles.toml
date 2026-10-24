@@ -1,0 +1,405 @@
+# GazaBridge compatibility profiles.
+#
+# Rules (enforced by tests in src/catalog.rs):
+# * `status = "production_ready"` requires `contract_evidence` covering every
+#   entry in `tested_versions`.
+# * `tested_versions` lists only versions the contract suite has passed on.
+#   It stays empty until a recorded run exists.
+# * Generic profiles use `protocol_compatible`: protocol compatibility does not
+#   imply feature compatibility.
+
+# ---------------------------------------------------------------- PostgreSQL
+
+[[profile]]
+id = "postgres.postgresql"
+family = "postgres"
+display_name = "PostgreSQL"
+vendor_icon = "postgres"
+status = "experimental"
+auth_methods = ["password", "scram", "client_certificate"]
+tested_versions = []
+documentation_url = "https://www.postgresql.org/docs/current/"
+known_limitations = [
+  "Logical-replication CDC requires wal_level=logical and a role with REPLICATION.",
+]
+[profile.defaults]
+port = 5432
+database = "postgres"
+tls = "verify-full"
+[profile.supported_versions]
+min = "12"
+[profile.detection]
+version_string_contains = ["postgresql"]
+
+[[profile]]
+id = "postgres.neon"
+family = "postgres"
+display_name = "Neon"
+vendor_icon = "postgres"
+status = "experimental"
+auth_methods = ["password", "scram"]
+tested_versions = []
+documentation_url = "https://neon.tech/docs/connect/connect-intro"
+known_limitations = [
+  "Pooled (-pooler) endpoints run PgBouncer in transaction mode; use the direct endpoint for transactions spanning statements and for CDC.",
+  "Logical replication must be enabled in the Neon project settings before CDC.",
+  "Computes may auto-suspend; the first connection after suspension can take several seconds.",
+]
+unsupported_operations = ["Superuser-only operations"]
+[profile.defaults]
+port = 5432
+database = "neondb"
+tls = "verify-full"
+[profile.supported_versions]
+min = "14"
+[profile.detection]
+version_string_contains = ["postgresql"]
+host_suffixes = [".neon.tech"]
+
+[[profile]]
+id = "postgres.supabase"
+family = "postgres"
+display_name = "Supabase PostgreSQL"
+vendor_icon = "postgres"
+status = "experimental"
+auth_methods = ["password", "scram"]
+tested_versions = []
+documentation_url = "https://supabase.com/docs/guides/database/connecting-to-postgres"
+known_limitations = [
+  "The Supavisor pooler in transaction mode (port 6543) does not keep session state; use the direct connection or session mode for CDC and multi-statement transactions.",
+  "Supabase-managed schemas (auth, storage, realtime) should not be migrated as user data.",
+]
+unsupported_operations = ["Superuser-only operations"]
+[profile.defaults]
+port = 5432
+database = "postgres"
+tls = "verify-full"
+[profile.supported_versions]
+min = "14"
+[profile.detection]
+version_string_contains = ["postgresql"]
+host_suffixes = [".supabase.co", ".supabase.com"]
+
+[[profile]]
+id = "postgres.citus"
+family = "postgres"
+display_name = "Citus"
+vendor_icon = "postgres"
+status = "experimental"
+auth_methods = ["password", "scram", "client_certificate"]
+tested_versions = []
+documentation_url = "https://docs.citusdata.com/"
+known_limitations = [
+  "Connect to the coordinator node; DDL and distributed writes go through it.",
+  "Unique constraints on distributed tables must include the distribution column.",
+  "Logical-replication CDC covers coordinator-local tables only.",
+]
+[profile.capability_overrides]
+remove = ["change_data_capture", "resume_tokens"]
+[profile.defaults]
+port = 5432
+tls = "verify-full"
+[profile.supported_versions]
+min = "12"
+[profile.detection]
+version_string_contains = ["postgresql"]
+
+[[profile]]
+id = "postgres.edb"
+family = "postgres"
+display_name = "EDB Postgres"
+vendor_icon = "postgres"
+status = "experimental"
+auth_methods = ["password", "scram", "client_certificate", "ldap", "kerberos"]
+tested_versions = []
+documentation_url = "https://www.enterprisedb.com/docs/"
+known_limitations = [
+  "Oracle-compatibility objects (packages, synonyms) are not inspected or migrated.",
+]
+[profile.defaults]
+port = 5444
+tls = "verify-full"
+[profile.supported_versions]
+min = "12"
+[profile.detection]
+version_string_contains = ["enterprisedb"]
+
+[[profile]]
+id = "postgres.cockroachdb"
+family = "postgres"
+display_name = "CockroachDB (PostgreSQL wire)"
+vendor_icon = "postgres"
+status = "limited_compatibility"
+auth_methods = ["password", "client_certificate"]
+tested_versions = []
+documentation_url = "https://www.cockroachlabs.com/docs/stable/postgresql-compatibility"
+known_limitations = [
+  "No PostgreSQL logical replication; CDC is limited to polling-based methods.",
+  "Transactions are SERIALIZABLE by default and may need client-side retries.",
+  "Catalog differences: some pg_catalog views are incomplete, so inspection is best-effort.",
+  "Sequences, triggers and stored routines differ from PostgreSQL.",
+]
+unsupported_operations = ["Logical replication", "EXPLAIN (FORMAT JSON)"]
+[profile.capability_overrides]
+remove = ["change_data_capture", "resume_tokens", "inspect_triggers", "inspect_partitions"]
+[profile.defaults]
+port = 26257
+database = "defaultdb"
+tls = "verify-full"
+[profile.detection]
+version_string_contains = ["cockroachdb"]
+host_suffixes = [".cockroachlabs.cloud"]
+
+[[profile]]
+id = "postgres.generic"
+family = "postgres"
+display_name = "PostgreSQL-compatible (generic)"
+vendor_icon = "postgres"
+status = "protocol_compatible"
+auth_methods = ["password", "scram", "client_certificate"]
+tested_versions = []
+documentation_url = "https://www.postgresql.org/docs/current/protocol.html"
+known_limitations = [
+  "Only the PostgreSQL wire protocol is assumed; catalog queries, CDC and DDL may fail on non-PostgreSQL servers.",
+]
+[profile.capability_overrides]
+remove = ["change_data_capture", "resume_tokens"]
+[profile.defaults]
+port = 5432
+tls = "verify-full"
+
+# --------------------------------------------------------------------- MySQL
+
+[[profile]]
+id = "mysql.mysql"
+family = "my_sql"
+display_name = "MySQL"
+vendor_icon = "mysql"
+status = "experimental"
+auth_methods = ["password", "client_certificate"]
+tested_versions = []
+documentation_url = "https://dev.mysql.com/doc/"
+known_limitations = [
+  "Binlog CDC requires binlog_format=ROW, binlog_row_image=FULL and REPLICATION SLAVE/CLIENT privileges.",
+]
+[profile.defaults]
+port = 3306
+tls = "VERIFY_IDENTITY"
+[profile.supported_versions]
+min = "8.0"
+[profile.detection]
+version_string_contains = ["mysql"]
+
+[[profile]]
+id = "mysql.mariadb"
+family = "my_sql"
+display_name = "MariaDB"
+vendor_icon = "mysql"
+status = "experimental"
+auth_methods = ["password", "client_certificate"]
+tested_versions = []
+documentation_url = "https://mariadb.com/kb/en/documentation/"
+known_limitations = [
+  "JSON is an alias for LONGTEXT with a JSON_VALID check; values round-trip as text.",
+  "MariaDB GTIDs use a different format from MySQL GTIDs.",
+]
+[profile.defaults]
+port = 3306
+tls = "VERIFY_IDENTITY"
+[profile.supported_versions]
+min = "10.6"
+[profile.detection]
+version_string_contains = ["mariadb"]
+
+[[profile]]
+id = "mysql.percona"
+family = "my_sql"
+display_name = "Percona Server for MySQL"
+vendor_icon = "mysql"
+status = "experimental"
+auth_methods = ["password", "client_certificate", "ldap"]
+tested_versions = []
+documentation_url = "https://docs.percona.com/percona-server/"
+known_limitations = []
+[profile.defaults]
+port = 3306
+tls = "VERIFY_IDENTITY"
+[profile.supported_versions]
+min = "8.0"
+[profile.detection]
+version_string_contains = ["percona"]
+
+[[profile]]
+id = "mysql.tidb"
+family = "my_sql"
+display_name = "TiDB"
+vendor_icon = "mysql"
+status = "limited_compatibility"
+auth_methods = ["password"]
+tested_versions = []
+documentation_url = "https://docs.pingcap.com/tidb/stable/mysql-compatibility"
+known_limitations = [
+  "TiDB has no MySQL binlog; CDC is limited to polling-based methods (TiCDC is not integrated).",
+  "Stored procedures, triggers and events are not supported by TiDB.",
+  "Foreign keys are enforced only from TiDB 6.6.",
+]
+unsupported_operations = ["Binlog CDC", "Triggers", "Stored procedures"]
+[profile.capability_overrides]
+remove = ["change_data_capture", "resume_tokens", "inspect_triggers", "inspect_routines"]
+[profile.defaults]
+port = 4000
+tls = "VERIFY_IDENTITY"
+[profile.detection]
+version_string_contains = ["tidb"]
+host_suffixes = [".tidbcloud.com"]
+
+[[profile]]
+id = "mysql.generic"
+family = "my_sql"
+display_name = "MySQL-compatible (generic)"
+vendor_icon = "mysql"
+status = "protocol_compatible"
+auth_methods = ["password"]
+tested_versions = []
+documentation_url = "https://dev.mysql.com/doc/dev/mysql-server/latest/PAGE_PROTOCOL.html"
+known_limitations = [
+  "Only the MySQL wire protocol is assumed; information_schema details, CDC and DDL may differ.",
+]
+[profile.capability_overrides]
+remove = ["change_data_capture", "resume_tokens"]
+[profile.defaults]
+port = 3306
+tls = "VERIFY_IDENTITY"
+
+# ------------------------------------------------------------------- MongoDB
+
+[[profile]]
+id = "mongodb.community"
+family = "mongo_db"
+display_name = "MongoDB Community"
+vendor_icon = "mongodb"
+status = "experimental"
+auth_methods = ["none", "scram", "client_certificate"]
+tested_versions = []
+documentation_url = "https://www.mongodb.com/docs/manual/"
+known_limitations = [
+  "Change streams and multi-document transactions require a replica set or sharded cluster.",
+]
+[profile.defaults]
+port = 27017
+tls = "true"
+[profile.supported_versions]
+min = "5.0"
+[profile.detection]
+version_string_contains = ["mongodb"]
+
+[[profile]]
+id = "mongodb.enterprise"
+family = "mongo_db"
+display_name = "MongoDB Enterprise"
+vendor_icon = "mongodb"
+status = "experimental"
+auth_methods = ["scram", "client_certificate", "ldap", "kerberos", "oidc"]
+tested_versions = []
+documentation_url = "https://www.mongodb.com/docs/manual/"
+known_limitations = [
+  "LDAP, Kerberos and OIDC authentication depend on driver support on the client platform.",
+]
+[profile.defaults]
+port = 27017
+tls = "true"
+[profile.supported_versions]
+min = "5.0"
+[profile.detection]
+version_string_contains = ["mongodb"]
+
+[[profile]]
+id = "mongodb.atlas"
+family = "mongo_db"
+display_name = "MongoDB Atlas"
+vendor_icon = "mongodb"
+status = "experimental"
+auth_methods = ["scram", "client_certificate", "aws_iam", "oidc"]
+tested_versions = []
+documentation_url = "https://www.mongodb.com/docs/atlas/"
+known_limitations = [
+  "The client IP address must be on the Atlas project's access list.",
+  "Shared-tier (M0/Flex) clusters restrict some aggregation stages and server commands.",
+]
+[profile.defaults]
+tls = "true"
+[profile.supported_versions]
+min = "6.0"
+[profile.detection]
+version_string_contains = ["mongodb"]
+host_suffixes = [".mongodb.net"]
+
+[[profile]]
+id = "mongodb.documentdb"
+family = "mongo_db"
+display_name = "Amazon DocumentDB"
+vendor_icon = "mongodb"
+status = "limited_compatibility"
+auth_methods = ["scram", "aws_iam"]
+tested_versions = []
+documentation_url = "https://docs.aws.amazon.com/documentdb/latest/developerguide/compatibility.html"
+known_limitations = [
+  "DocumentDB implements a subset of the MongoDB API; unsupported operators and stages fail at run time.",
+  "Change streams must be enabled per collection or database with modifyChangeStreams.",
+  "Retryable writes are not supported; connections need retryWrites=false.",
+  "TLS uses the Amazon RDS certificate bundle, which must be configured as the CA certificate.",
+]
+unsupported_operations = ["Retryable writes", "$where", "mapReduce"]
+[profile.defaults]
+port = 27017
+tls = "true"
+[profile.defaults.extra]
+retryWrites = "false"
+[profile.detection]
+version_string_contains = ["documentdb"]
+host_suffixes = [".docdb.amazonaws.com", ".docdb-elastic.amazonaws.com"]
+
+[[profile]]
+id = "mongodb.generic"
+family = "mongo_db"
+display_name = "MongoDB-compatible (generic)"
+vendor_icon = "mongodb"
+status = "protocol_compatible"
+auth_methods = ["none", "scram"]
+tested_versions = []
+documentation_url = "https://www.mongodb.com/docs/manual/reference/mongodb-wire-protocol/"
+known_limitations = [
+  "Only the MongoDB wire protocol is assumed; change streams, transactions and aggregation stages may be unavailable.",
+]
+[profile.capability_overrides]
+remove = ["change_data_capture", "resume_tokens", "transactions"]
+[profile.defaults]
+port = 27017
+
+# -------------------------------------------------------------------- SQLite
+
+[[profile]]
+id = "sqlite.sqlite"
+family = "sqlite"
+display_name = "SQLite"
+vendor_icon = "sqlite"
+status = "beta"
+auth_methods = ["none"]
+tested_versions = ["3.46"]
+documentation_url = "https://www.sqlite.org/docs.html"
+known_limitations = [
+  "SQLite has no native change data capture; synchronization uses polling (timestamp, increasing key or an application-managed change log).",
+  "Column types are affinities; values of other types may be stored in any column unless the table is STRICT.",
+  "Only one writer at a time; concurrent writes wait up to the busy timeout.",
+  "GazaBridge uses its bundled SQLite 3.46 library regardless of the system SQLite version.",
+  "Range filters on columns that store numbers as text (big integers, unsigned 64-bit, decimals) are rejected rather than compared lexically.",
+  "Columns declared NUMERIC or DECIMAL by other tools keep only about 15 significant digits; SQLite may have rounded such values before GazaBridge reads them.",
+]
+[profile.contract_evidence]
+suite_version = "1.0"
+versions = ["3.46"]
+recorded_at = "2026-10-24"
+[profile.supported_versions]
+min = "3.35"
+[profile.detection]
+version_string_contains = ["sqlite"]

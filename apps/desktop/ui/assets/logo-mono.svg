@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="t">
+  <title id="t">GazaBridge</title>
+  <!-- Monochrome mark: inherits the surrounding text colour. -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M96 300 C 170 150, 342 150, 416 300" stroke-width="30"/>
+    <path d="M72 300 H 440" stroke-width="30"/>
+    <path d="M150 300 V 392" stroke-width="30"/>
+    <path d="M362 300 V 392" stroke-width="30"/>
+    <path d="M208 222 V 300 M256 206 V 300 M304 222 V 300" stroke-width="16"/>
+    <path d="M112 420 H 400" stroke-width="14"/>
+  </g>
+</svg>
