@@ -285,16 +285,24 @@ id = "mongodb.community"
 family = "mongo_db"
 display_name = "MongoDB Community"
 vendor_icon = "mongodb"
-status = "experimental"
+status = "beta"
 auth_methods = ["none", "scram", "client_certificate"]
-tested_versions = []
+tested_versions = ["6.0", "7.0", "8.0"]
 documentation_url = "https://www.mongodb.com/docs/manual/"
 known_limitations = [
   "Change streams and multi-document transactions require a replica set or sharded cluster.",
+  "BSON has no date-only, time-of-day, duration or interval type: such values are stored as exact ISO text.",
+  "Decimals with more than 34 significant digits are stored as exact text because Decimal128 cannot hold them.",
+  "Geometry must be converted to GeoJSON before it can be written.",
+  "Encrypted TLS client keys are not supported with the rustls TLS backend.",
 ]
 [profile.defaults]
 port = 27017
 tls = "true"
+[profile.contract_evidence]
+suite_version = "1.0"
+versions = ["6.0", "7.0", "8.0"]
+recorded_at = "2026-10-25"
 [profile.supported_versions]
 min = "5.0"
 [profile.detection]

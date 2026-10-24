@@ -15,7 +15,7 @@ _Last updated: Milestone 2 (in progress), 2026-10-24._
 | 1 | Local-only operation; engine reusable headless | Done (design) | — | Engine crates have no UI dependency (ADR 0001). |
 | 2 | Required technology | Partial | M2–M10 | Rust stable, Cargo workspace, Tauri 2, Tokio, Leptos, SQLite, sqlx, serde, tracing, thiserror, keyring in use. MongoDB driver, Testcontainers, Criterion arrive with their milestones. |
 | 3 | 20 product modules | Partial | M2–M10 | Settings, Logs (viewer), connector catalogue, SDK done; remaining modules not started. |
-| 4 | Supported databases + compatibility profiles | Partial | M2 | 18 profiles in `crates/gazabridge-connectors/profiles.toml` with all required fields; detection and assessment implemented and tested. **SQLite connector implemented (Beta, contract evidence for 3.46). PostgreSQL connector implemented; contract suite passed on PostgreSQL 13–17 (Beta). Hosted and derivative PostgreSQL profiles stay Experimental until tested. MySQL and MongoDB connectors not yet.** |
+| 4 | Supported databases + compatibility profiles | Partial | M2 | 18 profiles in `crates/gazabridge-connectors/profiles.toml` with all required fields; detection and assessment implemented and tested. **SQLite connector implemented (Beta, contract evidence for 3.46). PostgreSQL connector implemented; contract suite passed on PostgreSQL 13–17 (Beta). Hosted and derivative PostgreSQL profiles stay Experimental until tested. MongoDB connector implemented; contract suite passed on MongoDB 6.0–8.0 (Beta). MySQL connector drafted, paused.** |
 | 4 | Status vocabulary; no untested Production Ready | Done | — | `CompatibilityStatus`; catalogue validation tests reject `production_ready` without evidence. |
 | 5 | File formats | Not started | M4 | |
 | 6 | Workspace architecture | Partial | M2–M10 | 10 crates; remaining crates created per milestone (ADR 0001). |
@@ -27,7 +27,7 @@ _Last updated: Milestone 2 (in progress), 2026-10-24._
 | 12 | Data Editor | Partial (API) | M3 | `UpdateRequest`/`DeleteRequest` with restrictive filters and optimistic concurrency; contract suite checks guards. |
 | 13 | Query Studio | Partial (storage) | M3 | Saved queries and history repositories. |
 | 14 | Schema Studio | Not started | M3 | |
-| 15 | MongoDB schema inference | Partial (types) | M2/M3 | `InferredStructure`/`InferredField` with occurrence and type distributions; `CanonicalType::unify`. |
+| 15 | MongoDB schema inference | Done | — | Sampled/random/full-scan inference with presence %, type and array-item distributions, mixed and conflicting paths, max depth; snapshots and drift detection (`SchemaService`). |
 | 16 | Schema mapping | Not started | M5 | Versioned `mappings` table exists. |
 | 17 | Transformation engine | Not started | M5 | Versioned `transformations` table exists. |
 | 18–19 | Document ⇄ relational conversion | Not started | M5 | |

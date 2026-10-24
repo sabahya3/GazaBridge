@@ -455,6 +455,30 @@ pub async fn run_contract_suite(harness: &dyn ContractHarness) -> ContractReport
             .map(|_| CaseOutcome::Passed),
     );
 
+    // Document stores get the equivalent of the relational primary key.
+    if s.is_document() && s.has(Capability::CreateIndex) {
+        let result = conn
+            .apply_ddl(
+                &[SchemaOperation::CreateIndex {
+                    object: s.object.clone(),
+                    index: gazabridge_plugin_sdk::ddl::IndexDefinition {
+                        name: "gb_contract_id".into(),
+                        columns: vec!["id".into()],
+                        unique: true,
+                    },
+                    if_not_exists: true,
+                }],
+                CancellationToken::new(),
+            )
+            .await;
+        s.record(
+            "unique_key_index",
+            result
+                .map(|_| CaseOutcome::Passed)
+                .map_err(|e| e.to_string()),
+        );
+    }
+
     if s.has(Capability::InspectSchema) && !s.is_document() {
         let result = async {
             let schema = conn
@@ -517,6 +541,38 @@ pub async fn run_contract_suite(harness: &dyn ContractHarness) -> ContractReport
     );
     if !inserted_ok {
         return finish(s, connector_id, server_desc, harness).await;
+    }
+
+    if s.is_document() && s.has(Capability::InferDocumentStructure) {
+        let result = async {
+            let options = gazabridge_plugin_sdk::connector::InspectOptions {
+                sampling: gazabridge_plugin_sdk::schema::SamplingMethod::FullScan,
+                ..Default::default()
+            };
+            let schema = conn
+                .inspect(&s.object, &options)
+                .await
+                .map_err(err("inspect"))?;
+            let inferred = schema
+                .inferred
+                .ok_or("no inferred structure for a document store")?;
+            ensure(
+                inferred.sampled_documents == ROWS as u64,
+                format!("sampled {}", inferred.sampled_documents),
+            )?;
+            let label = inferred
+                .fields
+                .iter()
+                .find(|f| f.path == "label")
+                .ok_or("field `label` not inferred")?;
+            ensure(
+                label.present_count == ROWS as u64,
+                "wrong presence count for `label`",
+            )?;
+            Ok(CaseOutcome::Passed)
+        }
+        .await;
+        s.record("document_structure_inference", result);
     }
 
     if s.has(Capability::ExactCount) {

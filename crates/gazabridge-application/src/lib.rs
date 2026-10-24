@@ -3,9 +3,11 @@
 
 pub mod connections;
 pub mod profiled;
+pub mod schema;
 
 pub use connections::{ConnectionService, PasswordInput, TestOutcome};
 pub use profiled::ProfiledConnection;
+pub use schema::{FieldChange, SchemaService};
 
 use gazabridge_plugin_sdk::{ConnectorError, ErrorKind};
 

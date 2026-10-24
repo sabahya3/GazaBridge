@@ -11,6 +11,7 @@ pub mod connector_meta;
 pub mod jobs;
 pub mod queries;
 pub mod settings;
+pub mod snapshots;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;

@@ -47,6 +47,9 @@ impl AppState {
         registry.register(Arc::new(
             gazabridge_connector_postgres::PostgresConnectorFactory,
         ))?;
+        registry.register(Arc::new(
+            gazabridge_connector_mongodb::MongoConnectorFactory,
+        ))?;
         tracing::info!(version = env!("CARGO_PKG_VERSION"), "GazaBridge started");
         let secrets = SecretResolver::os_default(redactor);
         Ok(Self {

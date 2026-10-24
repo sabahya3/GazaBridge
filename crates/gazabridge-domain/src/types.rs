@@ -8,7 +8,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+/// Adjacently tagged (`{"kind": …, "of": …}`): internal tagging cannot
+/// represent the recursive newtype variants `Array` and `Mixed`.
+#[serde(tag = "kind", content = "of", rename_all = "snake_case")]
 pub enum CanonicalType {
     /// Only ever null (e.g. an all-null inferred field).
     Null,
@@ -275,6 +277,26 @@ impl fmt::Display for CanonicalType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recursive_types_round_trip_through_json() {
+        let t = CanonicalType::Array(Box::new(CanonicalType::Mixed(vec![
+            CanonicalType::Int { bits: 32 },
+            CanonicalType::Array(Box::new(CanonicalType::TEXT)),
+            CanonicalType::Map {
+                key: Box::new(CanonicalType::TEXT),
+                value: Box::new(CanonicalType::Json),
+            },
+            CanonicalType::Decimal {
+                precision: Some(10),
+                scale: Some(2),
+            },
+            CanonicalType::Object,
+        ])));
+        let json = serde_json::to_string(&t).unwrap();
+        let back: CanonicalType = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, t, "{json}");
+    }
 
     #[test]
     fn unify_widens_same_kind() {

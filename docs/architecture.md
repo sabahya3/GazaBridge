@@ -109,3 +109,4 @@ See the ADRs in [docs/adr](adr/):
 6. [SQLite metadata store with sqlx](adr/0006-sqlite-metadata-store.md)
 7. [Tauri 2 + Leptos desktop UI](adr/0007-tauri-leptos-ui.md)
 8. [Redaction at the log writer](adr/0008-redaction-at-writer.md)
+9. [MongoDB type mapping and resumable reads](adr/0009-mongodb-type-mapping.md)

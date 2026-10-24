@@ -17,6 +17,7 @@ tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
 gazabridge-application.workspace = true
+gazabridge-connector-mongodb.workspace = true
 gazabridge-connector-postgres.workspace = true
 gazabridge-connector-sqlite.workspace = true
 gazabridge-connectors.workspace = true
