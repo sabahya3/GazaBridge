@@ -1,3 +1,4 @@
+mod connection_editor;
 mod connections;
 mod home;
 mod logs;

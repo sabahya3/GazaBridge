@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod connections;
+
+pub use connections::*;
+
 /// Names of the Tauri commands, shared so both sides agree.
 pub mod commands {
     pub const APP_INFO: &str = "app_info";
@@ -13,6 +17,13 @@ pub mod commands {
     pub const LIST_CONNECTIONS: &str = "list_connections";
     pub const LIST_PROFILES: &str = "list_profiles";
     pub const QUERY_LOGS: &str = "query_logs";
+    pub const GET_CONNECTION: &str = "get_connection";
+    pub const SAVE_CONNECTION: &str = "save_connection";
+    pub const CREATE_CONNECTION_FROM_STRING: &str = "create_connection_from_string";
+    pub const DELETE_CONNECTION: &str = "delete_connection";
+    pub const DUPLICATE_CONNECTION: &str = "duplicate_connection";
+    pub const TEST_CONNECTION: &str = "test_connection";
+    pub const TEST_CONNECTION_DRAFT: &str = "test_connection_draft";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -7,9 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# Compiled for both native (Tauri backend) and wasm32 (UI): serde only.
+# Compiled for both native (Tauri backend) and wasm32 (UI): serde and zeroize only.
 [dependencies]
 serde.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

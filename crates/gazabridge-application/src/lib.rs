@@ -31,6 +31,8 @@ impl AppError {
     /// Stable machine-readable code for IPC and CLI exit mapping.
     pub fn code(&self) -> &'static str {
         match self {
+            Self::Storage(gazabridge_storage::StorageError::NotFound(_)) => "not_found",
+            Self::Storage(gazabridge_storage::StorageError::InvalidState(_)) => "invalid_input",
             Self::Storage(_) => "storage",
             Self::Secret(gazabridge_secrets::SecretError::PromptRequired) => "password_required",
             Self::Secret(_) => "secret_store",

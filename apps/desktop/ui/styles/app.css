@@ -295,7 +295,7 @@ legend { font-weight: 600; padding-inline: 4px; }
 .error-detail { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
 
 .conn-list { list-style: none; padding: 0; }
-.conn { display: flex; gap: 12px; align-items: center; }
+.conn { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .conn-swatch { inline-size: 6px; align-self: stretch; border-radius: 3px; background: var(--border); }
 .conn-main { display: grid; flex: 1; }
 .conn-flags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -359,3 +359,30 @@ legend { font-weight: 600; padding-inline: 4px; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* Connection management */
+.small { font-size: 12.5px; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-secondary { background: transparent; color: var(--primary); }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-small { padding: 3px 10px; font-size: 12.5px; }
+.conn-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.conn .test-result { flex-basis: 100%; }
+.editor { display: grid; gap: 14px; max-inline-size: 720px; }
+.field-group {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 0;
+}
+.field-group legend { padding-inline: 4px; font-weight: 600; }
+.test-result { border-radius: var(--radius); padding: 10px 14px; border: 1px solid; }
+.test-result.ok { border-color: var(--ok); background: var(--ok-bg); }
+.test-result.fail { border-color: var(--danger); background: var(--danger-bg); }
+.test-result ul { margin: 6px 0 0; padding-inline-start: 18px; }
+.finding-error { color: var(--danger); }
+.finding-warning { color: var(--warn); }
+.finding-info { color: var(--info); }
+.palette.confirm { padding: 16px 20px; }

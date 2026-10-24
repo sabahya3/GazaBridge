@@ -73,7 +73,7 @@ paused as committed draft code).
 | ✅ P1 | MongoDB connector: URI/SRV/Atlas, replica sets, TLS, auth, list databases/collections, streaming reads resumable by `_id`, batched writes with per-document failures, upsert, transactions on replica sets, null vs missing, ObjectId/Decimal128 fidelity, aggregation and filter execution, explain (2.5) | L | **done 2026-10-25** — server-side kill of running aggregations deferred; cancellation stops reads and drops cursors |
 | ✅ P2 | MongoDB contract runs on single-node replica sets 6.0, 7.0, 8.0; record evidence, promote `mongodb.community` (2.6) | S | **done 2026-10-25** — passed on 6.0.28, 7.0.45, 8.0.34; profile is Beta |
 | ✅ P3 | Schema inference: sampling (`$sample` with fallback), field occurrence %, type distributions, mixed types, max depth, conflicting paths; saved snapshots (§15) | M | **done 2026-10-25** — plus drift detection between snapshots |
-| P4 | Connection editor UI and connection commands (structured + connection-string), test with latency, health, catalogue states (2.8, subset) | M | |
+| ✅ P4 | Connection editor UI and connection commands (structured + connection-string), test with latency, health, catalogue states (2.8, subset) | M | **done 2026-10-25** — commands covered by backend tests; UI is compile-checked only (no wasm target on this machine), not yet exercised in a running window |
 | P5 | Explorer tree, data viewer (table / JSON / tree, paging, filter, sort, null vs missing display) and document editor (insert/edit/delete, `_id`-safe updates, preview, confirmation, audit) for MongoDB and PostgreSQL (3.1–3.3, subset) | L | |
 | P6 | Query Studio for MongoDB filters/aggregations and PostgreSQL SQL: tabs, history, saved queries, params, cancel, explain (3.4, subset) | L | |
 | P7 | Files for MongoDB: JSON, JSONL/NDJSON, BSON (mongodump format), CSV export; gzip; streaming; malformed-line policies (4.2–4.3, 4.6–4.7, subset) | M | |
@@ -316,6 +316,6 @@ recovery tests pass for each of them.
 
 ## Immediate next steps
 
-1. Priority track P4 (connection editor UI and commands) — P1–P3 are done.
-2. Then P5 → P12 in order.
+1. Priority track P5 (explorer, data viewer, document editor) — P1–P4 are done.
+2. Then P6 → P12 in order.
 3. Then resume Milestone 2 at task 2.3 (MySQL).
