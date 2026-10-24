@@ -15,17 +15,24 @@ id = "postgres.postgresql"
 family = "postgres"
 display_name = "PostgreSQL"
 vendor_icon = "postgres"
-status = "experimental"
+status = "beta"
 auth_methods = ["password", "scram", "client_certificate"]
-tested_versions = []
+tested_versions = ["13", "14", "15", "16", "17"]
 documentation_url = "https://www.postgresql.org/docs/current/"
 known_limitations = [
-  "Logical-replication CDC requires wal_level=logical and a role with REPLICATION.",
+  "Logical-replication CDC requires wal_level=logical and a role with REPLICATION (CDC arrives in Milestone 8).",
+  "PostGIS geometry and other extension types are read and written as text extension values.",
+  "Encrypted TLS client keys are not supported yet.",
+  "SSH tunnels are not available yet.",
 ]
 [profile.defaults]
 port = 5432
 database = "postgres"
 tls = "verify-full"
+[profile.contract_evidence]
+suite_version = "1.0"
+versions = ["13", "14", "15", "16", "17"]
+recorded_at = "2026-10-24"
 [profile.supported_versions]
 min = "12"
 [profile.detection]

@@ -15,7 +15,7 @@ _Last updated: Milestone 2 (in progress), 2026-10-24._
 | 1 | Local-only operation; engine reusable headless | Done (design) | — | Engine crates have no UI dependency (ADR 0001). |
 | 2 | Required technology | Partial | M2–M10 | Rust stable, Cargo workspace, Tauri 2, Tokio, Leptos, SQLite, sqlx, serde, tracing, thiserror, keyring in use. MongoDB driver, Testcontainers, Criterion arrive with their milestones. |
 | 3 | 20 product modules | Partial | M2–M10 | Settings, Logs (viewer), connector catalogue, SDK done; remaining modules not started. |
-| 4 | Supported databases + compatibility profiles | Partial | M2 | 18 profiles in `crates/gazabridge-connectors/profiles.toml` with all required fields; detection and assessment implemented and tested. **SQLite connector implemented (Beta, contract evidence for 3.46); PostgreSQL, MySQL, MongoDB connectors not yet.** |
+| 4 | Supported databases + compatibility profiles | Partial | M2 | 18 profiles in `crates/gazabridge-connectors/profiles.toml` with all required fields; detection and assessment implemented and tested. **SQLite connector implemented (Beta, contract evidence for 3.46). PostgreSQL connector implemented; contract suite passed on PostgreSQL 13–17 (Beta). Hosted and derivative PostgreSQL profiles stay Experimental until tested. MySQL and MongoDB connectors not yet.** |
 | 4 | Status vocabulary; no untested Production Ready | Done | — | `CompatibilityStatus`; catalogue validation tests reject `production_ready` without evidence. |
 | 5 | File formats | Not started | M4 | |
 | 6 | Workspace architecture | Partial | M2–M10 | 10 crates; remaining crates created per milestone (ADR 0001). |

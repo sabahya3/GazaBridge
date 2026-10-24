@@ -7,6 +7,7 @@
 
 pub mod audit;
 pub mod connections;
+pub mod connector_meta;
 pub mod jobs;
 pub mod queries;
 pub mod settings;

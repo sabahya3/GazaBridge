@@ -1,0 +1,38 @@
+[package]
+name = "gazabridge-connector-postgres"
+description = "PostgreSQL-family connector for GazaBridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bigdecimal.workspace = true
+bytes = "1.10"
+chrono.workspace = true
+deadpool-postgres = "0.14.1"
+futures.workspace = true
+gazabridge-domain.workspace = true
+gazabridge-plugin-sdk.workspace = true
+hex.workspace = true
+rustls = { version = "0.23.31", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.1"
+rustls-pemfile = "2.2"
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres = { version = "0.7.13", features = ["with-serde_json-1"] }
+tokio-postgres-rustls = { version = "0.13", default-features = false }
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+gazabridge-testkit.workspace = true
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+zeroize.workspace = true
+
+[lints]
+workspace = true

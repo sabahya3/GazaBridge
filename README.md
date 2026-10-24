@@ -13,8 +13,9 @@ service.
 > The foundation is in place: domain model, loss-aware canonical value model,
 > connector SDK, compatibility-profile catalogue, secret storage, metadata
 > store, logging and the desktop shell. The **SQLite connector** passes the
-> connector contract suite; PostgreSQL, MySQL and MongoDB connectors and the
-> connection editor are next. See
+> connector contract suite. The **PostgreSQL connector** passes the contract
+> suite on PostgreSQL 13–17.
+> MySQL and MongoDB connectors and the connection editor are next. See
 > [docs/backlog.md](docs/backlog.md) for what is done and what is next, and
 > [docs/requirements-traceability.md](docs/requirements-traceability.md) for
 > the status of every requirement.
@@ -32,7 +33,8 @@ service.
 | Local SQLite metadata store (WAL, foreign keys, migrations, backup, integrity check) | Implemented |
 | Structured, size-rotated, redacted JSON logs and a log reader | Implemented |
 | Desktop shell (Tauri 2 + Leptos): navigation, command palette, light/dark/high-contrast themes, English and Arabic (RTL), connector catalogue, log viewer, settings | Implemented; modules not yet built are shown disabled |
-| PostgreSQL, MySQL and MongoDB connectors; connection editor; explorer, query studio, migrations, sync, CLI, installers | Not yet implemented |
+| PostgreSQL connector (TLS modes, server-side cancel, exact NUMERIC decoding, keyset streaming, savepoint-isolated batches) | Implemented, *Beta* (contract suite passed on 13–17) |
+| MySQL and MongoDB connectors; connection editor; explorer, query studio, migrations, sync, CLI, installers | Not yet implemented |
 
 ## Repository layout
 
@@ -47,7 +49,8 @@ crates/gazabridge-storage        SQLite metadata store
 crates/gazabridge-observability  Logging, rotation, redaction, log reader
 crates/gazabridge-testkit        Connector contract suite and fixtures
 crates/gazabridge-ipc            Types shared by the desktop backend and UI
-crates/gazabridge-connector-sqlite  SQLite connector
+crates/gazabridge-connector-sqlite    SQLite connector
+crates/gazabridge-connector-postgres  PostgreSQL-family connector
 database-migrations/metadata     Metadata schema migrations
 docs/                            Architecture, ADRs, threat model, guides
 ```
@@ -103,6 +106,7 @@ Logs and error messages are redacted. Telemetry does not exist. See
 - [Threat model](docs/threat-model.md)
 - [Requirements traceability](docs/requirements-traceability.md)
 - [Implementation backlog](docs/backlog.md)
+- [Roadmap for the remaining work](docs/roadmap.md)
 
 ## License
 

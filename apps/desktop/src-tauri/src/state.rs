@@ -42,6 +42,9 @@ impl AppState {
         registry.register(Arc::new(
             gazabridge_connector_sqlite::SqliteConnectorFactory,
         ))?;
+        registry.register(Arc::new(
+            gazabridge_connector_postgres::PostgresConnectorFactory,
+        ))?;
         tracing::info!(version = env!("CARGO_PKG_VERSION"), "GazaBridge started");
         Ok(Self {
             store,
@@ -71,6 +74,12 @@ mod tests {
             state
                 .registry
                 .factory(gazabridge_domain::connection::EngineFamily::Sqlite)
+                .is_ok()
+        );
+        assert!(
+            state
+                .registry
+                .factory(gazabridge_domain::connection::EngineFamily::Postgres)
                 .is_ok()
         );
     }

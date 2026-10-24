@@ -1,7 +1,9 @@
 # Implementation backlog
 
 Ordered by milestone. Each milestone ends with fmt, clippy, tests, audit,
-updated docs and ADRs.
+updated docs and ADRs. The detailed plan (order of work, open decisions,
+definitions of done, dependencies, risks, sizes) is in
+[roadmap.md](roadmap.md).
 
 ## Milestone 1 — Foundations ✅
 
@@ -25,7 +27,9 @@ updated docs and ADRs.
 - [x] `gazabridge-connector-sqlite` (sqlx): full manifest, type mapping, streaming with key-based resume, upsert, transactions, DDL, query/explain, read-only via `SQLITE_OPEN_READONLY` + `query_only`
 - [x] Run the contract suite on SQLite against real temporary files (25/25), record evidence, promote profile to Beta
 - [ ] Apply compatibility-profile capability overrides to live connection manifests (application layer)
-- [ ] `gazabridge-connector-postgres` (sqlx/tokio-postgres): TLS (rustls), search path, statement timeout, server cancel, catalog inspection
+- [x] `gazabridge-connector-postgres` (tokio-postgres + deadpool): libpq-style TLS modes on rustls, client certificates, session setup (UTC, ISO, search path, statement timeout, read-only), server-side cancel, catalog inspection, exact binary NUMERIC/interval/array decoding, text-format parameters, keyset streaming, savepoint-isolated batches, upsert counts, explain/analyze (always rolled back)
+- [x] Run the PostgreSQL contract suite (13–17) against real servers, record evidence, promote `postgres.postgresql` to Beta
+- [ ] PostgreSQL: PostGIS geometry as canonical geometry (currently an extension value), encrypted client keys
 - [ ] `gazabridge-connector-mysql`: TLS, charset, SQL-mode detection, binlog-capable driver evaluation (ADR)
 - [ ] `gazabridge-connector-mongodb` (official driver): URI/hosts, TLS, read preference, sampling inference, Decimal128 handling
 - [ ] Testcontainers harnesses (PostgreSQL, MySQL, MariaDB, MongoDB replica set)

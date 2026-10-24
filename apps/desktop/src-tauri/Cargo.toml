@@ -16,6 +16,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
+gazabridge-connector-postgres.workspace = true
 gazabridge-connector-sqlite.workspace = true
 gazabridge-connectors.workspace = true
 gazabridge-domain.workspace = true
