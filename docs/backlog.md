@@ -5,6 +5,9 @@ updated docs and ADRs. The detailed plan (order of work, open decisions,
 definitions of done, dependencies, risks, sizes) is in
 [roadmap.md](roadmap.md).
 
+> **Current priority (2026-10-25):** the MongoDB and MongoDB ⇄ PostgreSQL
+> track (tasks P1–P12 in the roadmap) comes before the remaining items below.
+
 ## Milestone 1 — Foundations ✅
 
 - [x] Cargo workspace, toolchain, lints, rustfmt/clippy config

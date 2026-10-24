@@ -57,6 +57,34 @@ introduced in Milestone 2 and grows with every milestone after it.
 
 ---
 
+## Priority track — MongoDB and MongoDB ⇄ PostgreSQL (decided 2026-10-25)
+
+The project owner asked to finish everything MongoDB-related first —
+connection, viewing, editing, querying, import/export, copying, backup and
+restore, and continuous sync — including transfers between MongoDB and
+PostgreSQL. The tasks below are taken from milestones 2–8 and done **first**,
+in this order. They are built as generic pieces (so later engines reuse
+them) but delivered and tested for MongoDB and PostgreSQL. After the track,
+work returns to the remaining milestone tasks (starting with 2.3 MySQL,
+paused as committed draft code).
+
+| # | Task (origin) | Size | Status |
+|---|---|---|---|
+| P1 | MongoDB connector: URI/SRV/Atlas, replica sets, TLS, auth, list databases/collections, streaming reads resumable by `_id`, batched writes with per-document failures, upsert, transactions on replica sets, null vs missing, ObjectId/Decimal128 fidelity, aggregation and filter execution, explain, server-side kill (2.5) | L | in progress |
+| P2 | MongoDB contract runs on single-node replica sets 6.0, 7.0, 8.0; record evidence, promote `mongodb.community` (2.6) | S | |
+| P3 | Schema inference: sampling (`$sample` with fallback), field occurrence %, type distributions, mixed types, max depth, conflicting paths; saved snapshots (§15) | M | |
+| P4 | Connection editor UI and connection commands (structured + connection-string), test with latency, health, catalogue states (2.8, subset) | M | |
+| P5 | Explorer tree, data viewer (table / JSON / tree, paging, filter, sort, null vs missing display) and document editor (insert/edit/delete, `_id`-safe updates, preview, confirmation, audit) for MongoDB and PostgreSQL (3.1–3.3, subset) | L | |
+| P6 | Query Studio for MongoDB filters/aggregations and PostgreSQL SQL: tabs, history, saved queries, params, cancel, explain (3.4, subset) | L | |
+| P7 | Files for MongoDB: JSON, JSONL/NDJSON, BSON (mongodump format), CSV export; gzip; streaming; malformed-line policies (4.2–4.3, 4.6–4.7, subset) | M | |
+| P8 | Migration engine core (streaming pipeline, batching, checkpoints, pause/resume/cancel, retries, quarantine) with MongoDB→MongoDB collection copy including indexes (6.1–6.4, subset) | L | |
+| P9 | MongoDB ⇄ PostgreSQL conversion: document→relational (JSONB, flatten, normalize, hybrid) and relational→document (embed, reference), ObjectId identity mapping; mapping preview (5.4–5.5, subset) | L | |
+| P10 | Dry Run and validation for these jobs: zero-mutation proof, counts, chunk checksums, differences report (7.1–7.2, subset) | M | |
+| P11 | Backup and restore: native export/import of collections and databases, `mongodump`/`mongorestore` and `pg_dump`/`pg_restore` integration with sanitized previews (7.4–7.5, subset) | M | |
+| P12 | Continuous sync: MongoDB change streams with resume tokens (MongoDB→MongoDB, MongoDB→PostgreSQL), PostgreSQL→MongoDB via logical replication or polling (8.2–8.4, subset) | L | |
+
+---
+
 ## Milestone 2 — Connections and connectors (in progress)
 
 **Goal:** connect to every supported engine securely, manage connections in
@@ -72,7 +100,7 @@ the app, and prove each connector with the contract suite.
 |---|---|---|
 | ✅ 2.1 | Run the PostgreSQL contract suite on 13 and 17; fix findings; record evidence; promote `postgres.postgresql` if it passes — **done 2026-10-24**: passed on 13–17, two bugs fixed (EXPLAIN output type, ModifyTable rendering) | S–M |
 | ✅ 2.2 | `gazabridge-application` crate: `ConnectionService` (create, edit, duplicate, delete, test), secret storage and cleanup, audit events, server detection → `connector_metadata`, profile overrides applied to the live manifest — **done 2026-10-24**; also fixed two PostgreSQL connection bugs it exposed (auth errors masked by multi-address retries, TLS server-name override appending a host) | M |
-| 2.3 | MySQL/MariaDB connector (see decision D1): TLS modes, charset, SQL-mode detection, type mapping, keyset reads, savepoint-isolated writes, upsert, explain, server-side KILL QUERY for cancel | L |
+| ⏸ 2.3 | **Paused** (draft committed in `df098f1`, resumes after the priority track). MySQL/MariaDB connector (see decision D1): TLS modes, charset, SQL-mode detection, type mapping, keyset reads, savepoint-isolated writes, upsert, explain, server-side KILL QUERY for cancel | L |
 | 2.4 | MySQL contract runs: MySQL 8.0, 8.4; MariaDB 10.11, 11.4 | S |
 | 2.5 | MongoDB connector (official driver): URI/hosts, TLS, read preference, list databases/collections, sampled schema inference (`$sample` with fallback), Decimal128 rules, null vs missing, transactions on replica sets, resumable reads by `_id` | L |
 | 2.6 | MongoDB contract runs on a single-node replica set (7.0, 8.0) | S |
@@ -288,7 +316,6 @@ recovery tests pass for each of them.
 
 ## Immediate next steps
 
-1. Decide how the PostgreSQL contract suite gets a server (question 1).
-2. Commit the PostgreSQL connector.
-3. Start task 2.2 (`gazabridge-application` connection service) while waiting
-   on CI, then 2.3 (MySQL).
+1. Priority track P1 (MongoDB connector) and P2 (its contract runs).
+2. Then P3 → P12 in order.
+3. Then resume Milestone 2 at task 2.3 (MySQL).
