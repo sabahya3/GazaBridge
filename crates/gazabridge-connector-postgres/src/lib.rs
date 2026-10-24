@@ -17,6 +17,7 @@ mod types;
 mod write;
 
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -100,6 +101,45 @@ pub fn base_manifest() -> CapabilityManifest {
     }
 }
 
+/// Resolves `host` and returns the first address that accepts TCP.
+///
+/// tokio-postgres tries every resolved address and keeps going after *any*
+/// failure, so an authentication error on the first address would be
+/// replaced by, say, "connection refused" from an unreachable IPv6 address.
+/// Pinning one reachable address keeps the real error.
+async fn pick_address(host: &str, port: u16, timeout: Duration) -> ConnectorResult<Option<IpAddr>> {
+    if host.starts_with('/') || host.parse::<IpAddr>().is_ok() {
+        return Ok(None);
+    }
+    let addrs: Vec<_> = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| {
+            ConnectorError::from_driver(
+                ErrorKind::Connection,
+                format!("cannot resolve {host}: {e}"),
+                None,
+            )
+        })?
+        .collect();
+    let mut last = String::from("no addresses");
+    for addr in &addrs {
+        match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
+            Ok(Ok(_)) => return Ok(Some(addr.ip())),
+            Ok(Err(e)) => last = e.to_string(),
+            Err(_) => last = "timed out".into(),
+        }
+    }
+    Err(ConnectorError::from_driver(
+        if last == "timed out" {
+            ErrorKind::Timeout
+        } else {
+            ErrorKind::Connection
+        },
+        format!("could not reach {host}:{port} ({last})"),
+        None,
+    ))
+}
+
 fn quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
@@ -170,20 +210,31 @@ impl ConnectorFactory for PostgresConnectorFactory {
         let read_only = profile.read_only;
         let (tls, ssl_mode) = tls::connector(s.ssl_mode, &profile.tls)?;
 
+        let timeout = Duration::from_secs(u64::from(s.connect_timeout_secs.max(1)));
+        // `Config::host` appends, so the TLS name and address are set once.
+        let (tls_name, address) = match &profile.tls.server_name {
+            Some(name) => (
+                name.clone(),
+                Some(s.host.parse::<IpAddr>().map_err(|_| {
+                    ConnectorError::invalid_input(
+                        "a TLS server name override needs an IP address host",
+                    )
+                })?),
+            ),
+            None => (
+                s.host.clone(),
+                pick_address(&s.host, s.port, timeout).await?,
+            ),
+        };
         let mut cfg = tokio_postgres::Config::new();
-        cfg.host(&s.host)
+        cfg.host(&tls_name)
             .port(s.port)
             .dbname(&s.database)
             .user(&s.username)
-            .connect_timeout(Duration::from_secs(u64::from(
-                s.connect_timeout_secs.max(1),
-            )))
+            .connect_timeout(timeout)
             .ssl_mode(ssl_mode);
-        if let Some(server_name) = &profile.tls.server_name {
-            // Verify the certificate against this name instead of the host.
-            cfg.host(server_name).hostaddr(s.host.parse().map_err(|_| {
-                ConnectorError::invalid_input("a TLS server name override needs an IP address host")
-            })?);
+        if let Some(addr) = address {
+            cfg.hostaddr(addr);
         }
         if let Some(pw) = &secrets.password {
             cfg.password(pw.as_bytes());
@@ -197,7 +248,6 @@ impl ConnectorFactory for PostgresConnectorFactory {
                 recycling_method: RecyclingMethod::Fast,
             },
         );
-        let timeout = Duration::from_secs(u64::from(s.connect_timeout_secs.max(1)));
         let pool = Pool::builder(manager)
             .max_size(s.pool_size.max(1) as usize)
             .runtime(Runtime::Tokio1)

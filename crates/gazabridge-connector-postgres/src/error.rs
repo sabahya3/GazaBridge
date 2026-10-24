@@ -35,20 +35,33 @@ pub fn map_pg(e: tokio_postgres::Error) -> ConnectorError {
         }
         return ConnectorError::from_driver(kind, message, Some(code));
     }
+    // The useful cause (refused, DNS, TLS, timeout, auth) is in the source chain.
+    let mut message = e.to_string();
+    let mut source = std::error::Error::source(&e);
+    while let Some(cause) = source {
+        if let Some(db) = cause.downcast_ref::<tokio_postgres::error::DbError>() {
+            let code = db.code().code().to_owned();
+            return ConnectorError::from_driver(
+                kind_for_sqlstate(&code, db.message()),
+                db.message(),
+                Some(code),
+            );
+        }
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    let text = message.to_ascii_lowercase();
     let kind = if e.is_closed() {
         ErrorKind::Connection
+    } else if text.contains("password") || text.contains("authentication") {
+        ErrorKind::Authentication
+    } else if text.contains("timed out") {
+        ErrorKind::Timeout
     } else {
-        // I/O, TLS, protocol and authentication-handshake failures.
-        let text = e.to_string().to_ascii_lowercase();
-        if text.contains("password") || text.contains("authentication") {
-            ErrorKind::Authentication
-        } else if text.contains("timed out") {
-            ErrorKind::Timeout
-        } else {
-            ErrorKind::Connection
-        }
+        ErrorKind::Connection
     };
-    ConnectorError::from_driver(kind, format!("{e}"), None)
+    ConnectorError::from_driver(kind, message, None)
 }
 
 pub fn map_pool(e: deadpool_postgres::PoolError) -> ConnectorError {

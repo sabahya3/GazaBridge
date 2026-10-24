@@ -71,7 +71,7 @@ the app, and prove each connector with the contract suite.
 | # | Task | Size |
 |---|---|---|
 | ✅ 2.1 | Run the PostgreSQL contract suite on 13 and 17; fix findings; record evidence; promote `postgres.postgresql` if it passes — **done 2026-10-24**: passed on 13–17, two bugs fixed (EXPLAIN output type, ModifyTable rendering) | S–M |
-| 2.2 | `gazabridge-application` crate: `ConnectionService` (create, edit, duplicate, delete, test), secret storage and cleanup, audit events, server detection → `connector_metadata`, profile overrides applied to the live manifest | M |
+| ✅ 2.2 | `gazabridge-application` crate: `ConnectionService` (create, edit, duplicate, delete, test), secret storage and cleanup, audit events, server detection → `connector_metadata`, profile overrides applied to the live manifest — **done 2026-10-24**; also fixed two PostgreSQL connection bugs it exposed (auth errors masked by multi-address retries, TLS server-name override appending a host) | M |
 | 2.3 | MySQL/MariaDB connector (see decision D1): TLS modes, charset, SQL-mode detection, type mapping, keyset reads, savepoint-isolated writes, upsert, explain, server-side KILL QUERY for cancel | L |
 | 2.4 | MySQL contract runs: MySQL 8.0, 8.4; MariaDB 10.11, 11.4 | S |
 | 2.5 | MongoDB connector (official driver): URI/hosts, TLS, read preference, list databases/collections, sampled schema inference (`$sample` with fallback), Decimal128 rules, null vs missing, transactions on replica sets, resumable reads by `_id` | L |

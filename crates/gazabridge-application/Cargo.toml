@@ -1,0 +1,33 @@
+[package]
+name = "gazabridge-application"
+description = "Use-case services shared by the GazaBridge desktop app and CLI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+gazabridge-connectors.workspace = true
+gazabridge-domain.workspace = true
+gazabridge-plugin-sdk.workspace = true
+gazabridge-secrets.workspace = true
+gazabridge-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+gazabridge-connector-postgres.workspace = true
+gazabridge-connector-sqlite.workspace = true
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
