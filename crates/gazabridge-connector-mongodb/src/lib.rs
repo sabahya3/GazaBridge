@@ -142,10 +142,14 @@ async fn client_options(
         let mut c = Credential::default();
         c.username = Some(user.clone());
         c.password = secrets.password.as_ref().map(|p| p.to_string());
+        // Connection-string rule (as mongosh and Compass apply it): without
+        // authSource, users authenticate against the database in the path.
         c.source = s
             .auth_source
             .clone()
-            .or_else(|| opts.credential.as_ref().and_then(|c| c.source.clone()));
+            .or_else(|| opts.credential.as_ref().and_then(|c| c.source.clone()))
+            .or_else(|| s.default_database.clone())
+            .or_else(|| opts.default_database.clone());
         c.mechanism = opts.credential.as_ref().and_then(|c| c.mechanism.clone());
         opts.credential = Some(c);
     } else if let Some(c) = opts.credential.as_mut()
@@ -191,6 +195,20 @@ async fn client_options(
     Ok(opts)
 }
 
+/// Names the user and authentication database in login failures, the two
+/// things to check first.
+fn auth_hint(e: ConnectorError, login: Option<&(String, String)>) -> ConnectorError {
+    match (e.kind(), login) {
+        (ErrorKind::Authentication, Some((user, source))) => ConnectorError::new(
+            ErrorKind::Authentication,
+            format!(
+                "{e} (user `{user}`, authentication database `{source}`). Check the password, and set authSource / the authentication database to where the user was created."
+            ),
+        ),
+        _ => e,
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MongoConnectorFactory;
 
@@ -227,13 +245,18 @@ impl ConnectorFactory for MongoConnectorFactory {
             ));
         }
         let opts = client_options(profile, s, &secrets).await?;
+        let login = opts.credential.as_ref().and_then(|c| {
+            c.username
+                .clone()
+                .map(|u| (u, c.source.clone().unwrap_or_else(|| "admin".into())))
+        });
         let client = Client::with_options(opts).map_err(error::map_mongo)?;
         // Surface connection and authentication errors now.
         let hello = client
             .database("admin")
             .run_command(doc! { "hello": 1 })
             .await
-            .map_err(error::map_mongo)?;
+            .map_err(|e| auth_hint(error::map_mongo(e), login.as_ref()))?;
         let transactions = hello.contains_key("setName") || hello.get_str("msg") == Ok("isdbgrid");
         let base = manifest(transactions);
         let manifest = if profile.read_only {
