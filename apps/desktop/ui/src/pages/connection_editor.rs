@@ -2,9 +2,9 @@
 //! draft testing and saving.
 
 use gazabridge_ipc::{
-    ConnectionDetails, ConnectionForm, EngineForm, MongoForm, MySqlForm, PasswordChoice,
-    PasswordMode, PostgresForm, ProfileSummary, SaveConnectionArgs, SqliteForm, TestResultDto,
-    TlsForm, commands,
+    ConnectionDetails, ConnectionForm, EngineForm, MongoForm, MySqlForm, ParseStringArgs,
+    ParsedStringDto, PasswordChoice, PasswordMode, PostgresForm, ProfileSummary,
+    SaveConnectionArgs, SqliteForm, TestResultDto, TlsForm, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -160,8 +160,14 @@ fn mysql_fields(form: RwSignal<ConnectionForm>) -> impl IntoView {
 fn mongo_fields(form: RwSignal<ConnectionForm>) -> impl IntoView {
     let ui = use_ui();
     view! {
-        {text_field(ui.tr("editor.uri"), move || get_mongo(form, |p| p.uri.clone().unwrap_or_default()), move |v| set_mongo(form, |p| p.uri = opt_string(v)), "text")}
-        <p class="muted small">{ui.tr("editor.uri_help")}</p>
+        {move || get_mongo(form, |p| p.uri.clone()).map(|uri| view! {
+            <div class="field">
+                <span>{ui.tr("editor.uri")}</span>
+                <code class="mono small uri-readonly"><bdi>{uri}</bdi></code>
+                <span class="muted small">{ui.tr("editor.uri_help")}</span>
+                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| set_mongo(form, |p| p.uri = None)>{ui.tr("editor.use_hosts")}</button>
+            </div>
+        })}
         {text_field(
             ui.tr("editor.hosts"),
             move || get_mongo(form, |p| p.hosts.join(", ")),
@@ -206,6 +212,25 @@ fn mode_key(mode: &PasswordMode) -> &'static str {
         PasswordMode::Session => "editor.pw_session",
         PasswordMode::Env { .. } => "editor.pw_env",
         PasswordMode::Prompt => "editor.pw_ask",
+    }
+}
+
+const COLORS: [(&str, &str); 7] = [
+    ("", "editor.color_none"),
+    ("#2e7d32", "editor.color_green"),
+    ("#1565c0", "editor.color_blue"),
+    ("#c62828", "editor.color_red"),
+    ("#ef6c00", "editor.color_orange"),
+    ("#6a1b9a", "editor.color_purple"),
+    ("#00838f", "editor.color_teal"),
+];
+
+fn family_label(family: &str) -> &'static str {
+    match family {
+        "postgres" => "PostgreSQL",
+        "mysql" => "MySQL",
+        "mongodb" => "MongoDB",
+        _ => "SQLite",
     }
 }
 
@@ -261,7 +286,12 @@ pub fn ConnectionEditor(
     });
     let test = RwSignal::new(None::<Result<TestResultDto, String>>);
     let busy = RwSignal::new(false);
+    let testing = RwSignal::new(false);
     let error = RwSignal::new(None::<String>);
+    // The connection string box: parsed into the form; its password is sent
+    // again on test/save so the backend can store it securely.
+    let uri_text = RwSignal::new(String::new());
+    let uri_note = RwSignal::new(None::<Result<(String, bool), String>>);
 
     let families: Vec<&'static str> = ["postgres", "mysql", "mongodb", "sqlite"]
         .into_iter()
@@ -287,12 +317,50 @@ pub fn ConnectionEditor(
         }
     };
 
+    let connection_string = move || {
+        let t = uri_text.get_untracked();
+        (!t.trim().is_empty()).then_some(t)
+    };
+
+    let parse_uri = move || {
+        let text = uri_text.get_untracked();
+        if text.trim().is_empty() {
+            uri_note.set(None);
+            return;
+        }
+        spawn_local(async move {
+            let args = ParseStringArgs { text };
+            match call::<_, ParsedStringDto>(
+                commands::PARSE_CONNECTION_STRING,
+                &Wrap { args: &args },
+            )
+            .await
+            {
+                Ok(p) => {
+                    let family = p.form.engine.family().to_owned();
+                    form.update(|f| {
+                        f.engine = p.form.engine;
+                        f.profile_id = p.form.profile_id;
+                        f.tls = p.form.tls;
+                        if f.name.trim().is_empty() {
+                            f.name = p.suggested_name;
+                        }
+                    });
+                    uri_note.set(Some(Ok((family, p.has_password))));
+                }
+                Err(e) => uri_note.set(Some(Err(e.message))),
+            }
+        });
+    };
+
     let run_test = move |_| {
         busy.set(true);
+        testing.set(true);
         test.set(None);
         let args = SaveConnectionArgs {
             form: form.get_untracked(),
             password: choice(),
+            connection_string: connection_string(),
         };
         spawn_local(async move {
             let r =
@@ -300,21 +368,29 @@ pub fn ConnectionEditor(
                     .await;
             test.set(Some(r.map_err(|e| e.message)));
             busy.set(false);
+            testing.set(false);
         });
     };
 
-    let save = move |_| {
+    let save = move |open_after: bool| {
         busy.set(true);
         error.set(None);
         let args = SaveConnectionArgs {
             form: form.get_untracked(),
             password: choice(),
+            connection_string: connection_string(),
         };
         spawn_local(async move {
             match call::<_, ConnectionDetails>(commands::SAVE_CONNECTION, &Wrap { args: &args })
                 .await
             {
-                Ok(_) => on_done.run(()),
+                Ok(saved) => {
+                    if open_after {
+                        ui.open_connection.set(saved.form.id.clone());
+                        ui.section.set(crate::nav::Section::Explorer);
+                    }
+                    on_done.run(());
+                }
                 Err(e) => error.set(Some(e.message)),
             }
             busy.set(false);
@@ -327,7 +403,47 @@ pub fn ConnectionEditor(
         <section class="card editor" aria-labelledby="editor-title">
             <h2 id="editor-title">{if is_new { ui.tr("editor.new_title") } else { ui.tr("editor.edit_title") }}</h2>
 
-            {text_field(ui.tr("editor.name"), move || form.with(|f| f.name.clone()), move |v| form.update(|f| f.name = v), "text")}
+            <label class="field field-wide">
+                <span>{ui.tr("editor.connection_string")}</span>
+                <textarea
+                    class="input mono uri-input"
+                    rows="3"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder="mongodb://user:password@localhost:27017/mydb"
+                    prop:value=move || uri_text.get()
+                    on:input=move |e| uri_text.set(event_target_value(&e))
+                    on:change=move |_| parse_uri()
+                    on:paste=move |_| set_timeout(parse_uri, std::time::Duration::from_millis(0))
+                ></textarea>
+                {move || match uri_note.get() {
+                    None => view! { <span class="muted small">{if is_new { ui.tr("editor.connection_string_help") } else { ui.tr("editor.connection_string_replace") }}</span> }.into_any(),
+                    Some(Ok((family, has_password))) => view! {
+                        <span class="notice-ok small">
+                            {format!("{} {}", ui.text("editor.detected"), family_label(&family))}
+                            {has_password.then(|| format!(" · {}", ui.text("editor.password_moved")))}
+                        </span>
+                    }.into_any(),
+                    Some(Err(e)) => view! { <span class="error-detail small">{e}</span> }.into_any(),
+                }}
+            </label>
+
+            <div class="field-row">
+                {text_field(ui.tr("editor.name"), move || form.with(|f| f.name.clone()), move |v| form.update(|f| f.name = v), "text")}
+                <label class="field">
+                    <span>{ui.tr("editor.color")}</span>
+                    <select class="input" on:change=move |e| { let v = event_target_value(&e); form.update(|f| f.color = (!v.is_empty()).then_some(v)); }>
+                        {COLORS.iter().map(|(value, key)| {
+                            let value = *value;
+                            view! { <option value=value selected=move || form.with(|f| f.color.as_deref().unwrap_or("") == value)>{ui.tr(key)}</option> }
+                        }).collect_view()}
+                    </select>
+                </label>
+            </div>
+            {check_field(ui.tr("connections.favorite"), move || form.with(|f| f.favorite), move |v| form.update(|f| f.favorite = v))}
+
+            <details class="advanced">
+            <summary>{ui.tr("editor.advanced")}</summary>
 
             <label class="field">
                 <span>{ui.tr("editor.engine")}</span>
@@ -422,7 +538,6 @@ pub fn ConnectionEditor(
             <fieldset class="field-group">
                 <legend>{ui.tr("editor.organisation")}</legend>
                 {check_field(ui.tr("connections.read_only"), move || form.with(|f| f.read_only), move |v| form.update(|f| f.read_only = v))}
-                {check_field(ui.tr("connections.favorite"), move || form.with(|f| f.favorite), move |v| form.update(|f| f.favorite = v))}
                 {text_field(
                     ui.tr("editor.tags"),
                     move || form.with(|f| f.tags.join(", ")),
@@ -431,10 +546,16 @@ pub fn ConnectionEditor(
                 )}
             </fieldset>
 
-            <div class="toolbar">
-                <button type="button" class="btn btn-secondary" disabled=move || busy.get() on:click=run_test>{ui.tr("editor.test")}</button>
-                <button type="button" class="btn" disabled=move || busy.get() on:click=save>{ui.tr("editor.save")}</button>
+            </details>
+
+            <div class="toolbar editor-actions">
                 <button type="button" class="btn btn-secondary" on:click=move |_| on_done.run(())>{ui.tr("common.cancel")}</button>
+                <span class="spacer"></span>
+                <button type="button" class="btn btn-secondary" disabled=move || busy.get() aria-busy=move || testing.get().to_string() on:click=run_test>
+                    {move || if testing.get() { ui.text("editor.testing") } else { ui.text("editor.test") }}
+                </button>
+                <button type="button" class="btn btn-secondary" disabled=move || busy.get() on:click=move |_| save(false)>{ui.tr("editor.save")}</button>
+                <button type="button" class="btn" disabled=move || busy.get() on:click=move |_| save(true)>{ui.tr("editor.save_connect")}</button>
             </div>
 
             <div role="status" aria-live="polite">
@@ -472,7 +593,19 @@ pub fn TestResultView(result: TestResultDto) -> impl IntoView {
             <span>{summary}</span>
             {result.status.clone().map(|s| view! { <span class="badge">{s}</span> })}
             {result.detected_profile.clone().map(|d| view! { <span class="muted small">{ui.tr("editor.detected")}": "{d}</span> })}
-            {result.error.clone().map(|e| view! { <p class="error-detail">{e}</p> })}
+            {result.error.clone().map(|e| {
+                // Plain-language summary first; the driver's text on demand.
+                let (summary, details) = match e.split_once("\n\nDetails: ") {
+                    Some((s, d)) => (s.to_owned(), Some(d.to_owned())),
+                    None => (e, None),
+                };
+                view! {
+                    <p class="error-summary">{summary}</p>
+                    {details.map(|d| view! {
+                        <details><summary class="small">{ui.tr("connections.error_details")}</summary><p class="error-detail">{d}</p></details>
+                    })}
+                }
+            })}
             <ul>
                 {result.findings.iter().map(|f| view! { <li class=format!("finding finding-{}", f.severity)>{f.message.clone()}</li> }).collect_view()}
             </ul>

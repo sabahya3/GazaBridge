@@ -70,7 +70,8 @@ fn op_key(op: FilterOp) -> &'static str {
 pub fn ExplorerPage() -> impl IntoView {
     let ui = use_ui();
     let connections = RwSignal::new(Load::<Vec<ConnectionSummary>>::Loading);
-    let connection = RwSignal::new(None::<String>);
+    let connection = RwSignal::new(ui.open_connection.get_untracked());
+    ui.open_connection.set(None);
     let object = RwSignal::new(None::<ObjectAddr>);
 
     let load = move || {

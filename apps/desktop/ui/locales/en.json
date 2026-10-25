@@ -313,5 +313,22 @@
   "transfer.start_import": "Import",
   "transfer.stop_on_error": "Stop when the database rejects a record",
   "transfer.updated": "Updated",
-  "transfer.use_filter": "Only records matching the current filter"
+  "transfer.use_filter": "Only records matching the current filter",
+  "editor.connection_string": "Connection string",
+  "editor.connection_string_help": "Paste a mongodb://, mongodb+srv://, postgres:// or mysql:// link. Everything else is filled in from it.",
+  "editor.connection_string_replace": "Paste a connection string to replace these settings, or change them under Advanced connection options.",
+  "editor.password_moved": "the password will be kept in the system keychain, not in GazaBridge's files",
+  "editor.color": "Color",
+  "editor.color_none": "No color",
+  "editor.color_green": "Green",
+  "editor.color_blue": "Blue",
+  "editor.color_red": "Red",
+  "editor.color_orange": "Orange",
+  "editor.color_purple": "Purple",
+  "editor.color_teal": "Teal",
+  "editor.advanced": "Advanced connection options",
+  "editor.testing": "Testing…",
+  "editor.save_connect": "Save & Connect",
+  "editor.use_hosts": "Use host list instead",
+  "connections.error_details": "Details"
 }

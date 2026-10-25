@@ -3,10 +3,11 @@
 //! Each command is a thin Tauri wrapper around an `*_impl` function that
 //! takes `&AppState`, so the logic is testable without a WebView.
 
-use gazabridge_application::AppError;
+use gazabridge_application::{AppError, PasswordInput};
 use gazabridge_domain::ids::ConnectionId;
 use gazabridge_ipc::{
-    CommandError, ConnectionDetails, FromStringArgs, SaveConnectionArgs, TestResultDto,
+    CommandError, ConnectionDetails, FromStringArgs, ParseStringArgs, ParsedStringDto,
+    SaveConnectionArgs, TestResultDto,
 };
 use tauri::State;
 
@@ -55,8 +56,13 @@ pub async fn save_connection_impl(
     state: &AppState,
     args: SaveConnectionArgs,
 ) -> Result<ConnectionDetails, CommandError> {
-    let password = forms::password_input(&args.password);
-    let saved = match &args.form.id {
+    let (form, password) = forms::prepare(
+        &args.form,
+        &args.password,
+        args.connection_string.as_deref(),
+    )
+    .map_err(form_error)?;
+    let saved = match &form.id {
         Some(id) => {
             let existing = state
                 .store
@@ -64,13 +70,13 @@ pub async fn save_connection_impl(
                 .require(parse_id(id)?)
                 .await
                 .map_err(|e| app_error(state, e.into()))?;
-            let profile = forms::profile_from(&args.form, Some(&existing)).map_err(form_error)?;
+            let profile = forms::profile_from(&form, Some(&existing)).map_err(form_error)?;
             // Browsing sessions must not keep using the old settings.
             state.explorer.disconnect(existing.id).await;
             state.connections.update(profile, password).await
         }
         None => {
-            let profile = forms::profile_from(&args.form, None).map_err(form_error)?;
+            let profile = forms::profile_from(&form, None).map_err(form_error)?;
             state.connections.create(profile, password).await
         }
     }
@@ -93,6 +99,31 @@ pub async fn create_from_string_impl(
     Ok(ConnectionDetails {
         form: forms::form_from(&profile),
         password_mode: forms::password_mode(&profile),
+    })
+}
+
+/// Reads a connection string into an editor form without saving anything.
+/// The password stays out of the result; the editor keeps the text and
+/// sends it again on save so the password goes to secure storage.
+pub fn parse_string_impl(text: &str) -> Result<ParsedStringDto, CommandError> {
+    let parsed =
+        gazabridge_domain::connection_string::parse(text.trim()).map_err(|e| CommandError {
+            code: "invalid_input".into(),
+            message: e.to_string(),
+        })?;
+    let suggested_name = forms::suggested_name(&parsed.settings);
+    let profile = gazabridge_domain::connection::ConnectionProfile::new(
+        suggested_name.clone(),
+        parsed.compatibility_profile,
+        parsed.settings,
+    );
+    let mut form = forms::form_from(&profile);
+    form.id = None;
+    Ok(ParsedStringDto {
+        form,
+        has_password: parsed.password.is_some(),
+        suggested_name,
+        warnings: parsed.warnings,
     })
 }
 
@@ -149,16 +180,26 @@ pub async fn test_draft_impl(
         ),
         None => None,
     };
-    let profile = forms::profile_from(&args.form, existing.as_ref()).map_err(form_error)?;
-    let typed = match &args.password {
-        gazabridge_ipc::PasswordChoice::Remember { password }
-        | gazabridge_ipc::PasswordChoice::SessionOnly { password } => {
-            Some(zeroize::Zeroizing::new(password.clone()))
-        }
+    let (form, input) = forms::prepare(
+        &args.form,
+        &args.password,
+        args.connection_string.as_deref(),
+    )
+    .map_err(form_error)?;
+    let profile = forms::profile_from(&form, existing.as_ref()).map_err(form_error)?;
+    let typed = match input {
+        PasswordInput::Remember(p) | PasswordInput::SessionOnly(p) => Some(p),
         _ => None,
     };
     let outcome = state.connections.test_draft(&profile, typed).await;
     Ok(forms::test_result(&outcome))
+}
+
+#[tauri::command]
+pub async fn parse_connection_string(
+    args: ParseStringArgs,
+) -> Result<ParsedStringDto, CommandError> {
+    parse_string_impl(&args.text)
 }
 
 #[tauri::command]
@@ -255,6 +296,7 @@ mod tests {
             SaveConnectionArgs {
                 form: form.clone(),
                 password: PasswordChoice::None,
+                connection_string: None,
             },
         )
         .await
@@ -268,6 +310,7 @@ mod tests {
             SaveConnectionArgs {
                 form,
                 password: PasswordChoice::None,
+                connection_string: None,
             },
         )
         .await
@@ -280,6 +323,7 @@ mod tests {
             SaveConnectionArgs {
                 form: edited,
                 password: PasswordChoice::Keep,
+                connection_string: None,
             },
         )
         .await
@@ -322,6 +366,7 @@ mod tests {
             SaveConnectionArgs {
                 form,
                 password: PasswordChoice::None,
+                connection_string: None,
             },
         )
         .await

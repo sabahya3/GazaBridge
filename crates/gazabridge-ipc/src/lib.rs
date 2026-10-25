@@ -30,6 +30,7 @@ pub mod commands {
     pub const DUPLICATE_CONNECTION: &str = "duplicate_connection";
     pub const TEST_CONNECTION: &str = "test_connection";
     pub const TEST_CONNECTION_DRAFT: &str = "test_connection_draft";
+    pub const PARSE_CONNECTION_STRING: &str = "parse_connection_string";
     pub const EXPLORER_LIST: &str = "explorer_list";
     pub const EXPLORER_BROWSE: &str = "explorer_browse";
     pub const EXPLORER_COUNT: &str = "explorer_count";

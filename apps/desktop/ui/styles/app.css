@@ -475,3 +475,17 @@ legend { font-weight: 600; padding-inline: 4px; }
 /* Export / import */
 .transfer h3 { margin: 0; }
 .path-row .input { flex: 1 1 260px; min-inline-size: 0; }
+
+/* Connection editor: connection string first */
+.editor .field-wide { max-inline-size: none; }
+.uri-input { inline-size: 100%; box-sizing: border-box; resize: vertical; font-size: 13px; }
+.field-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.field-row .field { flex: 1 1 220px; }
+.advanced { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; }
+.advanced > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.advanced[open] > summary { margin-block-end: 10px; }
+.advanced > .field, .advanced > .field-group { margin-block-end: 12px; }
+.editor-actions .spacer { flex: 1; }
+.uri-readonly { overflow-wrap: anywhere; }
+.error-summary { margin: 4px 0; }
+.field > .btn { justify-self: start; }

@@ -17,6 +17,8 @@ use crate::pages::{
 pub struct Ui {
     pub prefs: RwSignal<Preferences>,
     pub section: RwSignal<Section>,
+    /// Connection the Explorer should open next ("Save & Connect").
+    pub open_connection: RwSignal<Option<String>>,
 }
 
 impl Ui {
@@ -34,6 +36,7 @@ pub fn use_ui() -> Ui {
     use_context::<Ui>().unwrap_or_else(|| Ui {
         prefs: RwSignal::new(Preferences::default()),
         section: RwSignal::new(Section::Home),
+        open_connection: RwSignal::new(None),
     })
 }
 
@@ -62,6 +65,7 @@ pub fn App() -> impl IntoView {
     let ui = Ui {
         prefs: RwSignal::new(Preferences::default()),
         section: RwSignal::new(Section::Home),
+        open_connection: RwSignal::new(None),
     };
     provide_context(ui);
 

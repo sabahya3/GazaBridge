@@ -313,5 +313,22 @@
   "transfer.start_import": "استيراد",
   "transfer.stop_on_error": "التوقف عندما ترفض قاعدة البيانات سجلًا",
   "transfer.updated": "حُدّث",
-  "transfer.use_filter": "فقط السجلات المطابقة للتصفية الحالية"
+  "transfer.use_filter": "فقط السجلات المطابقة للتصفية الحالية",
+  "editor.connection_string": "سلسلة الاتصال",
+  "editor.connection_string_help": "الصق رابط mongodb:// أو mongodb+srv:// أو postgres:// أو mysql://. يتم ملء باقي الإعدادات منه.",
+  "editor.connection_string_replace": "الصق سلسلة اتصال لاستبدال هذه الإعدادات، أو عدّلها من خيارات الاتصال المتقدمة.",
+  "editor.password_moved": "ستُحفظ كلمة المرور في سلسلة مفاتيح النظام، وليس في ملفات GazaBridge",
+  "editor.color": "اللون",
+  "editor.color_none": "بدون لون",
+  "editor.color_green": "أخضر",
+  "editor.color_blue": "أزرق",
+  "editor.color_red": "أحمر",
+  "editor.color_orange": "برتقالي",
+  "editor.color_purple": "بنفسجي",
+  "editor.color_teal": "أزرق مخضر",
+  "editor.advanced": "خيارات الاتصال المتقدمة",
+  "editor.testing": "جارٍ الاختبار…",
+  "editor.save_connect": "حفظ واتصال",
+  "editor.use_hosts": "استخدام قائمة المضيفين بدلًا منه",
+  "connections.error_details": "التفاصيل"
 }

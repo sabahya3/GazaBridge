@@ -125,6 +125,88 @@ fn tls_from(t: &TlsForm) -> TlsSettings {
 
 /// Builds a profile from a form. `existing` supplies the id, timestamps and
 /// secret references of the connection being edited.
+/// Treats a MongoDB URI typed into the editor the way pasting a connection
+/// string does: credentials leave the URI (the password is returned for
+/// secure storage, never saved in settings) and the URI decides hosts, TLS
+/// and the options it states; empty form fields are filled from it.
+fn normalize_mongo(form: &mut MongoForm) -> Result<Option<Zeroizing<String>>, FormError> {
+    let Some(uri) = opt(&form.uri) else {
+        return Ok(None);
+    };
+    let parsed =
+        gazabridge_domain::connection_string::parse(&uri).map_err(|e| FormError(e.to_string()))?;
+    let ConnectionSettings::MongoDb(u) = parsed.settings else {
+        return Err(FormError(
+            "expected a mongodb:// or mongodb+srv:// URI".into(),
+        ));
+    };
+    let keep = |from_uri: Option<String>, form: &Option<String>| from_uri.or_else(|| opt(form));
+    form.uri = u.uri;
+    form.hosts.clear();
+    form.username = keep(u.username, &form.username);
+    form.auth_source = keep(u.auth_source, &form.auth_source);
+    form.replica_set = keep(u.replica_set, &form.replica_set);
+    form.default_database = keep(u.default_database, &form.default_database);
+    // A plain mongodb:// URI means no TLS unless it says tls=true.
+    form.tls = u.tls;
+    form.direct_connection = form.direct_connection || u.direct_connection;
+    Ok(parsed.password)
+}
+
+/// Normalises the form and decides which password input applies. A
+/// password typed in the password field wins over one inside a URI (the
+/// editor's URI box or a MongoDB URI field).
+pub fn prepare(
+    form: &ConnectionForm,
+    choice: &PasswordChoice,
+    connection_string: Option<&str>,
+) -> Result<(ConnectionForm, PasswordInput), FormError> {
+    let mut form = form.clone();
+    let mut from_uri = match &mut form.engine {
+        EngineForm::MongoDb(m) => normalize_mongo(m)?,
+        _ => None,
+    };
+    if from_uri.is_none()
+        && let Some(text) = connection_string.map(str::trim).filter(|t| !t.is_empty())
+    {
+        from_uri = gazabridge_domain::connection_string::parse(text)
+            .map_err(|e| FormError(e.to_string()))?
+            .password;
+    }
+    let typed = matches!(choice,
+        PasswordChoice::Remember { password } | PasswordChoice::SessionOnly { password } if !password.is_empty());
+    let input = match from_uri {
+        Some(pw) if !typed => match choice {
+            PasswordChoice::SessionOnly { .. } => PasswordInput::SessionOnly(pw),
+            _ => PasswordInput::Remember(pw),
+        },
+        _ => password_input(choice),
+    };
+    Ok((form, input))
+}
+
+/// Default name for a connection read from a string: `host:port`, or the
+/// file name for SQLite.
+pub fn suggested_name(settings: &ConnectionSettings) -> String {
+    match settings {
+        ConnectionSettings::Postgres(s) => format!("{}:{}", s.host, s.port),
+        ConnectionSettings::MySql(s) => format!("{}:{}", s.host, s.port),
+        ConnectionSettings::MongoDb(s) => match s.hosts.first() {
+            Some(h) => format!("{}:{}", h.host, h.port),
+            None => s
+                .uri
+                .as_deref()
+                .and_then(|u| u.split_once("://"))
+                .map(|(_, rest)| rest.split(['/', '?']).next().unwrap_or(rest).to_owned())
+                .unwrap_or_else(|| "MongoDB".into()),
+        },
+        ConnectionSettings::Sqlite(s) => s
+            .path
+            .file_name()
+            .map_or_else(|| "SQLite".into(), |n| n.to_string_lossy().into_owned()),
+    }
+}
+
 pub fn profile_from(
     form: &ConnectionForm,
     existing: Option<&ConnectionProfile>,
@@ -379,5 +461,81 @@ mod tests {
             &SecretRef::keychain_for(id, "password")
         );
         assert_eq!(password_mode(&edited), PasswordMode::Keychain);
+    }
+
+    #[test]
+    fn a_uri_typed_in_the_editor_behaves_like_a_pasted_one() {
+        let EngineForm::MongoDb(mut m) = EngineForm::default_for("mongodb").unwrap() else {
+            unreachable!()
+        };
+        m.tls = true; // the form default must not override the URI
+        m.uri = Some("mongodb://ahmed:secret-pw@localhost:27017/dev".into());
+        let f = form(EngineForm::MongoDb(m), "mongodb.community");
+        let (prepared, input) = prepare(&f, &PasswordChoice::Keep, None).unwrap();
+        let EngineForm::MongoDb(m) = &prepared.engine else {
+            unreachable!()
+        };
+        assert_eq!(m.uri.as_deref(), Some("mongodb://localhost:27017/dev"));
+        assert_eq!(m.username.as_deref(), Some("ahmed"));
+        assert_eq!(m.default_database.as_deref(), Some("dev"));
+        assert!(!m.tls, "plain mongodb:// means no TLS");
+        assert!(matches!(input, PasswordInput::Remember(ref p) if p.as_str() == "secret-pw"));
+        // The saved profile validates: no password left in the URI.
+        profile_from(&prepared, None).unwrap().validate().unwrap();
+
+        // A password typed in the password field wins.
+        let typed = PasswordChoice::SessionOnly {
+            password: "typed".into(),
+        };
+        let (_, input) = prepare(&f, &typed, None).unwrap();
+        assert!(matches!(input, PasswordInput::SessionOnly(ref p) if p.as_str() == "typed"));
+
+        // tls=true in the URI is honoured.
+        let EngineForm::MongoDb(mut m) = EngineForm::default_for("mongodb").unwrap() else {
+            unreachable!()
+        };
+        m.uri = Some("mongodb://h:27017/?tls=true&authSource=admin".into());
+        let (prepared, _) = prepare(
+            &form(EngineForm::MongoDb(m), "mongodb.community"),
+            &PasswordChoice::None,
+            None,
+        )
+        .unwrap();
+        let EngineForm::MongoDb(m) = &prepared.engine else {
+            unreachable!()
+        };
+        assert!(m.tls);
+        assert_eq!(m.auth_source.as_deref(), Some("admin"));
+    }
+
+    #[test]
+    fn the_connection_string_box_supplies_only_the_password() {
+        let EngineForm::Postgres(p) = EngineForm::default_for("postgres").unwrap() else {
+            unreachable!()
+        };
+        let f = form(EngineForm::Postgres(p), "postgres.postgresql");
+        let (_, input) = prepare(
+            &f,
+            &PasswordChoice::Keep,
+            Some("postgres://u:from-uri@h/db"),
+        )
+        .unwrap();
+        assert!(matches!(input, PasswordInput::Remember(ref p) if p.as_str() == "from-uri"));
+        assert!(matches!(
+            prepare(&f, &PasswordChoice::None, None).unwrap().1,
+            PasswordInput::None
+        ));
+    }
+
+    #[test]
+    fn suggested_names_use_host_and_port() {
+        let parsed =
+            gazabridge_domain::connection_string::parse("mongodb://a:b@localhost:27017/dev")
+                .unwrap();
+        assert_eq!(suggested_name(&parsed.settings), "localhost:27017");
+        let parsed =
+            gazabridge_domain::connection_string::parse("mongodb+srv://c0.abcd.mongodb.net/x")
+                .unwrap();
+        assert_eq!(suggested_name(&parsed.settings), "c0.abcd.mongodb.net");
     }
 }

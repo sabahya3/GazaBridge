@@ -21,6 +21,48 @@ pub fn kind_for_code(code: i32) -> ErrorKind {
     }
 }
 
+/// Separates the plain-language explanation from the driver's own text.
+pub const DETAILS_MARKER: &str = "\n\nDetails: ";
+
+/// Turns the driver's server-selection report (a dump of the topology) into
+/// a sentence saying what to check, keeping the original as details.
+pub fn explain_selection(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    let address = raw
+        .split("Address: ")
+        .nth(1)
+        .and_then(|rest| rest.split([',', ' ']).next())
+        .unwrap_or("the server");
+    let hint = if lower.contains("tls handshake")
+        || lower.contains("invalidcontenttype")
+        || lower.contains("corrupt message")
+        || (lower.contains("tls") && lower.contains("eof"))
+    {
+        format!(
+            "Could not start an encrypted (TLS) connection to {address}: the server does not seem to use TLS. For a local server without TLS, turn TLS off or remove tls=true from the connection string."
+        )
+    } else if lower.contains("certificate") {
+        format!(
+            "The TLS certificate of {address} was not accepted. Check the CA certificate setting or the server name."
+        )
+    } else if lower.contains("connection refused") {
+        format!(
+            "Nothing is accepting connections at {address}. Check that MongoDB is running and that the host and port are right."
+        )
+    } else if lower.contains("lookup") || lower.contains("nodename") || lower.contains("dns") {
+        format!(
+            "The host name in {address} could not be found. Check the spelling, your network or VPN."
+        )
+    } else if lower.contains("setname") || lower.contains("replica set") {
+        "The server is not part of the replica set named in the connection. Check the replicaSet option, or use a direct connection.".to_owned()
+    } else {
+        format!(
+            "No MongoDB server answered at {address} in time. Check the address, firewall or VPN, and that the server is running."
+        )
+    };
+    format!("{hint}{DETAILS_MARKER}{raw}")
+}
+
 pub fn map_mongo(e: Error) -> ConnectorError {
     let transient =
         e.contains_label("TransientTransactionError") || e.contains_label("RetryableWriteError");
@@ -43,7 +85,7 @@ pub fn map_mongo(e: Error) -> ConnectorError {
             (ErrorKind::Authentication, message.clone(), None)
         }
         MongoKind::ServerSelection { message, .. } => {
-            (ErrorKind::Connection, message.clone(), None)
+            (ErrorKind::Connection, explain_selection(message), None)
         }
         MongoKind::DnsResolve { message, .. } => (ErrorKind::Connection, message.clone(), None),
         MongoKind::Io(io) => (ErrorKind::Connection, io.to_string(), None),
@@ -72,6 +114,25 @@ pub fn map_mongo(e: Error) -> ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_failures_say_what_to_check() {
+        let tls = "Server selection timeout: No available servers. Topology: { Type: Unknown, Servers: [ { Address: localhost:27017, Type: Unknown, Error: Kind: I/O error: tls handshake eof, labels: {} } ] }";
+        let msg = explain_selection(tls);
+        assert!(
+            msg.starts_with("Could not start an encrypted (TLS) connection to localhost:27017"),
+            "{msg}"
+        );
+        assert!(msg.contains(DETAILS_MARKER));
+        assert!(
+            explain_selection("Address: h:1, Error: Connection refused (os error 61)")
+                .starts_with("Nothing is accepting connections at h:1")
+        );
+        assert!(
+            explain_selection("something else")
+                .starts_with("No MongoDB server answered at the server")
+        );
+    }
 
     #[test]
     fn codes_are_classified() {

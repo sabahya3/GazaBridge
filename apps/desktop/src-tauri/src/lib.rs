@@ -40,6 +40,7 @@ pub fn run() {
             connection_commands::duplicate_connection,
             connection_commands::test_connection,
             connection_commands::test_connection_draft,
+            connection_commands::parse_connection_string,
             explorer_commands::explorer_list,
             explorer_commands::explorer_browse,
             explorer_commands::explorer_count,

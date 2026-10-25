@@ -577,7 +577,7 @@ fn parse_mongo_uri(s: &str) -> Result<ParsedConnection, ParseError> {
         tls: srv,
         read_preference: ReadPreference::default(),
         direct_connection: false,
-        server_selection_timeout_ms: 30_000,
+        server_selection_timeout_ms: 10_000,
         connect_timeout_ms: 10_000,
     };
     let mut warnings = Vec::new();

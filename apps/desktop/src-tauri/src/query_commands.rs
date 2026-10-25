@@ -348,6 +348,7 @@ mod tests {
             SaveConnectionArgs {
                 form,
                 password: PasswordChoice::None,
+                connection_string: None,
             },
         )
         .await

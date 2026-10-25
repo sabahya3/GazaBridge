@@ -558,7 +558,7 @@ fn default_connect_timeout_ms() -> u64 {
     10_000
 }
 fn default_server_selection() -> u64 {
-    30_000
+    10_000
 }
 fn default_pool() -> u32 {
     4

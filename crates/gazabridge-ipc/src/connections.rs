@@ -122,7 +122,7 @@ impl EngineForm {
                 tls: true,
                 read_preference: "primary".into(),
                 direct_connection: false,
-                server_selection_timeout_ms: 30_000,
+                server_selection_timeout_ms: 10_000,
                 connect_timeout_ms: 10_000,
             }),
             "sqlite" => Self::Sqlite(SqliteForm {
@@ -217,6 +217,24 @@ pub struct ConnectionDetails {
 pub struct SaveConnectionArgs {
     pub form: ConnectionForm,
     pub password: PasswordChoice,
+    /// The connection string the form was read from, if any. Only its
+    /// password is used (moved to secure storage); the form is authoritative.
+    #[serde(default)]
+    pub connection_string: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParseStringArgs {
+    pub text: String,
+}
+
+/// A connection string read into an editor form. Carries no password.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParsedStringDto {
+    pub form: ConnectionForm,
+    pub has_password: bool,
+    pub suggested_name: String,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
