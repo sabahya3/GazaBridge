@@ -226,6 +226,103 @@ fn GroupEditor(ctx: Ctx, path: Vec<usize>) -> impl IntoView {
     }
 }
 
+/// Which text box a problem belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Filter,
+    Project,
+    Sort,
+    Builder,
+}
+
+/// A problem shown under the bar, with an optional corrected text.
+#[derive(Debug, Clone, PartialEq)]
+struct Problem {
+    part: Part,
+    message: String,
+    fix: Option<String>,
+}
+
+/// Searchable picker: chosen fields as chips, the rest in a short list.
+#[component]
+fn FieldPicker(
+    fields: Signal<Vec<(String, Option<ValueType>)>>,
+    chosen: RwSignal<Vec<String>>,
+) -> impl IntoView {
+    let ui = use_ui();
+    let search = RwSignal::new(String::new());
+    let toggle = move |name: String| {
+        chosen.update(move |c| {
+            if let Some(i) = c.iter().position(|x| *x == name) {
+                c.remove(i);
+            } else {
+                c.push(name);
+            }
+        })
+    };
+    view! {
+        <div class="picker">
+            <div class="picker-chosen">
+                {move || chosen.get().into_iter().map(|f| {
+                    let name = f.clone();
+                    view! {
+                        <span class="chip on">
+                            <bdi>{f}</bdi>
+                            <button type="button" class="chip-x" aria-label=ui.tr("qb.remove_field") on:click=move |_| toggle(name.clone())>{icon(Icon::X)}</button>
+                        </span>
+                    }
+                }).collect_view()}
+                <details class="picker-pop">
+                    <summary class="btn btn-small btn-secondary">{icon(Icon::Plus)}{ui.tr("qb.add_field")}</summary>
+                    <div class="picker-panel">
+                        <label class="tree-search picker-search">
+                            {icon(Icon::Search)}
+                            <input type="search" placeholder=ui.tr("qb.find_field") aria-label=ui.tr("qb.find_field")
+                                prop:value=move || search.get() on:input=move |e| search.set(event_target_value(&e))
+                                on:keydown=move |e: leptos::ev::KeyboardEvent| {
+                                    // Enter adds a field that is not in the list.
+                                    if e.key() == "Enter" {
+                                        e.prevent_default();
+                                        let v = search.get_untracked().trim().to_owned();
+                                        if !v.is_empty() && !chosen.get_untracked().contains(&v) {
+                                            toggle(v);
+                                            search.set(String::new());
+                                        }
+                                    }
+                                } />
+                        </label>
+                        <ul class="picker-list" role="listbox" aria-multiselectable="true">
+                            {move || {
+                                let q = search.get().to_lowercase();
+                                let picked = chosen.get();
+                                let items: Vec<String> = fields.get().into_iter().map(|(f, _)| f).filter(|f| q.is_empty() || f.to_lowercase().contains(&q)).collect();
+                                if items.is_empty() {
+                                    return view! { <li class="muted small picker-none">{ui.tr("qb.no_field_match")}</li> }.into_any();
+                                }
+                                items.into_iter().map(|f| {
+                                    let on = picked.contains(&f);
+                                    let name = f.clone();
+                                    view! {
+                                        <li>
+                                            <label class="picker-item" role="option" aria-selected=on.to_string()>
+                                                <input type="checkbox" prop:checked=on on:change=move |_| toggle(name.clone()) />
+                                                <bdi>{f}</bdi>
+                                            </label>
+                                        </li>
+                                    }
+                                }).collect_view().into_any()
+                            }}
+                        </ul>
+                    </div>
+                </details>
+                <Show when=move || !chosen.with(Vec::is_empty)>
+                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| chosen.set(Vec::new())>{ui.tr("qb.clear_fields")}</button>
+                </Show>
+            </div>
+        </div>
+    }
+}
+
 #[component]
 pub fn QueryBar(
     /// Known fields and their detected types (from the loaded records).
@@ -236,55 +333,104 @@ pub fn QueryBar(
     let mode = RwSignal::new(Mode::Builder);
     let root = RwSignal::new(Group::default());
     let sort = RwSignal::new(Vec::<SortField>::new());
-    let projection = RwSignal::new(Projection::default());
+    let project_fields = RwSignal::new(Vec::<String>::new());
+    let project_hide = RwSignal::new(false);
     let filter_text = RwSignal::new(String::new());
     let project_text = RwSignal::new(String::new());
     let sort_text = RwSignal::new(String::new());
     let skip = RwSignal::new(0u64);
     let limit = RwSignal::new(0u64);
     let options = RwSignal::new(false);
-    let error = RwSignal::new(None::<String>);
+    let problem = RwSignal::new(None::<Problem>);
     let ctx = Ctx { root, fields };
+    let projection = move || Projection {
+        exclude: project_hide.get_untracked(),
+        fields: project_fields.get_untracked(),
+    };
 
-    // Builder → text (exact, always possible).
-    let builder_to_text = move || -> Result<(), String> {
+    // Builder → text (exact, always possible when values are valid).
+    let builder_to_text = move || -> Result<(), Problem> {
         let detected = move |f: &str| ctx.detected(f);
-        let filter = to_filter(&root.get_untracked(), &detected).map_err(|e| e.to_string())?;
-        filter_text.set(if filter.as_object().is_some_and(|o| o.is_empty()) {
+        let filter = to_filter(&root.get_untracked(), &detected).map_err(|e| Problem {
+            part: Part::Builder,
+            message: e.to_string(),
+            fix: None,
+        })?;
+        let empty = |j: &serde_json::Value| j.as_object().is_some_and(|o| o.is_empty());
+        filter_text.set(if empty(&filter) {
             String::new()
         } else {
             to_shell(&filter)
         });
-        let p = projection_to_json(&projection.get_untracked());
-        project_text.set(if p.as_object().is_some_and(|o| o.is_empty()) {
+        let p = projection_to_json(&projection());
+        project_text.set(if empty(&p) {
             String::new()
         } else {
             to_shell(&p)
         });
-        let s = sort_to_json(&sort.get_untracked());
-        sort_text.set(if s.as_object().is_some_and(|o| o.is_empty()) {
+        let srt = sort_to_json(&sort.get_untracked());
+        sort_text.set(if empty(&srt) {
             String::new()
         } else {
-            to_shell(&s)
+            to_shell(&srt)
         });
         Ok(())
     };
+    // Checks the three text boxes without sending anything.
+    let check_text =
+        move || -> Result<(serde_json::Value, serde_json::Value, serde_json::Value), Problem> {
+            let parse = |part: Part, text: String| {
+                shell::parse(&text).map_err(|e| Problem {
+                    part,
+                    message: e.message.clone(),
+                    fix: e.suggestion.as_ref().map(to_shell),
+                })
+            };
+            let f = parse(Part::Filter, filter_text.get_untracked())?;
+            if !f.is_object() {
+                return Err(Problem {
+                    part: Part::Filter,
+                    message: ui.text("qb.err_filter_doc"),
+                    fix: None,
+                });
+            }
+            let p = parse(Part::Project, project_text.get_untracked())?;
+            if projection_from_json(&p).is_none() {
+                return Err(Problem {
+                    part: Part::Project,
+                    message: ui.text("qb.err_project"),
+                    fix: None,
+                });
+            }
+            let srt = parse(Part::Sort, sort_text.get_untracked())?;
+            if sort_from_json(&srt).is_none() {
+                return Err(Problem {
+                    part: Part::Sort,
+                    message: ui.text("qb.err_sort"),
+                    fix: None,
+                });
+            }
+            Ok((f, p, srt))
+        };
     // Text → builder, when every part has a builder form.
-    let text_to_builder = move || -> Result<(), String> {
-        let parse = |t: String| shell::parse(&t).map_err(|e| e.to_string());
-        let f = parse(filter_text.get_untracked())?;
-        let g = from_filter(&f).ok_or_else(|| ui.text("qb.too_complex"))?;
-        let p = projection_from_json(&parse(project_text.get_untracked())?)
-            .ok_or_else(|| ui.text("qb.too_complex"))?;
-        let s = sort_from_json(&parse(sort_text.get_untracked())?)
-            .ok_or_else(|| ui.text("qb.too_complex"))?;
+    let text_to_builder = move || -> Result<(), Problem> {
+        let (f, p, srt) = check_text()?;
+        let too_complex = || Problem {
+            part: Part::Filter,
+            message: ui.text("qb.too_complex"),
+            fix: None,
+        };
+        let g = from_filter(&f).ok_or_else(too_complex)?;
+        let pr = projection_from_json(&p).ok_or_else(too_complex)?;
+        let ss = sort_from_json(&srt).ok_or_else(too_complex)?;
         root.set(g);
-        projection.set(p);
-        sort.set(s);
+        project_hide.set(pr.exclude);
+        project_fields.set(pr.fields);
+        sort.set(ss);
         Ok(())
     };
     let switch = move |to: Mode| {
-        error.set(None);
+        problem.set(None);
         let r = match (mode.get_untracked(), to) {
             (Mode::Builder, Mode::Text) => builder_to_text(),
             (Mode::Text, Mode::Builder) => text_to_builder(),
@@ -292,15 +438,18 @@ pub fn QueryBar(
         };
         match r {
             Ok(()) => mode.set(to),
-            Err(e) => error.set(Some(e)),
+            Err(e) => problem.set(Some(e)),
         }
     };
     let find = move || {
-        error.set(None);
-        if mode.get_untracked() == Mode::Builder
-            && let Err(e) = builder_to_text()
-        {
-            error.set(Some(e));
+        problem.set(None);
+        let r = if mode.get_untracked() == Mode::Builder {
+            builder_to_text()
+        } else {
+            Ok(())
+        };
+        if let Err(e) = r.and_then(|()| check_text().map(|_| ())) {
+            problem.set(Some(e));
             return;
         }
         let q = NativeQueryDto {
@@ -317,7 +466,8 @@ pub fn QueryBar(
     let reset = move || {
         root.set(Group::default());
         sort.set(Vec::new());
-        projection.set(Projection::default());
+        project_fields.set(Vec::new());
+        project_hide.set(false);
         filter_text.set(String::new());
         project_text.set(String::new());
         sort_text.set(String::new());
@@ -325,27 +475,82 @@ pub fn QueryBar(
         limit.set(0);
         find();
     };
+    let use_fix = move |pr: Problem| {
+        if let Some(fix) = pr.fix {
+            match pr.part {
+                Part::Filter => filter_text.set(fix),
+                Part::Project => project_text.set(fix),
+                Part::Sort => sort_text.set(fix),
+                Part::Builder => {}
+            }
+            find();
+        }
+    };
     let on_key = move |e: leptos::ev::KeyboardEvent| {
         if e.key() == "Enter" {
             e.prevent_default();
             find();
         }
     };
+    let plural = move |n: usize, one: &'static str, many: &'static str| {
+        format!("{n} {}", ui.text(if n == 1 { one } else { many }))
+    };
     let summary = move || {
-        let n = root.with(count_conditions);
-        let s = sort.with(Vec::len);
-        let p = projection.with(|p| p.fields.len());
         let mut parts = Vec::new();
+        let n = root.with(count_conditions);
         if n > 0 {
-            parts.push(format!("{n} {}", ui.text("qb.conditions")));
+            parts.push(plural(n, "qb.condition", "qb.conditions"));
         }
+        let s = sort.with(|s| s.iter().filter(|k| !k.field.trim().is_empty()).count());
         if s > 0 {
-            parts.push(format!("{s} {}", ui.text("qb.sort_keys")));
+            parts.push(plural(s, "qb.sort_key", "qb.sort_keys"));
         }
+        let p = project_fields.with(Vec::len);
         if p > 0 {
-            parts.push(format!("{p} {}", ui.text("qb.fields")));
+            parts.push(plural(p, "qb.field_one", "qb.fields"));
         }
-        parts.join(" · ")
+        if parts.is_empty() {
+            ui.text("qb.everything")
+        } else {
+            parts.join(" · ")
+        }
+    };
+    let problem_view = move |part: Part| {
+        move || {
+            problem.get().filter(|p| p.part == part).map(|p| {
+            let fix_text = p.fix.clone();
+            view! {
+                <div class="qb-problem" role="alert">
+                    <span>{capitalize(&p.message)}</span>
+                    {fix_text.map(|t| {
+                        let pr = p.clone();
+                        view! {
+                            <span class="qb-fix">
+                                <span class="muted">{ui.tr("qb.did_you_mean")}</span>
+                                <code class="mono"><bdi>{t}</bdi></code>
+                                <button type="button" class="btn btn-small" on:click=move |_| use_fix(pr.clone())>{ui.tr("qb.use_it")}</button>
+                            </span>
+                        }
+                    })}
+                </div>
+            }
+        })
+        }
+    };
+    let text_box = move |part: Part,
+                         label: &'static str,
+                         placeholder: &'static str,
+                         value: RwSignal<String>| {
+        view! {
+            <div class="qb-text-part">
+                <label class="qb-field" class:invalid=move || problem.with(|p| p.as_ref().is_some_and(|p| p.part == part))>
+                    <span class="qb-label">{ui.tr(label)}</span>
+                    <input class="qb-input mono" type="text" spellcheck="false" placeholder=placeholder
+                        prop:value=move || value.get() on:input=move |e| { value.set(event_target_value(&e)); problem.set(None); } on:keydown=on_key />
+                </label>
+                {problem_view(part)}
+            </div>
+        }
     };
 
     view! {
@@ -358,128 +563,104 @@ pub fn QueryBar(
                     <button type="button" class:active=move || mode.get() == Mode::Builder on:click=move |_| switch(Mode::Builder)>{icon(Icon::ListTree)}<span>{ui.tr("qb.builder")}</span></button>
                     <button type="button" class:active=move || mode.get() == Mode::Text on:click=move |_| switch(Mode::Text)>{icon(Icon::Code)}<span>{ui.tr("qb.text")}</span></button>
                 </div>
-                <span class="muted small">{summary}</span>
+                <span class="qb-summary">{summary}</span>
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-small btn-secondary" aria-expanded=move || options.get().to_string()
                     on:click=move |_| options.update(|o| *o = !*o)>
-                    {move || icon(if options.get() { Icon::ChevronDown } else { Icon::ChevronRight })}{ui.tr("explorer.q_options")}
+                    {move || icon(if options.get() { Icon::ChevronDown } else { Icon::ChevronRight })}{ui.tr("qb.more_options")}
                 </button>
                 <button type="button" class="btn btn-small btn-secondary" on:click=move |_| reset()>{ui.tr("explorer.q_reset")}</button>
                 <button type="button" class="btn btn-small" on:click=move |_| find()>{icon(Icon::Search)}{ui.tr("explorer.q_find")}</button>
             </div>
 
             {move || match mode.get() {
-                Mode::Builder => view! { <GroupEditor ctx=ctx path=Vec::new() /> }.into_any(),
-                Mode::Text => view! {
-                    <label class="qb-field qb-main">
-                        <span class="qb-label">{icon(Icon::Filter)}{ui.tr("explorer.q_filter")}</span>
-                        <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: \"value\" }"
-                            prop:value=move || filter_text.get() on:input=move |e| filter_text.set(event_target_value(&e)) on:keydown=on_key />
-                    </label>
+                Mode::Builder => view! {
+                    <GroupEditor ctx=ctx path=Vec::new() />
+                    {problem_view(Part::Builder)}
                 }.into_any(),
+                Mode::Text => text_box(Part::Filter, "explorer.q_filter", "{ field: \"value\" }", filter_text).into_any(),
             }}
 
             <Show when=move || options.get()>
-                {move || match mode.get() {
-                    Mode::Builder => view! {
-                        <div class="qb-section">
-                            <div class="qb-section-head">
-                                <strong class="small">{ui.tr("explorer.q_sort")}</strong>
-                                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| sort.update(|s| s.push(SortField::default()))>{icon(Icon::Plus)}{ui.tr("qb.add_sort")}</button>
-                            </div>
-                            {move || sort.get().into_iter().enumerate().map(|(i, k)| {
-                                let desc = k.descending;
-                                view! {
-                                    <div class="qb-cond">
-                                        <span class="muted small qb-order">{i + 1}</span>
-                                        <input class="input qb-cond-field mono" type="text" list="qb-fields" prop:value=k.field.clone() aria-label=ui.tr("explorer.field")
-                                            on:change=move |e| { let v = event_target_value(&e); sort.update(|s| s[i].field = v); } />
-                                        <div class="segmented" role="group">
-                                            <button type="button" class:active=!desc on:click=move |_| sort.update(|s| s[i].descending = false)>{ui.tr("qb.ascending")}</button>
-                                            <button type="button" class:active=desc on:click=move |_| sort.update(|s| s[i].descending = true)>{ui.tr("qb.descending")}</button>
+                <div class="qb-options-grid">
+                    <section class="qb-section">
+                        <header class="qb-section-head">
+                            <strong>{ui.tr("explorer.q_sort")}</strong>
+                            <span class="muted small">{ui.tr("qb.sort_help")}</span>
+                        </header>
+                        {move || match mode.get() {
+                            Mode::Builder => view! {
+                                {move || sort.get().into_iter().enumerate().map(|(i, k)| {
+                                    let desc = k.descending;
+                                    view! {
+                                        <div class="qb-sort-row">
+                                            <span class="qb-order">{i + 1}</span>
+                                            <input class="input mono qb-sort-field" type="text" list="qb-fields" prop:value=k.field.clone() aria-label=ui.tr("explorer.field")
+                                                placeholder=ui.tr("explorer.field")
+                                                on:change=move |e| { let v = event_target_value(&e); sort.update(|s| s[i].field = v); } />
+                                            <div class="segmented" role="group">
+                                                <button type="button" class:active=!desc title=ui.tr("qb.ascending") on:click=move |_| sort.update(|s| s[i].descending = false)>"A → Z"</button>
+                                                <button type="button" class:active=desc title=ui.tr("qb.descending") on:click=move |_| sort.update(|s| s[i].descending = true)>"Z → A"</button>
+                                            </div>
+                                            <button type="button" class="icon-btn" disabled=i == 0 aria-label=ui.tr("qb.move_up") title=ui.tr("qb.move_up")
+                                                on:click=move |_| sort.update(|s| s.swap(i, i - 1))>{icon(Icon::ArrowUp)}</button>
+                                            <button type="button" class="icon-btn danger" aria-label=ui.tr("qb.remove_sort") title=ui.tr("qb.remove_sort")
+                                                on:click=move |_| sort.update(|s| { s.remove(i); })>{icon(Icon::X)}</button>
                                         </div>
-                                        <button type="button" class="icon-btn" disabled=i == 0 aria-label=ui.tr("qb.move_up") title=ui.tr("qb.move_up")
-                                            on:click=move |_| sort.update(|s| s.swap(i, i - 1))>{icon(Icon::ArrowUp)}</button>
-                                        <button type="button" class="icon-btn danger" aria-label=ui.tr("explorer.remove_condition")
-                                            on:click=move |_| sort.update(|s| { s.remove(i); })>{icon(Icon::X)}</button>
-                                    </div>
-                                }
-                            }).collect_view()}
-                        </div>
-                        <div class="qb-section">
-                            <div class="qb-section-head">
-                                <strong class="small">{ui.tr("explorer.q_project")}</strong>
-                                <div class="segmented" role="group">
-                                    <button type="button" class:active=move || !projection.get().exclude on:click=move |_| projection.update(|p| p.exclude = false)>{ui.tr("qb.show_only")}</button>
-                                    <button type="button" class:active=move || projection.get().exclude on:click=move |_| projection.update(|p| p.exclude = true)>{ui.tr("qb.hide")}</button>
-                                </div>
-                                <span class="muted small">{ui.tr("qb.project_help")}</span>
-                            </div>
-                            <div class="qb-chips">
-                                {move || {
-                                    let chosen = projection.get().fields;
-                                    let mut names: Vec<String> = fields.get().into_iter().map(|(f, _)| f).collect();
-                                    for c in &chosen {
-                                        if !names.contains(c) {
-                                            names.push(c.clone());
-                                        }
                                     }
-                                    names.into_iter().map(|f| {
-                                        let on = chosen.contains(&f);
-                                        let name = f.clone();
-                                        view! {
-                                            <button type="button" class="chip" class:on=on aria-pressed=on.to_string()
-                                                on:click=move |_| {
-                                                    let n = name.clone();
-                                                    projection.update(move |p| if let Some(i) = p.fields.iter().position(|x| *x == n) { p.fields.remove(i); } else { p.fields.push(n); });
-                                                }>
-                                                {on.then(|| icon(Icon::Check))}<bdi>{f}</bdi>
-                                            </button>
-                                        }
-                                    }).collect_view()
-                                }}
-                                <input class="input chip-input mono" type="text" list="qb-fields" placeholder=ui.tr("qb.other_field")
-                                    on:change=move |e| {
-                                        let v = event_target_value(&e).trim().to_owned();
-                                        if !v.is_empty() { projection.update(|p| if !p.fields.contains(&v) { p.fields.push(v.clone()); }); }
-                                    } />
-                            </div>
-                        </div>
-                    }.into_any(),
-                    Mode::Text => view! {
-                        <div class="qb-row qb-options">
-                            <label class="qb-field">
-                                <span class="qb-label">{ui.tr("explorer.q_project")}</span>
-                                <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: 1 }"
-                                    prop:value=move || project_text.get() on:input=move |e| project_text.set(event_target_value(&e)) on:keydown=on_key />
+                                }).collect_view()}
+                                <button type="button" class="btn btn-small btn-secondary qb-add" on:click=move |_| sort.update(|s| s.push(SortField::default()))>{icon(Icon::Plus)}{ui.tr("qb.add_sort")}</button>
+                            }.into_any(),
+                            Mode::Text => text_box(Part::Sort, "explorer.q_sort", "{ field: -1 }", sort_text).into_any(),
+                        }}
+                    </section>
+                    <section class="qb-section">
+                        <header class="qb-section-head">
+                            <strong>{ui.tr("qb.fields_title")}</strong>
+                            {move || (mode.get() == Mode::Builder).then(|| view! {
+                                <div class="segmented" role="group">
+                                    <button type="button" class:active=move || !project_hide.get() on:click=move |_| project_hide.set(false)>{ui.tr("qb.show_only")}</button>
+                                    <button type="button" class:active=move || project_hide.get() on:click=move |_| project_hide.set(true)>{ui.tr("qb.hide")}</button>
+                                </div>
+                            })}
+                        </header>
+                        {move || match mode.get() {
+                            Mode::Builder => view! {
+                                <FieldPicker fields=fields chosen=project_fields />
+                                <p class="muted small">{move || if project_fields.with(Vec::is_empty) { ui.text("qb.all_fields") } else if project_hide.get() { ui.text("qb.hiding") } else { ui.text("qb.showing_only") }}</p>
+                            }.into_any(),
+                            Mode::Text => text_box(Part::Project, "explorer.q_project", "{ field: 1 }", project_text).into_any(),
+                        }}
+                    </section>
+                    <section class="qb-section qb-paging">
+                        <header class="qb-section-head"><strong>{ui.tr("qb.paging")}</strong></header>
+                        <div class="qb-row">
+                            <label class="qb-field qb-num">
+                                <span class="qb-label">{ui.tr("explorer.q_skip")}</span>
+                                <input class="qb-input" type="number" min="0" placeholder="0"
+                                    prop:value=move || { let v = skip.get(); if v == 0 { String::new() } else { v.to_string() } }
+                                    on:input=move |e| skip.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
                             </label>
-                            <label class="qb-field">
-                                <span class="qb-label">{ui.tr("explorer.q_sort")}</span>
-                                <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: -1 }"
-                                    prop:value=move || sort_text.get() on:input=move |e| sort_text.set(event_target_value(&e)) on:keydown=on_key />
+                            <label class="qb-field qb-num">
+                                <span class="qb-label">{ui.tr("explorer.q_limit")}</span>
+                                <input class="qb-input" type="number" min="0" placeholder="0"
+                                    prop:value=move || { let v = limit.get(); if v == 0 { String::new() } else { v.to_string() } }
+                                    on:input=move |e| limit.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
                             </label>
                         </div>
-                    }.into_any(),
-                }}
-                <div class="qb-row">
-                    <label class="qb-field qb-num">
-                        <span class="qb-label">{ui.tr("explorer.q_skip")}</span>
-                        <input class="qb-input" type="number" min="0" placeholder="0"
-                            prop:value=move || { let v = skip.get(); if v == 0 { String::new() } else { v.to_string() } }
-                            on:input=move |e| skip.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
-                    </label>
-                    <label class="qb-field qb-num">
-                        <span class="qb-label">{ui.tr("explorer.q_limit")}</span>
-                        <input class="qb-input" type="number" min="0" placeholder="0"
-                            prop:value=move || { let v = limit.get(); if v == 0 { String::new() } else { v.to_string() } }
-                            on:input=move |e| limit.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
-                    </label>
+                        <p class="muted small">{ui.tr("qb.paging_help")}</p>
+                    </section>
                 </div>
             </Show>
-
-            {move || error.get().map(|e| view! { <p class="error-detail small">{e}</p> })}
         </div>
     }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
 }
 
 fn count_conditions(g: &Group) -> usize {

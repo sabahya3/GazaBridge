@@ -15,6 +15,8 @@ use serde_json::Value as J;
 pub struct ShellJsonError {
     pub position: usize,
     pub message: String,
+    /// A corrected query, when the mistake has an obvious fix.
+    pub suggestion: Option<J>,
 }
 
 struct Reader<'a> {
@@ -32,6 +34,7 @@ impl<'a> Reader<'a> {
         Err(ShellJsonError {
             position: self.pos,
             message: message.into(),
+            suggestion: None,
         })
     }
 
@@ -289,6 +292,22 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// One document requiring all of `docs`: their fields side by side when
+/// no field repeats, otherwise `$and`.
+fn merge(docs: Vec<J>) -> J {
+    let mut merged = serde_json::Map::new();
+    for d in &docs {
+        for (k, v) in d.as_object().into_iter().flatten() {
+            if merged.insert(k.clone(), v.clone()).is_some() || k.starts_with('$') {
+                let mut and = serde_json::Map::new();
+                and.insert("$and".into(), J::Array(docs));
+                return J::Object(and);
+            }
+        }
+    }
+    J::Object(merged)
+}
+
 /// `2026-01-02` → `2026-01-02T00:00:00Z`; full timestamps pass through.
 fn normalize_date(d: &str) -> String {
     if d.len() == 10 && d.chars().filter(|c| *c == '-').count() == 2 {
@@ -311,11 +330,41 @@ pub fn parse(text: &str) -> Result<J, ShellJsonError> {
     let json = r.value()?;
     r.skip_ws();
     if r.pos < r.chars.len() {
+        // `{a: 1}, {b: 2}`: several documents where one was meant.
+        if r.peek() == Some(',') {
+            let position = r.pos;
+            let mut docs = vec![json.clone()];
+            while r.peek() == Some(',') {
+                r.pos += 1;
+                r.skip_ws();
+                if r.pos >= r.chars.len() {
+                    break;
+                }
+                match r.value() {
+                    Ok(v) => docs.push(v),
+                    Err(_) => break,
+                }
+                r.skip_ws();
+            }
+            let parsed: Vec<J> = docs
+                .iter()
+                .filter_map(|d| serde_json::from_str(d).ok())
+                .collect();
+            if parsed.len() > 1 && parsed.iter().all(J::is_object) {
+                return Err(ShellJsonError {
+                    position,
+                    message: "write one document: put all conditions inside one pair of braces"
+                        .into(),
+                    suggestion: Some(merge(parsed)),
+                });
+            }
+        }
         return r.err("unexpected text after the query");
     }
     serde_json::from_str(&json).map_err(|e| ShellJsonError {
         position: 0,
         message: e.to_string(),
+        suggestion: None,
     })
 }
 
@@ -357,6 +406,18 @@ mod tests {
             parse(r#"{"plain": "json"}"#).unwrap(),
             json!({"plain": "json"})
         );
+    }
+
+    #[test]
+    fn several_documents_get_a_merged_suggestion() {
+        let e = parse(r#"{ phoneNumber: "966123456789" },{nationalId:"1234567895"}"#).unwrap_err();
+        assert_eq!(
+            e.suggestion,
+            Some(json!({"phoneNumber": "966123456789", "nationalId": "1234567895"}))
+        );
+        let e = parse("{a: 1}, {a: 2}").unwrap_err();
+        assert_eq!(e.suggestion, Some(json!({"$and": [{"a": 1}, {"a": 2}]})));
+        assert!(parse("{a: 1} x").unwrap_err().suggestion.is_none());
     }
 
     #[test]

@@ -39,7 +39,6 @@ pub enum Icon {
     Unplug,
     PanelLeft,
     ArrowUp,
-    Check,
     X,
 }
 
@@ -131,7 +130,6 @@ impl Icon {
                 r#"<path d="m19 5 3-3"/><path d="m2 22 3-3"/><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/>"#
             }
             Self::ArrowUp => r#"<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>"#,
-            Self::Check => r#"<path d="M20 6 9 17l-5-5"/>"#,
             Self::PanelLeft => {
                 r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>"#
             }
