@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 
 pub mod connections;
 pub mod explorer;
+pub mod query;
 
 pub use connections::*;
 pub use explorer::*;
+pub use query::*;
 
 /// Names of the Tauri commands, shared so both sides agree.
 pub mod commands {
@@ -34,6 +36,14 @@ pub mod commands {
     pub const EXPLORER_APPLY_UPDATE: &str = "explorer_apply_update";
     pub const EXPLORER_DELETE: &str = "explorer_delete";
     pub const EXPLORER_DISCONNECT: &str = "explorer_disconnect";
+    pub const QUERY_CONTEXT: &str = "query_context";
+    pub const QUERY_RUN: &str = "query_run";
+    pub const QUERY_EXPLAIN: &str = "query_explain";
+    pub const QUERY_CANCEL: &str = "query_cancel";
+    pub const QUERY_HISTORY: &str = "query_history";
+    pub const QUERY_LIST_SAVED: &str = "query_list_saved";
+    pub const QUERY_SAVE: &str = "query_save";
+    pub const QUERY_DELETE_SAVED: &str = "query_delete_saved";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

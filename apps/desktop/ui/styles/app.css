@@ -440,3 +440,30 @@ legend { font-weight: 600; padding-inline: 4px; }
 .json-input { inline-size: 100%; resize: vertical; font-size: 12.5px; box-sizing: border-box; }
 .plan .grid td { white-space: pre-wrap; overflow-wrap: anywhere; }
 .confirm-preview { max-block-size: 30vh; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+
+/* Query Studio */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; border-block-end: 1px solid var(--border); margin-block-end: 12px; }
+.tab { display: flex; align-items: center; border: 1px solid var(--border); border-block-end: 0; border-radius: var(--radius) var(--radius) 0 0; background: var(--surface-2); }
+.tab.active { background: var(--surface); border-color: var(--primary); }
+.tab button, .tab-new { font: inherit; background: none; border: 0; color: inherit; cursor: pointer; padding: 5px 10px; }
+.tab-close { padding-inline: 6px; color: var(--muted); }
+.tab-new { font-weight: 700; }
+.studio { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 16px; align-items: start; }
+@media (max-width: 960px) { .studio { grid-template-columns: 1fr; } }
+.studio-main { display: grid; gap: 8px; min-inline-size: 0; }
+.studio-side { display: grid; gap: 8px; max-block-size: 80vh; overflow: auto; }
+.query-input { inline-size: 100%; box-sizing: border-box; resize: vertical; font-size: 13px; tab-size: 2; }
+.save-row .input { flex: 1 1 200px; }
+.results { display: grid; gap: 8px; }
+.plan-view h3 { margin: 0; }
+.plan-text { white-space: pre; overflow: auto; max-block-size: 50vh; font-size: 12.5px; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; }
+.library { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.library-item { display: flex; gap: 4px; align-items: flex-start; }
+.library-item > button:first-child {
+  flex: 1; min-inline-size: 0; display: grid; gap: 2px; text-align: start; font: inherit;
+  background: none; border: 1px solid transparent; border-radius: 6px; padding: 6px; color: inherit; cursor: pointer;
+}
+.library-item > button:first-child:hover { background: var(--surface-2); border-color: var(--border); }
+.library-text { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 4.5em; overflow: hidden; }
+.library-item.status-error .library-text { color: var(--danger); }
+.library-item.status-cancelled .library-text { color: var(--muted); }

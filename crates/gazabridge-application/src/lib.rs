@@ -4,6 +4,7 @@
 pub mod connections;
 pub mod explorer;
 pub mod profiled;
+pub mod query;
 pub mod schema;
 
 pub use connections::{ConnectionService, PasswordInput, TestOutcome};
@@ -11,6 +12,7 @@ pub use explorer::{
     BrowseRequest, BrowseResult, EditBlocker, EditPlan, ExplorerService, FieldEdit,
 };
 pub use profiled::ProfiledConnection;
+pub use query::{QueryContext, QueryInput, QueryRisk, QueryService};
 pub use schema::{FieldChange, SchemaService};
 
 use gazabridge_plugin_sdk::{ConnectorError, ErrorKind};
@@ -29,6 +31,9 @@ pub enum AppError {
     Invalid(String),
     #[error("{0} not found")]
     NotFound(&'static str),
+    /// The operation needs explicit confirmation; carries the risk names.
+    #[error("confirmation required: {0}")]
+    ConfirmationRequired(String),
 }
 
 impl AppError {
@@ -45,6 +50,7 @@ impl AppError {
                 ErrorKind::Connection | ErrorKind::Timeout => "connection",
                 ErrorKind::ReadOnly => "read_only",
                 ErrorKind::Conflict => "conflict",
+                ErrorKind::Cancelled => "cancelled",
                 ErrorKind::Unsupported => "unsupported",
                 ErrorKind::InvalidInput => "invalid_input",
                 _ => "connector",
@@ -52,6 +58,7 @@ impl AppError {
             Self::Registry(_) => "connector_unavailable",
             Self::Invalid(_) => "invalid_input",
             Self::NotFound(_) => "not_found",
+            Self::ConfirmationRequired(_) => "confirmation_required",
         }
     }
 }

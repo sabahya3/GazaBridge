@@ -8,6 +8,7 @@ mod commands;
 mod connection_commands;
 mod explorer_commands;
 mod forms;
+mod query_commands;
 mod state;
 
 use tauri::Manager;
@@ -45,6 +46,14 @@ pub fn run() {
             explorer_commands::explorer_apply_update,
             explorer_commands::explorer_delete,
             explorer_commands::explorer_disconnect,
+            query_commands::query_context,
+            query_commands::query_run,
+            query_commands::query_explain,
+            query_commands::query_cancel,
+            query_commands::query_history,
+            query_commands::query_list_saved,
+            query_commands::query_save,
+            query_commands::query_delete_saved,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

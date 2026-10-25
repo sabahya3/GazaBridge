@@ -108,7 +108,7 @@ fn conflict(message: &str) -> AppError {
 }
 
 /// Field names in display order: `_id` first, then first-seen order.
-fn field_union(records: &[Record]) -> Vec<String> {
+pub fn field_union(records: &[Record]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for r in records {
         for k in r.fields.keys() {
@@ -219,7 +219,7 @@ impl ExplorerService {
         }
     }
 
-    async fn session(&self, id: ConnectionId) -> AppResult<Arc<dyn Connection>> {
+    pub(crate) async fn session(&self, id: ConnectionId) -> AppResult<Arc<dyn Connection>> {
         let mut sessions = self.sessions.lock().await;
         if let Some(conn) = sessions.get(&id) {
             return Ok(conn.clone());
@@ -239,7 +239,11 @@ impl ExplorerService {
     }
 
     /// Drops the session when the failure means it is no longer usable.
-    async fn checked<T>(&self, id: ConnectionId, r: Result<T, ConnectorError>) -> AppResult<T> {
+    pub(crate) async fn checked<T>(
+        &self,
+        id: ConnectionId,
+        r: Result<T, ConnectorError>,
+    ) -> AppResult<T> {
         match r {
             Ok(v) => Ok(v),
             Err(e) => {

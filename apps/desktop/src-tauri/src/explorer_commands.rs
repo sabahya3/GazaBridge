@@ -112,26 +112,29 @@ pub fn filter(dto: Option<&FilterDto>) -> Result<Option<Filter>, CommandError> {
     }))
 }
 
-fn page_dto(result: BrowseResult) -> BrowsePageDto {
-    let columns = result
-        .fields
+/// Columns and rows for display, in `fields` order.
+pub(crate) fn table_dto(
+    fields: &[String],
+    declared: &[gazabridge_plugin_sdk::schema::ColumnInfo],
+    key_fields: &[String],
+    records: &[gazabridge_domain::Record],
+) -> (Vec<ColumnDto>, Vec<gazabridge_ipc::RowDto>) {
+    let columns = fields
         .iter()
         .map(|name| {
-            let declared = result.columns.iter().find(|c| &c.name == name);
+            let declared = declared.iter().find(|c| &c.name == name);
             ColumnDto {
                 name: name.clone(),
                 native_type: declared.map(|c| c.native_type.clone()).unwrap_or_default(),
                 nullable: declared.is_none_or(|c| c.nullable),
-                key: result.key_fields.contains(name),
+                key: key_fields.contains(name),
             }
         })
         .collect();
-    let rows = result
-        .records
+    let rows = records
         .iter()
         .map(|r| gazabridge_ipc::RowDto {
-            cells: result
-                .fields
+            cells: fields
                 .iter()
                 .map(|f| {
                     let v = r.get(f);
@@ -144,6 +147,16 @@ fn page_dto(result: BrowseResult) -> BrowsePageDto {
             json: ejson::record_to_ejson_string(r),
         })
         .collect();
+    (columns, rows)
+}
+
+fn page_dto(result: BrowseResult) -> BrowsePageDto {
+    let (columns, rows) = table_dto(
+        &result.fields,
+        &result.columns,
+        &result.key_fields,
+        &result.records,
+    );
     BrowsePageDto {
         columns,
         rows,

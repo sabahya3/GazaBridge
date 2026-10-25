@@ -145,6 +145,11 @@ impl ConnectionService {
         &self.registry
     }
 
+    /// Redactor that knows every secret resolved so far.
+    pub fn redactor(&self) -> &gazabridge_secrets::Redactor {
+        self.secrets.redactor()
+    }
+
     // ----------------------------------------------------------- secrets
 
     async fn put_secret(&self, r: SecretRef, value: SecretString) -> AppResult<()> {

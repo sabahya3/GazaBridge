@@ -75,7 +75,7 @@ paused as committed draft code).
 | ✅ P3 | Schema inference: sampling (`$sample` with fallback), field occurrence %, type distributions, mixed types, max depth, conflicting paths; saved snapshots (§15) | M | **done 2026-10-25** — plus drift detection between snapshots |
 | ✅ P4 | Connection editor UI and connection commands (structured + connection-string), test with latency, health, catalogue states (2.8, subset) | M | **done 2026-10-25** — commands covered by backend tests; UI is compile-checked only (no wasm target on this machine), not yet exercised in a running window |
 | ✅ P5 | Explorer tree, data viewer (table / JSON / tree, paging, filter, sort, null vs missing display) and document editor (insert/edit/delete, `_id`-safe updates, preview, confirmation, audit) for MongoDB and PostgreSQL (3.1–3.3, subset) | L | **done 2026-10-25** — integration-tested on MongoDB 8.0 and PostgreSQL 16 (browse, filter, sort, count, insert, edit with preview, conflict detection, delete, audit); UI compile-checked only; PostgreSQL browses only the connection's own database; grid is paged, not virtualized |
-| P6 | Query Studio for MongoDB filters/aggregations and PostgreSQL SQL: tabs, history, saved queries, params, cancel, explain (3.4, subset) | L | |
+| ✅ P6 | Query Studio for MongoDB filters/aggregations and PostgreSQL SQL: tabs, history, saved queries, params, cancel, explain (3.4, subset) | L | **done 2026-10-25** — integration-tested on PostgreSQL 16 and MongoDB 8.0 (params, row limit, cancel, timeout, explain / explain analyze rolled back, history, saved queries); destructive statements (DROP, TRUNCATE, DELETE/UPDATE without WHERE, `$out`/`$merge`) need confirmation; plain text editor without syntax highlighting (question 4 still open); tabs are not kept across restarts; UI compile-checked only |
 | P7 | Files for MongoDB: JSON, JSONL/NDJSON, BSON (mongodump format), CSV export; gzip; streaming; malformed-line policies (4.2–4.3, 4.6–4.7, subset) | M | |
 | P8 | Migration engine core (streaming pipeline, batching, checkpoints, pause/resume/cancel, retries, quarantine) with MongoDB→MongoDB collection copy including indexes (6.1–6.4, subset) | L | |
 | P9 | MongoDB ⇄ PostgreSQL conversion: document→relational (JSONB, flatten, normalize, hybrid) and relational→document (embed, reference), ObjectId identity mapping; mapping preview (5.4–5.5, subset) | L | |
@@ -316,6 +316,6 @@ recovery tests pass for each of them.
 
 ## Immediate next steps
 
-1. Priority track P6 (Query Studio) — P1–P5 are done.
-2. Then P7 → P12 in order.
+1. Priority track P7 (files: JSON, JSONL, BSON, CSV, gzip) — P1–P6 are done.
+2. Then P8 → P12 in order.
 3. Then resume Milestone 2 at task 2.3 (MySQL).

@@ -3,12 +3,14 @@ mod connections;
 mod explorer;
 mod home;
 mod logs;
+mod query_studio;
 mod settings;
 
 pub use connections::ConnectionsPage;
 pub use explorer::ExplorerPage;
 pub use home::HomePage;
 pub use logs::LogsPage;
+pub use query_studio::QueryStudioPage;
 pub use settings::SettingsPage;
 
 use leptos::prelude::*;
