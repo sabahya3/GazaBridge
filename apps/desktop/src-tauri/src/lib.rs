@@ -44,6 +44,7 @@ pub fn run() {
             explorer_commands::explorer_list,
             explorer_commands::explorer_browse,
             explorer_commands::explorer_count,
+            explorer_commands::explorer_tree_counts,
             explorer_commands::explorer_insert,
             explorer_commands::explorer_plan_update,
             explorer_commands::explorer_apply_update,

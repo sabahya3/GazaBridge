@@ -42,6 +42,7 @@ crates can later power a CLI, a headless worker, a daemon or a REST API.
 | `gazabridge-connector-sqlite`, `-postgres`, `-mongodb` | Connectors (MySQL is drafted, paused) | sdk, drivers |
 | `gazabridge-bson` | BSON ⇄ canonical value mapping, shared by the MongoDB connector and BSON / Extended JSON files | domain, sdk, bson |
 | `gazabridge-files` | Streaming JSON, JSONL, BSON, CSV writers and readers, gzip, malformed-record policies, atomic no-overwrite output | domain, bson |
+| `gazabridge-query` | MongoDB query model shared by the UI (wasm) and backend: mongosh-syntax parser, visual builder with AND/OR groups, sort and projection | serde_json |
 | `gazabridge-application` | Use cases shared by the desktop app and CLI: connections, schema snapshots, Explorer and editor, Query Studio, export/import | all of the above |
 | `apps/desktop/src-tauri` | Tauri commands and application state | all infrastructure crates |
 | `apps/desktop/ui` | Leptos client-side UI | ipc |

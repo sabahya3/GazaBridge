@@ -28,6 +28,7 @@ gazabridge-connectors.workspace = true
 gazabridge-domain.workspace = true
 gazabridge-files.workspace = true
 gazabridge-ipc.workspace = true
+gazabridge-query.workspace = true
 gazabridge-observability.workspace = true
 gazabridge-plugin-sdk.workspace = true
 gazabridge-secrets.workspace = true

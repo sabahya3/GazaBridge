@@ -1040,6 +1040,23 @@ impl Connection for MongoConnection {
         }
     }
 
+    async fn count_within(
+        &self,
+        object: &ObjectRef,
+        filter: Option<&Filter>,
+        max_time: std::time::Duration,
+    ) -> ConnectorResult<CountResult> {
+        let coll = self.inner.collection(object)?;
+        let f = filter.map(to_query).transpose()?.unwrap_or_default();
+        // maxTimeMS makes the server itself stop counting.
+        let count = coll
+            .count_documents(f)
+            .max_time(max_time)
+            .await
+            .map_err(map_mongo)?;
+        Ok(CountResult { count, exact: true })
+    }
+
     async fn write_batch(
         &self,
         batch: WriteBatch,

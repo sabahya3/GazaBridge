@@ -136,6 +136,16 @@ impl Connection for ProfiledConnection {
         self.inner.count(object, filter, exact).await
     }
 
+    async fn count_within(
+        &self,
+        object: &ObjectRef,
+        filter: Option<&Filter>,
+        max_time: std::time::Duration,
+    ) -> ConnectorResult<CountResult> {
+        self.allow(Capability::ExactCount)?;
+        self.inner.count_within(object, filter, max_time).await
+    }
+
     async fn write_batch(
         &self,
         batch: WriteBatch,

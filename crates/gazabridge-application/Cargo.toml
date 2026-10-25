@@ -26,6 +26,7 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+gazabridge-query.workspace = true
 gazabridge-connector-mongodb.workspace = true
 mongodb = "3.9"
 gazabridge-connector-postgres.workspace = true

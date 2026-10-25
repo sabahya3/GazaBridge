@@ -5,7 +5,7 @@ use gazabridge_domain::ejson;
 use gazabridge_ipc::{
     BrowseArgs, BrowsePageDto, CellDto, ColumnDto, CommandError, ConditionDto, CountArgs, CountDto,
     DeleteRecordArgs, EditArgs, EditPlanDto, ExplorerListArgs, FieldEditDto, FilterDto, FilterOp,
-    InsertArgs, MutationDto, NativeQueryDto, NodeDto, ObjectAddr,
+    InsertArgs, MutationDto, NativeQueryDto, NodeDto, ObjectAddr, TreeCountsArgs,
 };
 use gazabridge_plugin_sdk::filter::{FieldPath, Filter, SortDirection, SortKey};
 use gazabridge_plugin_sdk::schema::{NamespacePath, ObjectKind, ObjectRef};
@@ -109,7 +109,7 @@ fn shell(
     what: &str,
     text: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>, CommandError> {
-    match gazabridge_domain::shell_json::parse(text) {
+    match gazabridge_query::shell::parse(text) {
         Ok(serde_json::Value::Object(m)) => Ok(m),
         Ok(_) => Err(invalid(format!(
             "{what} must be a document, e.g. {{ field: 1 }}"
@@ -356,7 +356,15 @@ pub async fn count_impl(
     );
     let c = state
         .explorer
-        .count(id, &object, filter.as_ref(), args.exact)
+        .count(
+            id,
+            &object,
+            filter.as_ref(),
+            args.exact,
+            std::time::Duration::from_millis(u64::from(
+                args.max_time_ms.unwrap_or(3_000).clamp(100, 120_000),
+            )),
+        )
         .await
         .map_err(|e| app_error(state, e))?;
     Ok(c.map(|c| CountDto {
@@ -421,6 +429,31 @@ pub async fn delete_impl(
         matched: o.matched,
         modified: o.modified,
     })
+}
+
+pub async fn tree_counts_impl(
+    state: &AppState,
+    args: TreeCountsArgs,
+) -> Result<Vec<Option<u64>>, CommandError> {
+    let id = parse_id(&args.connection_id)?;
+    let objects = args
+        .objects
+        .iter()
+        .map(object_ref)
+        .collect::<Result<Vec<_>, _>>()?;
+    state
+        .explorer
+        .estimated_counts(id, objects)
+        .await
+        .map_err(|e| app_error(state, e))
+}
+
+#[tauri::command]
+pub async fn explorer_tree_counts(
+    state: State<'_, AppState>,
+    args: TreeCountsArgs,
+) -> Result<Vec<Option<u64>>, CommandError> {
+    tree_counts_impl(&state, args).await
 }
 
 #[tauri::command]
@@ -765,6 +798,7 @@ mod tests {
                 filter: Some(filtered.clone()),
                 query: None,
                 exact: true,
+                max_time_ms: None,
             },
         )
         .await

@@ -647,6 +647,19 @@ impl Connection for PostgresConnection {
         read::page(&self.inner, &m, &request, &cancel).await
     }
 
+    async fn count_within(
+        &self,
+        object: &ObjectRef,
+        filter: Option<&Filter>,
+        max_time: std::time::Duration,
+    ) -> ConnectorResult<CountResult> {
+        let m = self.inner.table(object).await?;
+        Ok(CountResult {
+            count: read::count_within(&self.inner, &m, object, filter, max_time).await?,
+            exact: true,
+        })
+    }
+
     async fn count(
         &self,
         object: &ObjectRef,

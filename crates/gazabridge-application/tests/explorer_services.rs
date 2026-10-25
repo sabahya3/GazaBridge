@@ -161,7 +161,13 @@ async fn explorer_edits_mongodb_documents_without_losing_types() {
     };
     assert_eq!(
         explorer
-            .count(id, &object, Some(&missing), true)
+            .count(
+                id,
+                &object,
+                Some(&missing),
+                true,
+                std::time::Duration::from_secs(30)
+            )
             .await
             .unwrap()
             .unwrap()
@@ -491,7 +497,13 @@ async fn explorer_browses_and_edits_postgres_rows() {
     };
     assert_eq!(
         explorer
-            .count(id, &items, Some(&cheap), true)
+            .count(
+                id,
+                &items,
+                Some(&cheap),
+                true,
+                std::time::Duration::from_secs(30)
+            )
             .await
             .unwrap()
             .unwrap()
@@ -548,7 +560,7 @@ async fn explorer_browses_and_edits_postgres_rows() {
     explorer.delete(id, &items, &melon).await.unwrap();
     assert_eq!(
         explorer
-            .count(id, &items, None, true)
+            .count(id, &items, None, true, std::time::Duration::from_secs(30))
             .await
             .unwrap()
             .unwrap()

@@ -2083,6 +2083,7 @@ dependencies = [
  "gazabridge-domain",
  "gazabridge-files",
  "gazabridge-plugin-sdk",
+ "gazabridge-query",
  "gazabridge-secrets",
  "gazabridge-storage",
  "mongodb",
@@ -2227,6 +2228,7 @@ dependencies = [
  "gazabridge-ipc",
  "gazabridge-observability",
  "gazabridge-plugin-sdk",
+ "gazabridge-query",
  "gazabridge-secrets",
  "gazabridge-storage",
  "serde",
@@ -2320,6 +2322,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gazabridge-query"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gazabridge-secrets"
 version = "0.1.0"
 dependencies = [
@@ -2370,6 +2381,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "gazabridge-ipc",
+ "gazabridge-query",
  "js-sys",
  "leptos",
  "serde",

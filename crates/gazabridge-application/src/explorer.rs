@@ -362,20 +362,65 @@ impl ExplorerService {
     }
 
     /// Counts records. An estimate (`exact = false`) is only asked for
-    /// without a filter; `None` means the engine cannot estimate.
+    /// without a filter. Exact counts are stopped by the server after
+    /// `max_time`; `None` means the count is unknown (estimate unsupported
+    /// or the limit was reached), never an error.
     pub async fn count(
         &self,
         id: ConnectionId,
         object: &ObjectRef,
         filter: Option<&Filter>,
         exact: bool,
+        max_time: std::time::Duration,
     ) -> AppResult<Option<CountResult>> {
         let conn = self.session(id).await?;
         let exact = exact || filter.is_some();
-        match conn.count(object, filter, exact).await {
-            Err(e) if !exact && e.kind() == ErrorKind::Unsupported => Ok(None),
+        let r = if exact {
+            conn.count_within(object, filter, max_time).await
+        } else {
+            conn.count(object, filter, false).await
+        };
+        match r {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    ErrorKind::Timeout | ErrorKind::Unsupported | ErrorKind::NotFound
+                ) =>
+            {
+                Ok(None)
+            }
             r => self.checked(id, r).await.map(Some),
         }
+    }
+
+    /// Estimated sizes of objects for the tree. Estimates come from server
+    /// metadata (no scanning); at most 8 are asked at once and each gives up
+    /// after 3 s. Unknown sizes are `None`.
+    pub async fn estimated_counts(
+        &self,
+        id: ConnectionId,
+        objects: Vec<ObjectRef>,
+    ) -> AppResult<Vec<Option<u64>>> {
+        use futures::StreamExt;
+        let conn = self.session(id).await?;
+        let counts = futures::stream::iter(objects.into_iter().map(|o| {
+            let conn = conn.clone();
+            async move {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    conn.count(&o, None, false),
+                )
+                .await
+                {
+                    Ok(Ok(c)) => Some(c.count),
+                    _ => None,
+                }
+            }
+        }))
+        .buffered(8)
+        .collect::<Vec<_>>()
+        .await;
+        Ok(counts)
     }
 
     async fn editable(

@@ -1,0 +1,17 @@
+[package]
+name = "gazabridge-query"
+description = "MongoDB query model shared by the GazaBridge UI and backend: shell-syntax parser, visual builder, sort and projection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Compiled for both native and wasm32 (the UI): serde only.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

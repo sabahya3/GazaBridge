@@ -78,6 +78,18 @@ pub fn SettingsPage() -> impl IntoView {
                     />
                     <span>{ui.tr("settings.high_contrast")}</span>
                 </label>
+                <label class="field-check">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || ui.prefs.with(|p| p.tree_counts)
+                        on:change=move |e| {
+                            let on = event_target_checked(&e);
+                            save(Box::new(move |p| p.tree_counts = on));
+                        }
+                    />
+                    <span>{ui.tr("settings.tree_counts")}</span>
+                </label>
+                <p class="muted small">{ui.tr("settings.tree_counts_help")}</p>
                 <label class="field">
                     <span>{ui.tr("settings.language")}</span>
                     <select class="input" on:change=move |e| {

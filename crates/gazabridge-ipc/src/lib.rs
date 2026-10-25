@@ -34,6 +34,7 @@ pub mod commands {
     pub const EXPLORER_LIST: &str = "explorer_list";
     pub const EXPLORER_BROWSE: &str = "explorer_browse";
     pub const EXPLORER_COUNT: &str = "explorer_count";
+    pub const EXPLORER_TREE_COUNTS: &str = "explorer_tree_counts";
     pub const EXPLORER_INSERT: &str = "explorer_insert";
     pub const EXPLORER_PLAN_UPDATE: &str = "explorer_plan_update";
     pub const EXPLORER_APPLY_UPDATE: &str = "explorer_apply_update";
@@ -105,6 +106,13 @@ pub struct Preferences {
     pub default_row_limit: u32,
     pub sidebar_collapsed: bool,
     pub onboarding_done: bool,
+    /// Show estimated document counts in the Explorer tree.
+    #[serde(default = "yes")]
+    pub tree_counts: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for Preferences {
@@ -116,6 +124,7 @@ impl Default for Preferences {
             default_row_limit: 200,
             sidebar_collapsed: false,
             onboarding_done: false,
+            tree_counts: true,
         }
     }
 }

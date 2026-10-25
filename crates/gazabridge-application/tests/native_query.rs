@@ -16,10 +16,10 @@ use gazabridge_domain::Value;
 use gazabridge_domain::connection::{
     ConnectionProfile, ConnectionSettings, HostPort, MongoSettings, ReadPreference, SecretRef,
 };
-use gazabridge_domain::shell_json;
 use gazabridge_files::{FileFormat, WriteOptions};
 use gazabridge_plugin_sdk::filter::{FieldPath, Filter, SortDirection, SortKey};
 use gazabridge_plugin_sdk::schema::ObjectRef;
+use gazabridge_query::shell as shell_json;
 use gazabridge_secrets::{Redactor, SecretResolver, SessionStore};
 use gazabridge_storage::MetadataStore;
 use mongodb::bson::{Document, doc, oid::ObjectId};
@@ -203,17 +203,47 @@ async fn query_bar_filters_project_sort_count_and_export() {
 
     // Counts follow the query; an estimate covers the whole collection.
     let c = explorer
-        .count(id, &users, Some(&native("{age: {$lt: 40}}")), true)
+        .count(
+            id,
+            &users,
+            Some(&native("{age: {$lt: 40}}")),
+            true,
+            std::time::Duration::from_secs(30),
+        )
         .await
         .unwrap()
         .unwrap();
     assert_eq!((c.count, c.exact), (2, true));
     let c = explorer
-        .count(id, &users, None, false)
+        .count(id, &users, None, false, std::time::Duration::from_secs(30))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(c.count, 3);
+
+    // Tree counts: estimates for several collections in one call.
+    let sizes = explorer
+        .estimated_counts(
+            id,
+            vec![users.clone(), ObjectRef::collection("app", "absent")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(sizes, [Some(3), Some(0)]);
+
+    // Bounded exact counts still return normally when fast.
+    let conn_count = explorer
+        .count(
+            id,
+            &users,
+            Some(&native("{name: /a/i}")),
+            true,
+            std::time::Duration::from_millis(500),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(conn_count.count, 3);
 
     // Exports apply the query's filter and Project.
     let dir = tempfile::tempdir().unwrap();

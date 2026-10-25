@@ -4,12 +4,14 @@
 use gazabridge_ipc::{
     BrowseArgs, BrowsePageDto, ConditionDto, ConnectionSummary, CountArgs, CountDto,
     DeleteRecordArgs, EditArgs, EditPlanDto, ExplorerListArgs, FilterDto, FilterOp, InsertArgs,
-    MutationDto, NativeQueryDto, NodeDto, ObjectAddr, SortDto, commands,
+    MutationDto, NativeQueryDto, NodeDto, ObjectAddr, SortDto, TreeCountsArgs, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde::Serialize;
 
+use super::aggregation::AggregationView;
+use super::query_bar::{AppliedQuery, QueryBar, detected_fields};
 use super::transfer::{Direction, TransferPanel};
 use super::{ErrorBox, Load};
 use crate::app::use_ui;
@@ -33,6 +35,7 @@ enum ViewMode {
     Table,
     Json,
     Tree,
+    Aggregations,
 }
 
 #[derive(Clone, PartialEq)]
@@ -225,16 +228,58 @@ fn TreeLevel(
         database: database.clone(),
         schema: schema.clone(),
     };
+    // Estimated sizes, filled in after the list shows (metadata only).
+    let counts = RwSignal::new(std::collections::HashMap::<String, u64>::new());
+    let (db_for_counts, schema_for_counts, cid_for_counts) =
+        (database.clone(), schema.clone(), connection_id.clone());
     let load = move || {
         let args = args.clone();
+        let (db, schema, cid) = (
+            db_for_counts.clone(),
+            schema_for_counts.clone(),
+            cid_for_counts.clone(),
+        );
         nodes.set(Load::Loading);
         spawn_local(async move {
-            nodes.set(
-                match call(commands::EXPLORER_LIST, &Wrap { args: &args }).await {
-                    Ok(v) => Load::Ready(v),
-                    Err(e) => Load::Failed(e.message),
-                },
-            );
+            let r = call::<_, Vec<NodeDto>>(commands::EXPLORER_LIST, &Wrap { args: &args }).await;
+            let wanted: Vec<ObjectAddr> = match &r {
+                Ok(list) if ui.prefs.with_untracked(|p| p.tree_counts) => list
+                    .iter()
+                    .filter(|n| n.readable && n.estimated_count.is_none() && n.kind != "view")
+                    .map(|n| ObjectAddr {
+                        database: db.clone(),
+                        schema: schema.clone(),
+                        name: n.name.clone(),
+                        kind: n.kind.clone(),
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            nodes.set(match r {
+                Ok(v) => Load::Ready(v),
+                Err(e) => Load::Failed(e.message),
+            });
+            if !wanted.is_empty() {
+                let names: Vec<String> = wanted.iter().map(|o| o.name.clone()).collect();
+                let args = TreeCountsArgs {
+                    connection_id: cid,
+                    objects: wanted,
+                };
+                if let Ok(values) = call::<_, Vec<Option<u64>>>(
+                    commands::EXPLORER_TREE_COUNTS,
+                    &Wrap { args: &args },
+                )
+                .await
+                {
+                    counts.set(
+                        names
+                            .into_iter()
+                            .zip(values)
+                            .filter_map(|(n, c)| c.map(|c| (n, c)))
+                            .collect(),
+                    );
+                }
+            }
         });
     };
     load();
@@ -260,7 +305,9 @@ fn TreeLevel(
                         let name_lc = n.name.to_lowercase();
                         let expandable = n.expandable;
                         let visible = move || expandable || filter.with(|f| f.trim().is_empty() || name_lc.contains(&f.trim().to_lowercase()));
-                        let count = n.estimated_count.map(compact_count);
+                        let fixed = n.estimated_count;
+                        let count_name = n.name.clone();
+                        let count = move || fixed.or_else(|| counts.with(|c| c.get(&count_name).copied())).map(compact_count);
                         let kind_icon = Icon::for_kind(&n.kind);
                         let style = indent2.clone();
                         let title = match &n.estimated_count {
@@ -287,7 +334,7 @@ fn TreeLevel(
                                             <span class="tree-chevron"></span>
                                             <span class=format!("tree-icon kind-{}", n.kind)>{icon(kind_icon)}</span>
                                             <span class="tree-name">{n.name.clone()}</span>
-                                            {count.map(|c| view! { <span class="tree-count">{c}</span> })}
+                                            {move || count().map(|c| view! { <span class="tree-count" title=ui.tr("explorer.estimated")>{c}</span> })}
                                         </button>
                                     }.into_any()
                                 }}
@@ -365,13 +412,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     let cid = StoredValue::new(connection_id);
     let obj = StoredValue::new(object.clone());
     let is_collection = object.kind == "collection";
-    // Query bar (MongoDB collections), as typed and as last applied.
-    let q_filter = RwSignal::new(String::new());
-    let q_project = RwSignal::new(String::new());
-    let q_sort = RwSignal::new(String::new());
-    let q_skip = RwSignal::new(0u64);
-    let q_limit = RwSignal::new(0u64);
-    let q_options = RwSignal::new(false);
+    // Query bar (MongoDB collections): the last applied query.
     let query = RwSignal::new(None::<NativeQueryDto>);
     let skip = RwSignal::new(0u64);
     let cap = RwSignal::new(None::<u64>);
@@ -390,6 +431,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
             filter: applied.get_untracked(),
             query: query.get_untracked(),
             exact: filtered,
+            max_time_ms: None,
         };
         spawn_local(async move {
             if let Ok(c) =
@@ -456,27 +498,6 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
         count.set(None);
         load();
     };
-    let find = move || {
-        let q = NativeQueryDto {
-            filter: q_filter.get_untracked(),
-            project: q_project.get_untracked(),
-            sort: q_sort.get_untracked(),
-        };
-        query.set((!q.is_empty()).then_some(q));
-        skip.set(q_skip.get_untracked());
-        cap.set((q_limit.get_untracked() > 0).then(|| q_limit.get_untracked()));
-        offset.set(0);
-        count.set(None);
-        load();
-    };
-    let reset_query = move || {
-        q_filter.set(String::new());
-        q_project.set(String::new());
-        q_sort.set(String::new());
-        q_skip.set(0);
-        q_limit.set(0);
-        find();
-    };
     let run_count = move |_| {
         let args = CountArgs {
             connection_id: cid.get_value(),
@@ -484,6 +505,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
             filter: applied.get_untracked(),
             query: query.get_untracked(),
             exact: true,
+            max_time_ms: Some(60_000),
         };
         spawn_local(async move {
             match call::<_, Option<CountDto>>(commands::EXPLORER_COUNT, &Wrap { args: &args }).await
@@ -664,6 +686,9 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                         <button type="button" title=ui.tr("explorer.view_table") class:active=move || mode.get() == ViewMode::Table aria-pressed=move || (mode.get() == ViewMode::Table).to_string() on:click=move |_| mode.set(ViewMode::Table)>{icon(Icon::Table)}<span>{ui.tr("explorer.view_table")}</span></button>
                         <button type="button" title=ui.tr("explorer.view_json") class:active=move || mode.get() == ViewMode::Json aria-pressed=move || (mode.get() == ViewMode::Json).to_string() on:click=move |_| mode.set(ViewMode::Json)>{icon(Icon::Braces)}<span>{ui.tr("explorer.view_json")}</span></button>
                         <button type="button" title=ui.tr("explorer.view_tree") class:active=move || mode.get() == ViewMode::Tree aria-pressed=move || (mode.get() == ViewMode::Tree).to_string() on:click=move |_| mode.set(ViewMode::Tree)>{icon(Icon::ListTree)}<span>{ui.tr("explorer.view_tree")}</span></button>
+                        {is_collection.then(|| view! {
+                            <button type="button" title=ui.tr("agg.title") class:active=move || mode.get() == ViewMode::Aggregations aria-pressed=move || (mode.get() == ViewMode::Aggregations).to_string() on:click=move |_| mode.set(ViewMode::Aggregations)>{icon(Icon::Layers)}<span>{ui.tr("agg.title")}</span></button>
+                        })}
                     </div>
                     <span class="spacer"></span>
                     <button type="button" class="icon-btn" title=ui.tr("common.refresh") aria-label=ui.tr("common.refresh") on:click=move |_| load()>{icon(Icon::Refresh)}</button>
@@ -678,52 +703,22 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                 </div>
             </header>
 
+            <div class="browse-area" class:hidden=move || mode.get() == ViewMode::Aggregations>
             // Query bar (collections) or condition builder (tables).
             {if is_collection {
-                let on_key = move |e: leptos::ev::KeyboardEvent| if e.key() == "Enter" { e.prevent_default(); find(); };
-                view! {
-                    <div class="query-bar">
-                        <div class="qb-row">
-                            <label class="qb-field qb-main">
-                                <span class="qb-label">{icon(Icon::Filter)}{ui.tr("explorer.q_filter")}</span>
-                                <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: \"value\" }"
-                                    prop:value=move || q_filter.get() on:input=move |e| q_filter.set(event_target_value(&e)) on:keydown=on_key />
-                            </label>
-                            <button type="button" class="btn btn-small btn-secondary" aria-expanded=move || q_options.get().to_string()
-                                on:click=move |_| q_options.update(|o| *o = !*o)>
-                                {move || icon(if q_options.get() { Icon::ChevronDown } else { Icon::ChevronRight })}{ui.tr("explorer.q_options")}
-                            </button>
-                            <button type="button" class="btn btn-small btn-secondary" on:click=move |_| reset_query()>{ui.tr("explorer.q_reset")}</button>
-                            <button type="button" class="btn btn-small" on:click=move |_| find()>{icon(Icon::Search)}{ui.tr("explorer.q_find")}</button>
-                        </div>
-                        <Show when=move || q_options.get()>
-                            <div class="qb-row qb-options">
-                                <label class="qb-field">
-                                    <span class="qb-label">{ui.tr("explorer.q_project")}</span>
-                                    <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: 1 }"
-                                        prop:value=move || q_project.get() on:input=move |e| q_project.set(event_target_value(&e)) on:keydown=on_key />
-                                </label>
-                                <label class="qb-field">
-                                    <span class="qb-label">{ui.tr("explorer.q_sort")}</span>
-                                    <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: -1 }"
-                                        prop:value=move || q_sort.get() on:input=move |e| q_sort.set(event_target_value(&e)) on:keydown=on_key />
-                                </label>
-                                <label class="qb-field qb-num">
-                                    <span class="qb-label">{ui.tr("explorer.q_skip")}</span>
-                                    <input class="qb-input" type="number" min="0" placeholder="0"
-                                        prop:value=move || { let v = q_skip.get(); if v == 0 { String::new() } else { v.to_string() } }
-                                        on:input=move |e| q_skip.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
-                                </label>
-                                <label class="qb-field qb-num">
-                                    <span class="qb-label">{ui.tr("explorer.q_limit")}</span>
-                                    <input class="qb-input" type="number" min="0" placeholder="0"
-                                        prop:value=move || { let v = q_limit.get(); if v == 0 { String::new() } else { v.to_string() } }
-                                        on:input=move |e| q_limit.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
-                                </label>
-                            </div>
-                        </Show>
-                    </div>
-                }.into_any()
+                let fields = Signal::derive(move || match page.get() {
+                    Load::Ready(p) => detected_fields(&p),
+                    _ => Vec::new(),
+                });
+                let on_apply = Callback::new(move |a: AppliedQuery| {
+                    query.set(a.query);
+                    skip.set(a.skip);
+                    cap.set((a.limit > 0).then_some(a.limit));
+                    offset.set(0);
+                    count.set(None);
+                    load();
+                });
+                view! { <QueryBar fields=fields on_apply=on_apply /> }.into_any()
             } else {
                 view! {
             <details class="filter-box">
@@ -924,6 +919,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                                 }).collect_view()}
                             </div>
                         }.into_any(),
+                        ViewMode::Aggregations => ().into_any(),
                         ViewMode::Tree => view! {
                             <div class="json-list">
                                 {p.rows.into_iter().map(|r| {
@@ -968,6 +964,13 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     </select>
                 </label>
             </div>
+            </div>
+
+            {is_collection.then(|| view! {
+                <div class="agg-area" class:hidden=move || mode.get() != ViewMode::Aggregations>
+                    <AggregationView connection_id=cid.get_value() object=obj.get_value() />
+                </div>
+            })}
 
             <Show when=move || confirm_delete.get().is_some()>
                 <div class="palette-backdrop">

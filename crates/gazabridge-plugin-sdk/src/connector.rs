@@ -185,6 +185,20 @@ pub trait Connection: Send + Sync + fmt::Debug {
         }))
     }
 
+    /// Exact count that the server stops after `max_time`, failing with
+    /// `Timeout`. Interactive views use it so counting a huge object never
+    /// keeps a production server busy. The default has no server-side
+    /// limit; network connectors override it.
+    async fn count_within(
+        &self,
+        object: &ObjectRef,
+        filter: Option<&Filter>,
+        max_time: Duration,
+    ) -> ConnectorResult<CountResult> {
+        let _ = max_time;
+        self.count(object, filter, true).await
+    }
+
     async fn write_batch(
         &self,
         _batch: WriteBatch,

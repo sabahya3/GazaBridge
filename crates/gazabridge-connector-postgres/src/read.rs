@@ -411,6 +411,41 @@ pub async fn page(
     })
 }
 
+/// Exact count stopped by the server after `max_time` (statement_timeout,
+/// scoped to a transaction that is rolled back).
+pub async fn count_within(
+    inner: &Inner,
+    meta: &TableMeta,
+    object: &ObjectRef,
+    filter: Option<&Filter>,
+    max_time: std::time::Duration,
+) -> ConnectorResult<u64> {
+    let mut parts = SqlParts::default();
+    let mut sql = format!("SELECT count(*) FROM {}", qualified(object)?);
+    if let Some(f) = filter {
+        sql.push_str(" WHERE ");
+        sql.push_str(&filter_sql(f, &meta.types(), &mut parts)?);
+    }
+    let mut client = inner.client().await?;
+    let tx = client
+        .build_transaction()
+        .read_only(true)
+        .start()
+        .await
+        .map_err(map_pg)?;
+    let ms = max_time.as_millis().clamp(1, i32::MAX as u128);
+    tx.batch_execute(&format!("SET LOCAL statement_timeout = {ms}"))
+        .await
+        .map_err(map_pg)?;
+    let row = tx
+        .query_one(&sql, &as_params(&parts.params))
+        .await
+        .map_err(map_pg)?;
+    let n: i64 = row.get(0);
+    tx.rollback().await.map_err(map_pg)?;
+    Ok(n.max(0) as u64)
+}
+
 pub async fn count(
     inner: &Inner,
     meta: &TableMeta,

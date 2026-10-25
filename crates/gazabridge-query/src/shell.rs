@@ -150,8 +150,11 @@ impl<'a> Reader<'a> {
             self.pos += 1;
             match c {
                 '\\' => {
-                    pattern.push('\\');
+                    // `\/` only escapes the delimiter; other escapes belong to the pattern.
                     if let Some(n) = self.peek() {
+                        if n != '/' {
+                            pattern.push('\\');
+                        }
                         pattern.push(n);
                         self.pos += 1;
                     }
@@ -343,7 +346,7 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{name: /^ahm[a/]d\//i}"#).unwrap(),
-            json!({"name": {"$regularExpression": {"pattern": "^ahm[a/]d\\/", "options": "i"}}})
+            json!({"name": {"$regularExpression": {"pattern": "^ahm[a/]d/", "options": "i"}}})
         );
         assert_eq!(
             parse("{'a.b': -1.5e3} // note").unwrap(),

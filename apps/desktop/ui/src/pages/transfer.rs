@@ -116,6 +116,7 @@ pub fn TransferPanel(
             filter: None,
             query: None,
             exact: false,
+            max_time_ms: None,
         };
         spawn_local(async move {
             if let Ok(c) =

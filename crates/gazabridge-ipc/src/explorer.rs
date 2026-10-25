@@ -221,10 +221,21 @@ pub struct CountArgs {
     /// False asks for a cheap estimate (no filter only).
     #[serde(default = "exact_default")]
     pub exact: bool,
+    /// Server-side limit for exact counts (default 3 s); past it the count
+    /// is reported as unknown instead of loading the server.
+    #[serde(default)]
+    pub max_time_ms: Option<u32>,
 }
 
 fn exact_default() -> bool {
     true
+}
+
+/// Objects of one tree level whose estimated sizes are wanted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeCountsArgs {
+    pub connection_id: String,
+    pub objects: Vec<ObjectAddr>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

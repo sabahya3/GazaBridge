@@ -11,7 +11,6 @@ pub mod conversion;
 pub mod ejson;
 pub mod ids;
 pub mod job;
-pub mod shell_json;
 pub mod types;
 pub mod value;
 

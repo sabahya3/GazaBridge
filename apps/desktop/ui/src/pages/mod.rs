@@ -1,8 +1,10 @@
+mod aggregation;
 mod connection_editor;
 mod connections;
 mod explorer;
 mod home;
 mod logs;
+mod query_bar;
 mod query_studio;
 mod settings;
 mod transfer;
