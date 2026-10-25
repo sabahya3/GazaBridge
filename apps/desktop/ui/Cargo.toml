@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 console_error_panic_hook = "0.1.7"
 gazabridge-ipc.workspace = true
+js-sys = "0.3.82"
 leptos = { version = "0.8.12", features = ["csr"] }
 serde.workspace = true
 serde-wasm-bindgen = "0.6.5"

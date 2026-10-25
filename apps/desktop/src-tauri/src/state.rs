@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use gazabridge_application::{ConnectionService, ExplorerService, QueryService};
+use gazabridge_application::{ConnectionService, ExplorerService, QueryService, TransferService};
 use gazabridge_connectors::{ConnectorRegistry, ProfileCatalog};
 use gazabridge_observability::{LogConfig, LoggingGuard};
 use gazabridge_secrets::{Redactor, SecretResolver};
@@ -16,6 +16,7 @@ pub struct AppState {
     pub connections: ConnectionService,
     pub explorer: ExplorerService,
     pub queries: QueryService,
+    pub transfers: TransferService,
     pub registry: ConnectorRegistry,
     pub secrets: SecretResolver,
     pub data_dir: PathBuf,
@@ -58,6 +59,11 @@ impl AppState {
         let explorer = ExplorerService::new(store.clone(), connections.clone());
         Ok(Self {
             queries: QueryService::new(
+                store.clone(),
+                explorer.clone(),
+                connections.redactor().clone(),
+            ),
+            transfers: TransferService::new(
                 store.clone(),
                 explorer.clone(),
                 connections.redactor().clone(),

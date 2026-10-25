@@ -6,6 +6,7 @@ pub mod explorer;
 pub mod profiled;
 pub mod query;
 pub mod schema;
+pub mod transfer;
 
 pub use connections::{ConnectionService, PasswordInput, TestOutcome};
 pub use explorer::{
@@ -14,6 +15,9 @@ pub use explorer::{
 pub use profiled::ProfiledConnection;
 pub use query::{QueryContext, QueryInput, QueryRisk, QueryService};
 pub use schema::{FieldChange, SchemaService};
+pub use transfer::{
+    ExportRequest, ImportRequest, Phase, Progress, TransferService, TransferSummary,
+};
 
 use gazabridge_plugin_sdk::{ConnectorError, ErrorKind};
 
@@ -27,6 +31,8 @@ pub enum AppError {
     Connector(#[from] ConnectorError),
     #[error(transparent)]
     Registry(#[from] gazabridge_connectors::RegistryError),
+    #[error(transparent)]
+    File(#[from] gazabridge_files::FileError),
     #[error("{0}")]
     Invalid(String),
     #[error("{0} not found")]
@@ -56,6 +62,12 @@ impl AppError {
                 _ => "connector",
             },
             Self::Registry(_) => "connector_unavailable",
+            Self::File(e) => match e {
+                gazabridge_files::FileError::Exists(_) => "file_exists",
+                gazabridge_files::FileError::Malformed { .. } => "malformed_input",
+                gazabridge_files::FileError::Io { .. } => "file_io",
+                _ => "invalid_input",
+            },
             Self::Invalid(_) => "invalid_input",
             Self::NotFound(_) => "not_found",
             Self::ConfirmationRequired(_) => "confirmation_required",

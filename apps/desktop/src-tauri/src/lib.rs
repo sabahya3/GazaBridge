@@ -10,6 +10,7 @@ mod explorer_commands;
 mod forms;
 mod query_commands;
 mod state;
+mod transfer_commands;
 
 use tauri::Manager;
 
@@ -17,6 +18,7 @@ pub use state::AppState;
 
 pub fn run() {
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let log_dir = app.path().app_log_dir()?;
@@ -54,6 +56,12 @@ pub fn run() {
             query_commands::query_list_saved,
             query_commands::query_save,
             query_commands::query_delete_saved,
+            transfer_commands::transfer_export,
+            transfer_commands::transfer_import,
+            transfer_commands::transfer_status,
+            transfer_commands::transfer_cancel,
+            transfer_commands::transfer_forget,
+            transfer_commands::pick_file_path,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 pub mod connections;
 pub mod explorer;
 pub mod query;
+pub mod transfer;
 
 pub use connections::*;
 pub use explorer::*;
 pub use query::*;
+pub use transfer::*;
 
 /// Names of the Tauri commands, shared so both sides agree.
 pub mod commands {
@@ -44,6 +46,12 @@ pub mod commands {
     pub const QUERY_LIST_SAVED: &str = "query_list_saved";
     pub const QUERY_SAVE: &str = "query_save";
     pub const QUERY_DELETE_SAVED: &str = "query_delete_saved";
+    pub const TRANSFER_EXPORT: &str = "transfer_export";
+    pub const TRANSFER_IMPORT: &str = "transfer_import";
+    pub const TRANSFER_STATUS: &str = "transfer_status";
+    pub const TRANSFER_CANCEL: &str = "transfer_cancel";
+    pub const TRANSFER_FORGET: &str = "transfer_forget";
+    pub const PICK_FILE_PATH: &str = "pick_file_path";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

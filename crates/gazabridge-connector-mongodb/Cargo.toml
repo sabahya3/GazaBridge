@@ -12,6 +12,7 @@ async-trait.workspace = true
 bigdecimal.workspace = true
 chrono.workspace = true
 futures.workspace = true
+gazabridge-bson.workspace = true
 gazabridge-domain.workspace = true
 gazabridge-plugin-sdk.workspace = true
 indexmap.workspace = true

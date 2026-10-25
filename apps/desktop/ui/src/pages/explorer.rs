@@ -10,6 +10,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde::Serialize;
 
+use super::transfer::{Direction, TransferPanel};
 use super::{ErrorBox, Load};
 use crate::app::use_ui;
 use crate::ipc::call;
@@ -287,6 +288,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     let count = RwSignal::new(None::<CountDto>);
     let message = RwSignal::new(None::<(bool, String)>);
     let editor = RwSignal::new(Editor::Closed);
+    let transfer = RwSignal::new(None::<Direction>);
     let editor_text = RwSignal::new(String::new());
     let plan = RwSignal::new(None::<EditPlanDto>);
     let busy = RwSignal::new(false);
@@ -478,6 +480,12 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     };
 
     let editable = move || matches!(page.get(), Load::Ready(ref p) if p.edit_blocker.is_none());
+    // Imports need a writable object, not a key.
+    let importable = move || matches!(page.get(), Load::Ready(ref p) if p.edit_blocker.is_none() || p.edit_blocker.as_deref() == Some("no_primary_key"));
+    let key_fields = move || match page.get_untracked() {
+        Load::Ready(p) => p.key_fields,
+        _ => Vec::new(),
+    };
     let field_names = move || match page.get() {
         Load::Ready(p) => p.columns.into_iter().map(|c| c.name).collect::<Vec<_>>(),
         _ => Vec::new(),
@@ -496,6 +504,10 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     <button type="button" class="btn btn-small btn-secondary" on:click=move |_| load()>{ui.tr("common.refresh")}</button>
                     <button type="button" class="btn btn-small btn-secondary" on:click=run_count>{ui.tr("explorer.count")}</button>
                     {move || count.get().map(|c| view! { <span class="muted small">{format!("{}: {}", ui.text("explorer.count_label"), c.count)}</span> })}
+                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Export))>{ui.tr("transfer.export")}</button>
+                    <Show when=importable>
+                        <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Import))>{ui.tr("transfer.import")}</button>
+                    </Show>
                     <Show when=editable>
                         <button type="button" class="btn btn-small" on:click=open_insert>{ui.tr("explorer.insert")}</button>
                     </Show>
@@ -553,6 +565,19 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     _ => None,
                 }}
             </div>
+
+            // Export / import
+            {move || transfer.get().map(|direction| view! {
+                <TransferPanel
+                    connection_id=cid.get_value()
+                    object=obj.get_value()
+                    direction=direction
+                    filter=Signal::derive(move || applied.get())
+                    key_fields=key_fields()
+                    on_close=Callback::new(move |_| transfer.set(None))
+                    on_imported=Callback::new(move |_| { count.set(None); load(); })
+                />
+            })}
 
             // Editor
             {move || (editor.get() != Editor::Closed).then(|| {

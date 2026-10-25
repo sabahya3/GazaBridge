@@ -12,14 +12,14 @@
 //!   them back keeps the 32-bit type.
 
 use bigdecimal::BigDecimal;
+use bson::spec::BinarySubtype;
+use bson::{Binary, Bson, Decimal128, Document, oid::ObjectId};
 use chrono::DateTime;
 use gazabridge_domain::conversion::{json_to_value, scalar_to_text};
 use gazabridge_domain::value::ValueMeta;
 use gazabridge_domain::{CanonicalValue, Record, Value};
 use gazabridge_plugin_sdk::{ConnectorError, ConnectorResult, ErrorKind};
 use indexmap::IndexMap;
-use mongodb::bson::spec::BinarySubtype;
-use mongodb::bson::{Binary, Bson, Decimal128, Document, oid::ObjectId};
 
 use crate::decimal128::{self, Dec128};
 
@@ -33,7 +33,7 @@ fn conversion(msg: impl Into<String>) -> ConnectorError {
 fn exotic(kind: &str, display: String, b: &Bson) -> Value {
     let mut doc = Document::new();
     doc.insert("v", b.clone());
-    let bytes = mongodb::bson::to_vec(&doc).ok();
+    let bytes = bson::to_vec(&doc).ok();
     Value::Extension {
         type_name: format!("{BSON_EXT_PREFIX}{kind}"),
         text: Some(display),
@@ -42,8 +42,8 @@ fn exotic(kind: &str, display: String, b: &Bson) -> Value {
 }
 
 fn restore_exotic(bytes: &[u8]) -> ConnectorResult<Bson> {
-    let doc: Document = mongodb::bson::from_slice(bytes)
-        .map_err(|e| conversion(format!("corrupt BSON extension: {e}")))?;
+    let doc: Document =
+        bson::from_slice(bytes).map_err(|e| conversion(format!("corrupt BSON extension: {e}")))?;
     doc.get("v")
         .cloned()
         .ok_or_else(|| conversion("corrupt BSON extension"))
@@ -207,7 +207,7 @@ pub fn to_bson(v: &Value, original_type: Option<&str>) -> ConnectorResult<Option
         }),
         Value::ObjectId(o) => Bson::ObjectId(ObjectId::from_bytes(*o)),
         Value::UtcDateTime(dt) if dt.timestamp_subsec_nanos() % 1_000_000 == 0 => {
-            Bson::DateTime(mongodb::bson::DateTime::from_millis(dt.timestamp_millis()))
+            Bson::DateTime(bson::DateTime::from_millis(dt.timestamp_millis()))
         }
         // Sub-millisecond precision does not fit a BSON date; keep exact text.
         Value::UtcDateTime(_)
@@ -341,7 +341,7 @@ pub fn document_to_record(doc: &Document) -> Record {
 mod tests {
     use std::str::FromStr;
 
-    use mongodb::bson::{Regex, Timestamp, doc};
+    use bson::{Regex, Timestamp, doc};
 
     use super::*;
 
@@ -355,7 +355,7 @@ mod tests {
             "s": "غزة",
             "n": Bson::Null,
             "dec": Bson::Decimal128(Decimal128::from_bytes(decimal128::encode(&BigDecimal::from_str("12.3400").unwrap()).unwrap())),
-            "dt": mongodb::bson::DateTime::from_millis(1_700_000_000_123),
+            "dt": bson::DateTime::from_millis(1_700_000_000_123),
             "bin": Binary { subtype: BinarySubtype::Generic, bytes: vec![0, 1, 255] },
             "uuid": Binary { subtype: BinarySubtype::Uuid, bytes: uuid::Uuid::from_u128(42).as_bytes().to_vec() },
             "md5": Binary { subtype: BinarySubtype::Md5, bytes: vec![1; 16] },

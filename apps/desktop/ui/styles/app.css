@@ -471,3 +471,7 @@ legend { font-weight: 600; padding-inline: 4px; }
 
 .field-inline select, .field-inline input { inline-size: auto; min-inline-size: 0; }
 .tree-kind + bdi, .tree-kind { unicode-bidi: isolate; }
+
+/* Export / import */
+.transfer h3 { margin: 0; }
+.path-row .input { flex: 1 1 260px; min-inline-size: 0; }

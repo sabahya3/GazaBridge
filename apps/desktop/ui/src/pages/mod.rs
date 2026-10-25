@@ -5,6 +5,7 @@ mod home;
 mod logs;
 mod query_studio;
 mod settings;
+mod transfer;
 
 pub use connections::ConnectionsPage;
 pub use explorer::ExplorerPage;

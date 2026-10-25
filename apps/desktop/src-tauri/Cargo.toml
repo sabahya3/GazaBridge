@@ -26,6 +26,7 @@ gazabridge-connector-postgres.workspace = true
 gazabridge-connector-sqlite.workspace = true
 gazabridge-connectors.workspace = true
 gazabridge-domain.workspace = true
+gazabridge-files.workspace = true
 gazabridge-ipc.workspace = true
 gazabridge-observability.workspace = true
 gazabridge-plugin-sdk.workspace = true
@@ -34,6 +35,7 @@ gazabridge-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2.9", features = [] }
+tauri-plugin-dialog = "2"
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

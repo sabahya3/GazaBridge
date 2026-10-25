@@ -6,8 +6,6 @@
 //! aggregation that contains `$out` or `$merge`.
 
 mod connection;
-mod convert;
-mod decimal128;
 mod error;
 mod filter;
 mod infer;
@@ -34,7 +32,8 @@ use mongodb::options::{
 };
 
 pub use connection::MongoConnection;
-pub use convert::{document_to_record, from_bson, record_to_document, to_bson};
+pub(crate) use gazabridge_bson::convert;
+pub use gazabridge_bson::{document_to_record, from_bson, record_to_document, to_bson};
 pub use infer::Inferrer;
 
 pub const CONNECTOR_ID: &str = "mongodb";
