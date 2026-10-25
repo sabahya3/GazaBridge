@@ -1042,7 +1042,7 @@ const LOCAL_DATETIME_FORMATS: &[&str] = &[
     "%Y-%m-%d %H:%M",
 ];
 
-fn parse_local_datetime(s: &str) -> Option<NaiveDateTime> {
+pub(crate) fn parse_local_datetime(s: &str) -> Option<NaiveDateTime> {
     let s = s.trim();
     LOCAL_DATETIME_FORMATS
         .iter()
@@ -1052,7 +1052,7 @@ fn parse_local_datetime(s: &str) -> Option<NaiveDateTime> {
 /// Parses a timestamp with an explicit offset. Accepts RFC 3339 and the
 /// space-separated forms PostgreSQL and MySQL print, plus an optional RFC 9557
 /// `[Zone/Name]` suffix.
-fn parse_offset_datetime(s: &str) -> Option<(DateTime<FixedOffset>, Option<String>)> {
+pub(crate) fn parse_offset_datetime(s: &str) -> Option<(DateTime<FixedOffset>, Option<String>)> {
     let s = s.trim();
     let (body, zone) = match s.strip_suffix(']').and_then(|r| r.rsplit_once('[')) {
         Some((body, zone)) => (body, Some(zone.to_owned())),

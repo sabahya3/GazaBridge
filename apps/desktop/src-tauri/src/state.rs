@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use gazabridge_application::ConnectionService;
+use gazabridge_application::{ConnectionService, ExplorerService};
 use gazabridge_connectors::{ConnectorRegistry, ProfileCatalog};
 use gazabridge_observability::{LogConfig, LoggingGuard};
 use gazabridge_secrets::{Redactor, SecretResolver};
@@ -14,6 +14,7 @@ pub const METADATA_FILE: &str = "metadata.db";
 pub struct AppState {
     pub store: MetadataStore,
     pub connections: ConnectionService,
+    pub explorer: ExplorerService,
     pub registry: ConnectorRegistry,
     pub secrets: SecretResolver,
     pub data_dir: PathBuf,
@@ -52,8 +53,10 @@ impl AppState {
         ))?;
         tracing::info!(version = env!("CARGO_PKG_VERSION"), "GazaBridge started");
         let secrets = SecretResolver::os_default(redactor);
+        let connections = ConnectionService::new(store.clone(), registry.clone(), secrets.clone());
         Ok(Self {
-            connections: ConnectionService::new(store.clone(), registry.clone(), secrets.clone()),
+            explorer: ExplorerService::new(store.clone(), connections.clone()),
+            connections,
             store,
             registry,
             secrets,

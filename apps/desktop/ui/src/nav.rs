@@ -85,7 +85,7 @@ impl Section {
     pub fn is_available(&self) -> bool {
         matches!(
             self,
-            Self::Home | Self::Connections | Self::Logs | Self::Settings
+            Self::Home | Self::Connections | Self::Explorer | Self::Logs | Self::Settings
         )
     }
 }

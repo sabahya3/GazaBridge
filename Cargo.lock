@@ -2054,6 +2054,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "gazabridge-connector-mongodb",
  "gazabridge-connector-postgres",
  "gazabridge-connector-sqlite",
  "gazabridge-connectors",
@@ -2061,6 +2062,7 @@ dependencies = [
  "gazabridge-plugin-sdk",
  "gazabridge-secrets",
  "gazabridge-storage",
+ "mongodb",
  "serde",
  "serde_json",
  "tempfile",

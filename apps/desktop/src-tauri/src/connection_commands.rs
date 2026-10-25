@@ -13,7 +13,7 @@ use tauri::State;
 use crate::forms::{self, FormError};
 use crate::state::AppState;
 
-fn app_error(state: &AppState, e: AppError) -> CommandError {
+pub(crate) fn app_error(state: &AppState, e: AppError) -> CommandError {
     CommandError {
         code: e.code().to_owned(),
         message: state.secrets.redactor().scrub(&e.to_string()),
@@ -27,7 +27,7 @@ fn form_error(e: FormError) -> CommandError {
     }
 }
 
-fn parse_id(id: &str) -> Result<ConnectionId, CommandError> {
+pub(crate) fn parse_id(id: &str) -> Result<ConnectionId, CommandError> {
     id.parse().map_err(|_| CommandError {
         code: "invalid_input".into(),
         message: "invalid connection id".into(),
@@ -65,6 +65,8 @@ pub async fn save_connection_impl(
                 .await
                 .map_err(|e| app_error(state, e.into()))?;
             let profile = forms::profile_from(&args.form, Some(&existing)).map_err(form_error)?;
+            // Browsing sessions must not keep using the old settings.
+            state.explorer.disconnect(existing.id).await;
             state.connections.update(profile, password).await
         }
         None => {

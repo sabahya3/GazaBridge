@@ -6,6 +6,7 @@
 
 mod commands;
 mod connection_commands;
+mod explorer_commands;
 mod forms;
 mod state;
 
@@ -36,6 +37,14 @@ pub fn run() {
             connection_commands::duplicate_connection,
             connection_commands::test_connection,
             connection_commands::test_connection_draft,
+            explorer_commands::explorer_list,
+            explorer_commands::explorer_browse,
+            explorer_commands::explorer_count,
+            explorer_commands::explorer_insert,
+            explorer_commands::explorer_plan_update,
+            explorer_commands::explorer_apply_update,
+            explorer_commands::explorer_delete,
+            explorer_commands::explorer_disconnect,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

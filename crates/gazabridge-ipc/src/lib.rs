@@ -6,8 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 pub mod connections;
+pub mod explorer;
 
 pub use connections::*;
+pub use explorer::*;
 
 /// Names of the Tauri commands, shared so both sides agree.
 pub mod commands {
@@ -24,6 +26,14 @@ pub mod commands {
     pub const DUPLICATE_CONNECTION: &str = "duplicate_connection";
     pub const TEST_CONNECTION: &str = "test_connection";
     pub const TEST_CONNECTION_DRAFT: &str = "test_connection_draft";
+    pub const EXPLORER_LIST: &str = "explorer_list";
+    pub const EXPLORER_BROWSE: &str = "explorer_browse";
+    pub const EXPLORER_COUNT: &str = "explorer_count";
+    pub const EXPLORER_INSERT: &str = "explorer_insert";
+    pub const EXPLORER_PLAN_UPDATE: &str = "explorer_plan_update";
+    pub const EXPLORER_APPLY_UPDATE: &str = "explorer_apply_update";
+    pub const EXPLORER_DELETE: &str = "explorer_delete";
+    pub const EXPLORER_DISCONNECT: &str = "explorer_disconnect";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

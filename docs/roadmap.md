@@ -74,7 +74,7 @@ paused as committed draft code).
 | ✅ P2 | MongoDB contract runs on single-node replica sets 6.0, 7.0, 8.0; record evidence, promote `mongodb.community` (2.6) | S | **done 2026-10-25** — passed on 6.0.28, 7.0.45, 8.0.34; profile is Beta |
 | ✅ P3 | Schema inference: sampling (`$sample` with fallback), field occurrence %, type distributions, mixed types, max depth, conflicting paths; saved snapshots (§15) | M | **done 2026-10-25** — plus drift detection between snapshots |
 | ✅ P4 | Connection editor UI and connection commands (structured + connection-string), test with latency, health, catalogue states (2.8, subset) | M | **done 2026-10-25** — commands covered by backend tests; UI is compile-checked only (no wasm target on this machine), not yet exercised in a running window |
-| P5 | Explorer tree, data viewer (table / JSON / tree, paging, filter, sort, null vs missing display) and document editor (insert/edit/delete, `_id`-safe updates, preview, confirmation, audit) for MongoDB and PostgreSQL (3.1–3.3, subset) | L | |
+| ✅ P5 | Explorer tree, data viewer (table / JSON / tree, paging, filter, sort, null vs missing display) and document editor (insert/edit/delete, `_id`-safe updates, preview, confirmation, audit) for MongoDB and PostgreSQL (3.1–3.3, subset) | L | **done 2026-10-25** — integration-tested on MongoDB 8.0 and PostgreSQL 16 (browse, filter, sort, count, insert, edit with preview, conflict detection, delete, audit); UI compile-checked only; PostgreSQL browses only the connection's own database; grid is paged, not virtualized |
 | P6 | Query Studio for MongoDB filters/aggregations and PostgreSQL SQL: tabs, history, saved queries, params, cancel, explain (3.4, subset) | L | |
 | P7 | Files for MongoDB: JSON, JSONL/NDJSON, BSON (mongodump format), CSV export; gzip; streaming; malformed-line policies (4.2–4.3, 4.6–4.7, subset) | M | |
 | P8 | Migration engine core (streaming pipeline, batching, checkpoints, pause/resume/cancel, retries, quarantine) with MongoDB→MongoDB collection copy including indexes (6.1–6.4, subset) | L | |
@@ -316,6 +316,6 @@ recovery tests pass for each of them.
 
 ## Immediate next steps
 
-1. Priority track P5 (explorer, data viewer, document editor) — P1–P4 are done.
-2. Then P6 → P12 in order.
+1. Priority track P6 (Query Studio) — P1–P5 are done.
+2. Then P7 → P12 in order.
 3. Then resume Milestone 2 at task 2.3 (MySQL).

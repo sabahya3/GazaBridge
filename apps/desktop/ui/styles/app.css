@@ -386,3 +386,57 @@ legend { font-weight: 600; padding-inline: 4px; }
 .finding-warning { color: var(--warn); }
 .finding-info { color: var(--info); }
 .palette.confirm { padding: 16px 20px; }
+
+/* Explorer */
+.page.page-wide { max-inline-size: none; }
+.explorer { display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .explorer { grid-template-columns: 1fr; } }
+.tree { padding: 8px; max-block-size: 75vh; overflow: auto; }
+.tree-level { list-style: none; margin: 0; padding-inline-start: 12px; }
+.tree > .tree-level { padding-inline-start: 0; }
+.tree-node { margin: 1px 0; }
+.tree-toggle, .tree-leaf {
+  display: flex; gap: 6px; align-items: baseline; inline-size: 100%;
+  font: inherit; text-align: start; background: none; border: 0; color: inherit;
+  padding: 3px 6px; border-radius: 6px; cursor: pointer; overflow-wrap: anywhere;
+}
+.tree-toggle:hover, button.tree-leaf:hover { background: var(--surface-2); }
+.tree-kind {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); margin-inline-end: 6px;
+}
+.viewer { min-inline-size: 0; }
+.viewer-card { display: grid; gap: 12px; }
+.viewer-head { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; }
+.viewer-head h2 { margin: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.segmented button { font: inherit; font-size: 12.5px; padding: 3px 10px; background: none; border: 0; color: inherit; cursor: pointer; }
+.segmented button.active { background: var(--primary); color: var(--primary-text); }
+.filter-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; }
+.filter-box summary { cursor: pointer; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 6px; }
+.filter-row .input { flex: 1 1 140px; min-inline-size: 0; }
+.notice-ok { color: var(--ok); }
+.grid-wrap { overflow: auto; max-block-size: 65vh; border: 1px solid var(--border); border-radius: var(--radius); }
+.grid { border-collapse: collapse; inline-size: 100%; font-size: 13px; }
+.grid th, .grid td { border-block-end: 1px solid var(--border); padding: 4px 8px; text-align: start; vertical-align: top; }
+.grid thead th { position: sticky; inset-block-start: 0; background: var(--surface-2); z-index: 1; }
+.grid td.cell { max-inline-size: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sort-btn { font: inherit; font-weight: 600; background: none; border: 0; color: inherit; cursor: pointer; padding: 0; white-space: nowrap; }
+.cell-null { color: var(--muted); font-style: italic; }
+.cell-missing { color: var(--muted); opacity: 0.6; }
+.cell-object_id, .cell-uuid, .cell-decimal, .cell-int, .cell-float, .cell-bigint { font-family: var(--mono); }
+.row-actions { white-space: nowrap; display: flex; gap: 4px; }
+.pager { justify-content: flex-start; align-items: center; }
+.json-list { display: grid; gap: 8px; max-block-size: 65vh; overflow: auto; }
+.json-record { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; }
+.json-record pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; }
+.json-tree { list-style: none; margin: 0; padding-inline-start: 16px; font-family: var(--mono); font-size: 12.5px; }
+.json-key { color: var(--info); }
+.json-string { color: var(--ok); overflow-wrap: anywhere; }
+.json-scalar, .json-typed { color: var(--warn); }
+.record-editor { max-inline-size: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.record-editor h3 { margin: 0; }
+.json-input { inline-size: 100%; resize: vertical; font-size: 12.5px; box-sizing: border-box; }
+.plan .grid td { white-space: pre-wrap; overflow-wrap: anywhere; }
+.confirm-preview { max-block-size: 30vh; overflow: auto; font-size: 12px; white-space: pre-wrap; }

@@ -8,6 +8,7 @@ pub mod compatibility;
 pub mod connection;
 pub mod connection_string;
 pub mod conversion;
+pub mod ejson;
 pub mod ids;
 pub mod job;
 pub mod types;

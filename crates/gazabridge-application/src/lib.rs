@@ -2,10 +2,14 @@
 //! CLI. Drivers (Tauri commands, CLI subcommands) stay thin and call these.
 
 pub mod connections;
+pub mod explorer;
 pub mod profiled;
 pub mod schema;
 
 pub use connections::{ConnectionService, PasswordInput, TestOutcome};
+pub use explorer::{
+    BrowseRequest, BrowseResult, EditBlocker, EditPlan, ExplorerService, FieldEdit,
+};
 pub use profiled::ProfiledConnection;
 pub use schema::{FieldChange, SchemaService};
 
@@ -40,6 +44,7 @@ impl AppError {
                 ErrorKind::Authentication => "authentication",
                 ErrorKind::Connection | ErrorKind::Timeout => "connection",
                 ErrorKind::ReadOnly => "read_only",
+                ErrorKind::Conflict => "conflict",
                 ErrorKind::Unsupported => "unsupported",
                 ErrorKind::InvalidInput => "invalid_input",
                 _ => "connector",

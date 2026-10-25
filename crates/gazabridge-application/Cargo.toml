@@ -24,6 +24,8 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+gazabridge-connector-mongodb.workspace = true
+mongodb = "3.9"
 gazabridge-connector-postgres.workspace = true
 gazabridge-connector-sqlite.workspace = true
 testcontainers-modules = { version = "0.15", features = ["postgres"] }

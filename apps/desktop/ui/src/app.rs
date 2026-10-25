@@ -8,7 +8,7 @@ use leptos::task::spawn_local;
 use crate::i18n::t;
 use crate::ipc::{NoArgs, call};
 use crate::nav::Section;
-use crate::pages::{ConnectionsPage, HomePage, LogsPage, SettingsPage};
+use crate::pages::{ConnectionsPage, ExplorerPage, HomePage, LogsPage, SettingsPage};
 
 /// Shared UI state, provided as context.
 #[derive(Clone, Copy)]
@@ -90,6 +90,7 @@ pub fn App() -> impl IntoView {
             <main id="main" class="content" tabindex="-1">
                 {move || match ui.section.get() {
                     Section::Connections => view! { <ConnectionsPage /> }.into_any(),
+                    Section::Explorer => view! { <ExplorerPage /> }.into_any(),
                     Section::Logs => view! { <LogsPage /> }.into_any(),
                     Section::Settings => view! { <SettingsPage /> }.into_any(),
                     _ => view! { <HomePage /> }.into_any(),

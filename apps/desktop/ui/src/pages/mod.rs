@@ -1,10 +1,12 @@
 mod connection_editor;
 mod connections;
+mod explorer;
 mod home;
 mod logs;
 mod settings;
 
 pub use connections::ConnectionsPage;
+pub use explorer::ExplorerPage;
 pub use home::HomePage;
 pub use logs::LogsPage;
 pub use settings::SettingsPage;

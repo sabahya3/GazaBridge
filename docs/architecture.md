@@ -110,3 +110,4 @@ See the ADRs in [docs/adr](adr/):
 7. [Tauri 2 + Leptos desktop UI](adr/0007-tauri-leptos-ui.md)
 8. [Redaction at the log writer](adr/0008-redaction-at-writer.md)
 9. [MongoDB type mapping and resumable reads](adr/0009-mongodb-type-mapping.md)
+10. [Typed JSON for viewing and editing, and conflict-checked edits](adr/0010-typed-json-and-safe-edits.md)
