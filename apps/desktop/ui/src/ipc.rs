@@ -5,9 +5,20 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
+// Looks the bridge up on every call and rejects instead of throwing when it
+// is missing, so a missing backend is an ordinary error, never an exception
+// that unwinds through the reactive runtime.
+#[wasm_bindgen(inline_js = r#"
+export async function gazabridge_invoke(cmd, args) {
+    const core = window.__TAURI__ && window.__TAURI__.core;
+    if (!core || typeof core.invoke !== "function") {
+        throw { code: "ipc", message: "backend unavailable" };
+    }
+    return await core.invoke(cmd, args);
+}
+"#)]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], catch)]
+    #[wasm_bindgen(js_name = gazabridge_invoke, catch)]
     async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
 }
 

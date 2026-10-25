@@ -203,7 +203,6 @@
   "explorer.pick_object": "اختر جدولًا أو عرضًا أو مجموعة من الشجرة.",
   "explorer.preview": "معاينة التغييرات",
   "explorer.previous": "السابق",
-  "explorer.records": "سجل",
   "explorer.remove_condition": "إزالة الشرط",
   "explorer.removed": "(محذوف)",
   "explorer.save_changes": "حفظ التغييرات",
@@ -215,7 +214,6 @@
   "explorer.view_mode": "العرض",
   "explorer.view_table": "جدول",
   "explorer.view_tree": "شجرة",
-  "query.affected": "متأثر",
   "query.cancel": "إلغاء الاستعلام",
   "query.cancelled": "تم إلغاء الاستعلام.",
   "query.close_tab": "إغلاق التبويب",
@@ -265,5 +263,8 @@
   "query.text": "الاستعلام",
   "query.timeout": "المهلة (ثانية، 0 = بدون)",
   "query.truncated": "توجد صفوف أكثر من الحد",
-  "query.untitled": "بدون عنوان"
+  "query.untitled": "بدون عنوان",
+  "explorer.count_label": "العدد",
+  "query.rows_label": "الصفوف",
+  "query.affected_label": "الصفوف المتأثرة"
 }

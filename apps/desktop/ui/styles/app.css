@@ -363,8 +363,9 @@ legend { font-weight: 600; padding-inline: 4px; }
 /* Connection management */
 .small { font-size: 12.5px; }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-secondary { background: transparent; color: var(--primary); }
-.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn-secondary { background: transparent; color: var(--text); border-color: var(--border); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--primary); }
+.btn-danger { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); font-weight: 600; }
 .btn-small { padding: 3px 10px; font-size: 12.5px; }
 .conn-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .conn .test-result { flex-basis: 100%; }
@@ -467,3 +468,6 @@ legend { font-weight: 600; padding-inline: 4px; }
 .library-text { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-block-size: 4.5em; overflow: hidden; }
 .library-item.status-error .library-text { color: var(--danger); }
 .library-item.status-cancelled .library-text { color: var(--muted); }
+
+.field-inline select, .field-inline input { inline-size: auto; min-inline-size: 0; }
+.tree-kind + bdi, .tree-kind { unicode-bidi: isolate; }

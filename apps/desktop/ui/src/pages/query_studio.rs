@@ -649,8 +649,8 @@ pub fn QueryStudioPage() -> impl IntoView {
                         }.into_any(),
                         Some(Outcome::Rows(r)) => {
                             let summary = match (r.columns.is_empty(), r.affected) {
-                                (true, Some(n)) => format!("{n} {} · {} ms", ui.text("query.affected"), r.elapsed_ms),
-                                _ => format!("{} {} · {} ms", r.rows.len(), ui.text("explorer.records"), r.elapsed_ms),
+                                (true, Some(n)) => format!("{}: {n} · {} ms", ui.text("query.affected_label"), r.elapsed_ms),
+                                _ => format!("{}: {} · {} ms", ui.text("query.rows_label"), r.rows.len(), r.elapsed_ms),
                             };
                             view! {
                                 <section class="results">
@@ -678,7 +678,7 @@ pub fn QueryStudioPage() -> impl IntoView {
                                                         <thead><tr>
                                                             {r.columns.iter().map(|c| {
                                                                 let title = if c.native_type.is_empty() { c.name.clone() } else { format!("{} ({})", c.name, c.native_type) };
-                                                                view! { <th scope="col" title=title>{c.name.clone()}</th> }
+                                                                view! { <th scope="col" title=title><bdi>{c.name.clone()}</bdi></th> }
                                                             }).collect_view()}
                                                         </tr></thead>
                                                         <tbody>

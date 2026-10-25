@@ -12,6 +12,10 @@ default-run = "gazabridge-desktop"
 name = "gazabridge_desktop"
 crate-type = ["rlib"]
 
+[features]
+# Serves the bundled UI instead of the dev server; `cargo tauri build` enables it.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2.5", features = [] }
 

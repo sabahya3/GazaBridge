@@ -86,6 +86,18 @@ cargo install trunk tauri-cli --locked
 cd apps/desktop/src-tauri && cargo tauri dev
 ```
 
+Without the Tauri CLI, build the UI bundle and a release binary that embeds it:
+
+```bash
+(cd apps/desktop/ui && trunk build --release)
+cargo build --release -p gazabridge-desktop --features custom-protocol
+target/release/gazabridge-desktop
+```
+
+On macOS with Homebrew Rust (which has no wasm target), install `rustup`
+(`brew install rustup trunk`) and put `/opt/homebrew/opt/rustup/bin` first in
+`PATH` for these commands.
+
 Integration tests that need Docker (Testcontainers) or the OS keychain are
 marked `#[ignore]` and run in CI; locally:
 

@@ -486,7 +486,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     view! {
         <section class="card viewer-card" aria-labelledby="viewer-title">
             <header class="viewer-head">
-                <h2 id="viewer-title"><span class="tree-kind">{object.kind.clone()}</span>{object.display()}</h2>
+                <h2 id="viewer-title"><span class="tree-kind">{object.kind.clone()}</span><bdi>{object.display()}</bdi></h2>
                 <div class="toolbar">
                     <div class="segmented" role="group" aria-label=ui.tr("explorer.view_mode")>
                         <button type="button" class:active=move || mode.get() == ViewMode::Table aria-pressed=move || (mode.get() == ViewMode::Table).to_string() on:click=move |_| mode.set(ViewMode::Table)>{ui.tr("explorer.view_table")}</button>
@@ -495,7 +495,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     </div>
                     <button type="button" class="btn btn-small btn-secondary" on:click=move |_| load()>{ui.tr("common.refresh")}</button>
                     <button type="button" class="btn btn-small btn-secondary" on:click=run_count>{ui.tr("explorer.count")}</button>
-                    {move || count.get().map(|c| view! { <span class="muted small">{format!("{} {}", c.count, ui.text("explorer.records"))}</span> })}
+                    {move || count.get().map(|c| view! { <span class="muted small">{format!("{}: {}", ui.text("explorer.count_label"), c.count)}</span> })}
                     <Show when=editable>
                         <button type="button" class="btn btn-small" on:click=open_insert>{ui.tr("explorer.insert")}</button>
                     </Show>
@@ -631,7 +631,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                                             view! {
                                                 <th scope="col" title=title>
                                                     <button type="button" class="sort-btn" on:click=move |_| toggle_sort(name_sort.clone())>
-                                                        {c.key.then_some("🔑 ")}{c.name.clone()}{arrow}
+                                                        {c.key.then_some("🔑 ")}<bdi>{c.name.clone()}</bdi>{arrow}
                                                     </button>
                                                 </th>
                                             }

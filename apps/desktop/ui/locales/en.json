@@ -203,7 +203,6 @@
   "explorer.pick_object": "Pick a table, view or collection in the tree.",
   "explorer.preview": "Preview changes",
   "explorer.previous": "Previous",
-  "explorer.records": "records",
   "explorer.remove_condition": "Remove condition",
   "explorer.removed": "(removed)",
   "explorer.save_changes": "Save changes",
@@ -215,7 +214,6 @@
   "explorer.view_mode": "View",
   "explorer.view_table": "Table",
   "explorer.view_tree": "Tree",
-  "query.affected": "affected",
   "query.cancel": "Cancel query",
   "query.cancelled": "The query was cancelled.",
   "query.close_tab": "Close tab",
@@ -265,5 +263,8 @@
   "query.text": "Query",
   "query.timeout": "Timeout (s, 0 = none)",
   "query.truncated": "More rows exist than the limit",
-  "query.untitled": "Untitled"
+  "query.untitled": "Untitled",
+  "explorer.count_label": "Count",
+  "query.rows_label": "Rows",
+  "query.affected_label": "Rows affected"
 }
