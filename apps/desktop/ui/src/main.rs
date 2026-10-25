@@ -1,5 +1,6 @@
 mod app;
 mod i18n;
+mod icons;
 mod ipc;
 mod nav;
 mod pages;

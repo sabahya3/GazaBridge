@@ -244,19 +244,22 @@ pub async fn browse_impl(
     Ok(page_dto(result))
 }
 
-pub async fn count_impl(state: &AppState, args: CountArgs) -> Result<CountDto, CommandError> {
+pub async fn count_impl(
+    state: &AppState,
+    args: CountArgs,
+) -> Result<Option<CountDto>, CommandError> {
     let id = parse_id(&args.connection_id)?;
     let object = object_ref(&args.object)?;
     let filter = filter(args.filter.as_ref())?;
     let c = state
         .explorer
-        .count(id, &object, filter.as_ref())
+        .count(id, &object, filter.as_ref(), args.exact)
         .await
         .map_err(|e| app_error(state, e))?;
-    Ok(CountDto {
+    Ok(c.map(|c| CountDto {
         count: c.count,
         exact: c.exact,
-    })
+    }))
 }
 
 pub async fn insert_impl(state: &AppState, args: InsertArgs) -> Result<(), CommandError> {
@@ -337,7 +340,7 @@ pub async fn explorer_browse(
 pub async fn explorer_count(
     state: State<'_, AppState>,
     args: CountArgs,
-) -> Result<CountDto, CommandError> {
+) -> Result<Option<CountDto>, CommandError> {
     count_impl(&state, args).await
 }
 
@@ -618,9 +621,11 @@ mod tests {
                 connection_id: cid.clone(),
                 object: object.clone(),
                 filter: Some(filtered.clone()),
+                exact: true,
             },
         )
         .await
+        .unwrap()
         .unwrap();
         assert_eq!(count.count, 1);
 

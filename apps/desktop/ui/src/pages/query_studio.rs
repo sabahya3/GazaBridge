@@ -504,7 +504,7 @@ pub fn QueryStudioPage() -> impl IntoView {
                     view! {
                         <div class="tab" class:active=move || active.get() == id>
                             <button type="button" role="tab" aria-selected=move || (active.get() == id).to_string() on:click=move |_| active.set(id)>{title}</button>
-                            <button type="button" class="tab-close" aria-label=ui.tr("query.close_tab") on:click=move |_| close_tab(id)>"×"</button>
+                            <button type="button" class="tab-close" aria-label=ui.tr("query.close_tab") on:click=move |_| close_tab(id)>{crate::icons::icon(crate::icons::Icon::X)}</button>
                         </div>
                     }
                 }).collect_view()}
@@ -598,7 +598,7 @@ pub fn QueryStudioPage() -> impl IntoView {
 
                     <div class="toolbar">
                         <button type="button" class="btn" disabled=running on:click=move |_| start(Action::Run, false) aria-keyshortcuts="Control+Enter Meta+Enter">
-                            {ui.tr("query.run")}
+                            {crate::icons::icon(crate::icons::Icon::Play)}{ui.tr("query.run")}
                         </button>
                         <Show when=running>
                             <button type="button" class="btn btn-danger" on:click=cancel>{ui.tr("query.cancel")}</button>
@@ -752,7 +752,7 @@ pub fn QueryStudioPage() -> impl IntoView {
                                                     <strong>{q.favorite.then_some("★ ")}{q.name.clone()}</strong>
                                                     <span class="muted small">{ui.tr(language_key(&q.language))}</span>
                                                 </button>
-                                                <button type="button" class="btn btn-small btn-secondary" aria-label=ui.tr("connections.delete") on:click=move |_| delete_saved(del.clone())>"×"</button>
+                                                <button type="button" class="icon-btn danger" aria-label=ui.tr("connections.delete") title=ui.tr("connections.delete") on:click=move |_| delete_saved(del.clone())>{crate::icons::icon(crate::icons::Icon::Trash)}</button>
                                             </li>
                                         }
                                     }).collect_view()}

@@ -159,8 +159,9 @@ async fn explorer_edits_mongodb_documents_without_losing_types() {
     };
     assert_eq!(
         explorer
-            .count(id, &object, Some(&missing))
+            .count(id, &object, Some(&missing), true)
             .await
+            .unwrap()
             .unwrap()
             .count,
         1
@@ -488,8 +489,9 @@ async fn explorer_browses_and_edits_postgres_rows() {
     };
     assert_eq!(
         explorer
-            .count(id, &items, Some(&cheap))
+            .count(id, &items, Some(&cheap), true)
             .await
+            .unwrap()
             .unwrap()
             .count,
         1
@@ -542,6 +544,14 @@ async fn explorer_browses_and_edits_postgres_rows() {
         .unwrap();
     let melon = ejson::record_to_ejson_string(&page.records[1]);
     explorer.delete(id, &items, &melon).await.unwrap();
-    assert_eq!(explorer.count(id, &items, None).await.unwrap().count, 1);
+    assert_eq!(
+        explorer
+            .count(id, &items, None, true)
+            .await
+            .unwrap()
+            .unwrap()
+            .count,
+        1
+    );
     explorer.disconnect(id).await;
 }

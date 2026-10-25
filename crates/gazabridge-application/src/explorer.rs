@@ -352,15 +352,21 @@ impl ExplorerService {
         })
     }
 
+    /// Counts records. An estimate (`exact = false`) is only asked for
+    /// without a filter; `None` means the engine cannot estimate.
     pub async fn count(
         &self,
         id: ConnectionId,
         object: &ObjectRef,
         filter: Option<&Filter>,
-    ) -> AppResult<CountResult> {
+        exact: bool,
+    ) -> AppResult<Option<CountResult>> {
         let conn = self.session(id).await?;
-        let r = conn.count(object, filter, true).await;
-        self.checked(id, r).await
+        let exact = exact || filter.is_some();
+        match conn.count(object, filter, exact).await {
+            Err(e) if !exact && e.kind() == ErrorKind::Unsupported => Ok(None),
+            r => self.checked(id, r).await.map(Some),
+        }
     }
 
     async fn editable(

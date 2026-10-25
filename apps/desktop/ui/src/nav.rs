@@ -1,5 +1,7 @@
 //! Navigation model.
 
+use crate::icons::Icon;
+
 /// Main navigation sections, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
@@ -59,29 +61,26 @@ impl Section {
         }
     }
 
-    /// Single-glyph icon. Glyphs avoid shipping an icon font.
-    pub fn icon(&self) -> &'static str {
+    pub fn icon(&self) -> Icon {
         match self {
-            Self::Home => "⌂",
-            Self::Connections => "⇄",
-            Self::Explorer => "☰",
-            Self::QueryStudio => "⌕",
-            Self::SchemaStudio => "◫",
-            Self::Migrations => "➜",
-            Self::SyncJobs => "↻",
-            Self::Imports => "⇣",
-            Self::Exports => "⇡",
-            Self::Transformations => "ƒ",
-            Self::Schedules => "◷",
-            Self::Monitor => "◉",
-            Self::Reports => "▤",
-            Self::Logs => "≡",
-            Self::Settings => "⚙",
+            Self::Home => Icon::Home,
+            Self::Connections => Icon::Plug,
+            Self::Explorer => Icon::Database,
+            Self::QueryStudio => Icon::Code,
+            Self::SchemaStudio => Icon::Layers,
+            Self::Migrations => Icon::ArrowLeftRight,
+            Self::SyncJobs => Icon::Repeat,
+            Self::Imports => Icon::Download,
+            Self::Exports => Icon::Upload,
+            Self::Transformations => Icon::Shuffle,
+            Self::Schedules => Icon::Clock,
+            Self::Monitor => Icon::Activity,
+            Self::Reports => Icon::Chart,
+            Self::Logs => Icon::FileText,
+            Self::Settings => Icon::Settings,
         }
     }
 
-    /// Whether the section is functional in this build. Unavailable sections
-    /// are shown disabled; they never open a placeholder screen.
     pub fn is_available(&self) -> bool {
         matches!(
             self,

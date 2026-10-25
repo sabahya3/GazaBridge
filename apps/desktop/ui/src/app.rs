@@ -139,37 +139,39 @@ fn Header(palette_open: RwSignal<bool>) -> impl IntoView {
 #[component]
 fn Sidebar() -> impl IntoView {
     let ui = use_ui();
+    let item = move |s: Section| {
+        let available = s.is_available();
+        let label = ui.tr(s.label_key());
+        let unavailable = ui.tr("nav.not_available");
+        view! {
+            <li>
+                <button
+                    type="button"
+                    class="nav-item"
+                    class:active=move || ui.section.get() == s
+                    aria-current=move || (ui.section.get() == s).then_some("page")
+                    disabled=!available
+                    title=move || if available { label() } else { format!("{} — {}", label(), unavailable()) }
+                    on:click=move |_| ui.section.set(s)
+                >
+                    <span class="nav-icon">{crate::icons::icon(s.icon())}</span>
+                    <span class="nav-label">{label}</span>
+                    {(!available).then(|| view! { <span class="sr-only">{unavailable}</span> })}
+                </button>
+            </li>
+        }
+    };
     view! {
         <nav class="sidebar" aria-label=ui.tr("nav.primary")>
             <ul>
-                {Section::ALL
-                    .into_iter()
-                    .map(|s| {
-                        let available = s.is_available();
-                        let label = ui.tr(s.label_key());
-                        let unavailable = ui.tr("nav.not_available");
-                        view! {
-                            <li>
-                                <button
-                                    type="button"
-                                    class="nav-item"
-                                    class:active=move || ui.section.get() == s
-                                    aria-current=move || (ui.section.get() == s).then_some("page")
-                                    disabled=!available
-                                    title=move || if available { label() } else { format!("{} — {}", label(), unavailable()) }
-                                    on:click=move |_| ui.section.set(s)
-                                >
-                                    <span class="nav-icon" aria-hidden="true">{s.icon()}</span>
-                                    <span class="nav-label">{label}</span>
-                                    {(!available).then(|| view! {
-                                        <span class="sr-only">{unavailable}</span>
-                                    })}
-                                </button>
-                            </li>
-                        }
-                    })
-                    .collect_view()}
+                {Section::ALL.into_iter().filter(Section::is_available).map(item).collect_view()}
             </ul>
+            <details class="nav-soon">
+                <summary>{ui.tr("nav.coming_soon")}</summary>
+                <ul>
+                    {Section::ALL.into_iter().filter(|s| !s.is_available()).map(item).collect_view()}
+                </ul>
+            </details>
         </nav>
     }
 }
@@ -258,7 +260,7 @@ fn CommandPalette(open: RwSignal<bool>) -> impl IntoView {
                                         aria-selected=move || (selected.get() == i).to_string()
                                         on:click=move |_| go(s)
                                     >
-                                        <span aria-hidden="true">{s.icon()}</span>
+                                        <span class="nav-icon">{crate::icons::icon(s.icon())}</span>
                                         {ui.tr(s.label_key())}
                                     </li>
                                 }

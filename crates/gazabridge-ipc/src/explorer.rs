@@ -193,6 +193,13 @@ pub struct CountArgs {
     pub object: ObjectAddr,
     #[serde(default)]
     pub filter: Option<FilterDto>,
+    /// False asks for a cheap estimate (no filter only).
+    #[serde(default = "exact_default")]
+    pub exact: bool,
+}
+
+fn exact_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

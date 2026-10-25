@@ -13,6 +13,7 @@ use serde::Serialize;
 use super::transfer::{Direction, TransferPanel};
 use super::{ErrorBox, Load};
 use crate::app::use_ui;
+use crate::icons::{Icon, icon};
 use crate::ipc::call;
 
 #[derive(Serialize)]
@@ -102,62 +103,85 @@ pub fn ExplorerPage() -> impl IntoView {
         object.set(None);
     };
 
+    let filter = RwSignal::new(String::new());
+    let selected = RwSignal::new(None::<ObjectAddr>);
+
     view! {
-        <section class="page page-wide" aria-labelledby="explorer-title">
-            <h1 id="explorer-title">{ui.tr("nav.explorer")}</h1>
-            {move || match connections.get() {
-                Load::Loading => view! { <p>{ui.tr("common.loading")}</p> }.into_any(),
-                Load::Failed(e) => view! { <ErrorBox message=e retry=load /> }.into_any(),
-                Load::Ready(list) if list.is_empty() => view! {
-                    <div class="empty-state">
-                        <h2>{ui.tr("connections.empty_title")}</h2>
-                        <p>{ui.tr("explorer.no_connections")}</p>
-                    </div>
-                }.into_any(),
-                Load::Ready(list) => view! {
-                    <div class="toolbar">
-                        <label class="field-inline">
-                            <span>{ui.tr("explorer.connection")}</span>
-                            <select class="input" on:change=move |e| {
+        <section class="workspace" aria-labelledby="explorer-title">
+            <h1 id="explorer-title" class="sr-only">{ui.tr("nav.explorer")}</h1>
+            <aside class="ws-side">
+                {move || match connections.get() {
+                    Load::Loading => view! { <p class="muted small pad">{ui.tr("common.loading")}</p> }.into_any(),
+                    Load::Failed(e) => view! { <div class="pad"><ErrorBox message=e retry=load /></div> }.into_any(),
+                    Load::Ready(list) if list.is_empty() => view! {
+                        <div class="empty-state small-empty">
+                            <p>{ui.tr("explorer.no_connections")}</p>
+                            <button type="button" class="btn btn-small" on:click=move |_| ui.section.set(crate::nav::Section::Connections)>
+                                {icon(Icon::Plus)}{ui.tr("connections.new")}
+                            </button>
+                        </div>
+                    }.into_any(),
+                    Load::Ready(list) => view! {
+                        <div class="ws-side-head">
+                            <select class="input conn-select" aria-label=ui.tr("explorer.connection") on:change=move |e| {
                                 let v = event_target_value(&e);
                                 object.set(None);
+                                selected.set(None);
                                 connection.set((!v.is_empty()).then_some(v));
                             }>
                                 <option value="" selected=move || connection.get().is_none()>{ui.tr("explorer.choose")}</option>
                                 {list.into_iter().map(|c| {
                                     let id = c.id.clone();
                                     view! {
-                                        <option value=c.id.clone() selected=move || connection.get().as_deref() == Some(id.as_str())>
-                                            {format!("{} — {}", c.name, c.target)}
-                                        </option>
+                                        <option value=c.id.clone() selected=move || connection.get().as_deref() == Some(id.as_str())>{c.name.clone()}</option>
                                     }
                                 }).collect_view()}
                             </select>
-                        </label>
-                        <Show when=move || connection.get().is_some()>
-                            <button type="button" class="btn btn-small btn-secondary" on:click=disconnect>{ui.tr("explorer.disconnect")}</button>
-                        </Show>
-                    </div>
-                }.into_any(),
-            }}
-            {move || connection.get().map(|cid| {
-                let cid_tree = cid.clone();
-                let on_open = Callback::new(move |o: ObjectAddr| object.set(Some(o)));
-                view! {
-                    <div class="explorer">
-                        <nav class="tree card" aria-label=ui.tr("explorer.tree")>
-                            <TreeLevel connection_id=cid_tree database=None schema=None on_open=on_open />
-                        </nav>
-                        <div class="viewer">
-                            {move || match object.get() {
-                                Some(o) => view! { <Viewer connection_id=cid.clone() object=o /> }.into_any(),
-                                None => view! { <p class="muted">{ui.tr("explorer.pick_object")}</p> }.into_any(),
-                            }}
+                            <Show when=move || connection.get().is_some()>
+                                <button type="button" class="icon-btn" title=ui.tr("explorer.disconnect") aria-label=ui.tr("explorer.disconnect") on:click=disconnect>
+                                    {icon(Icon::Unplug)}
+                                </button>
+                            </Show>
                         </div>
-                    </div>
-                }
-            })}
+                    }.into_any(),
+                }}
+                <Show when=move || connection.get().is_some()>
+                    <label class="tree-search">
+                        {icon(Icon::Search)}
+                        <input type="search" placeholder=ui.tr("explorer.find_object") aria-label=ui.tr("explorer.find_object")
+                            prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
+                    </label>
+                </Show>
+                <nav class="tree" aria-label=ui.tr("explorer.tree")>
+                    {move || connection.get().map(|cid| {
+                        let on_open = Callback::new(move |o: ObjectAddr| {
+                            selected.set(Some(o.clone()));
+                            object.set(Some(o));
+                        });
+                        view! { <TreeLevel connection_id=cid database=None schema=None depth=0 on_open=on_open filter=filter.into() selected=selected /> }
+                    })}
+                </nav>
+            </aside>
+            <div class="ws-main">
+                {move || match (connection.get(), object.get()) {
+                    (Some(cid), Some(o)) => view! { <Viewer connection_id=cid object=o /> }.into_any(),
+                    (Some(_), None) => view! {
+                        <div class="ws-empty">{icon(Icon::Table)}<p>{ui.tr("explorer.pick_object")}</p></div>
+                    }.into_any(),
+                    _ => view! {
+                        <div class="ws-empty">{icon(Icon::Database)}<p>{ui.tr("explorer.choose")}</p></div>
+                    }.into_any(),
+                }}
+            </div>
         </section>
+    }
+}
+
+fn compact_count(n: u64) -> String {
+    match n {
+        0..=999 => n.to_string(),
+        1_000..=999_999 => format!("{:.1}k", n as f64 / 1e3).replace(".0k", "k"),
+        _ => format!("{:.1}M", n as f64 / 1e6).replace(".0M", "M"),
     }
 }
 
@@ -167,7 +191,10 @@ fn TreeLevel(
     connection_id: String,
     database: Option<String>,
     schema: Option<String>,
+    depth: u32,
     on_open: Callback<ObjectAddr>,
+    filter: Signal<String>,
+    selected: RwSignal<Option<ObjectAddr>>,
 ) -> impl IntoView {
     let ui = use_ui();
     let nodes = RwSignal::new(Load::<Vec<NodeDto>>::Loading);
@@ -189,12 +216,14 @@ fn TreeLevel(
         });
     };
     load();
+    let indent = format!("padding-inline-start: {}px", 8 + depth * 16);
+    let indent2 = indent.clone();
 
     view! {
         {move || match nodes.get() {
-            Load::Loading => view! { <p class="muted small">{ui.tr("common.loading")}</p> }.into_any(),
-            Load::Failed(e) => view! { <p class="error-detail">{e}</p> }.into_any(),
-            Load::Ready(list) if list.is_empty() => view! { <p class="muted small">{ui.tr("explorer.empty_level")}</p> }.into_any(),
+            Load::Loading => view! { <p class="tree-note" style=indent.clone()>{ui.tr("common.loading")}</p> }.into_any(),
+            Load::Failed(e) => view! { <p class="tree-note error-detail" style=indent.clone()>{e}</p> }.into_any(),
+            Load::Ready(list) if list.is_empty() => view! { <p class="tree-note" style=indent.clone()>{ui.tr("explorer.empty_level")}</p> }.into_any(),
             Load::Ready(list) => view! {
                 <ul class="tree-level" role="group">
                     {list.into_iter().map(|n| {
@@ -204,32 +233,44 @@ fn TreeLevel(
                             _ => (database.clone(), Some(n.name.clone())),
                         };
                         let addr = ObjectAddr { database: database.clone(), schema: schema.clone(), name: n.name.clone(), kind: n.kind.clone() };
+                        let addr_sel = addr.clone();
                         let cid = connection_id.clone();
-                        let count = n.estimated_count.map(|c| format!(" ({c})")).unwrap_or_default();
-                        let label = format!("{}{count}", n.name);
+                        let name_lc = n.name.to_lowercase();
+                        let expandable = n.expandable;
+                        let visible = move || expandable || filter.with(|f| f.trim().is_empty() || name_lc.contains(&f.trim().to_lowercase()));
+                        let count = n.estimated_count.map(compact_count);
+                        let kind_icon = Icon::for_kind(&n.kind);
+                        let style = indent2.clone();
+                        let title = match &n.estimated_count {
+                            Some(c) => format!("{} · {c}", n.name),
+                            None => n.name.clone(),
+                        };
                         view! {
-                            <li class="tree-node">
+                            <li class="tree-node" class:hidden=move || !visible()>
                                 {if n.expandable {
                                     view! {
-                                        <button type="button" class="tree-toggle" aria-expanded=move || expanded.get().to_string()
+                                        <button type="button" class="tree-row" style=style title=title aria-expanded=move || expanded.get().to_string()
                                             on:click=move |_| expanded.update(|e| *e = !*e)>
-                                            <span aria-hidden="true">{move || if expanded.get() { "▾" } else { "▸" }}</span>
-                                            <span class="tree-kind">{n.kind.clone()}</span>
-                                            {label.clone()}
-                                        </button>
-                                    }.into_any()
-                                } else if n.readable {
-                                    view! {
-                                        <button type="button" class="tree-leaf" on:click=move |_| on_open.run(addr.clone())>
-                                            <span class="tree-kind">{n.kind.clone()}</span>
-                                            {label.clone()}
+                                            <span class="tree-chevron">{move || icon(if expanded.get() { Icon::ChevronDown } else { Icon::ChevronRight })}</span>
+                                            <span class=format!("tree-icon kind-{}", n.kind)>{icon(kind_icon)}</span>
+                                            <span class="tree-name">{n.name.clone()}</span>
                                         </button>
                                     }.into_any()
                                 } else {
-                                    view! { <span class="tree-leaf muted"><span class="tree-kind">{n.kind.clone()}</span>{label.clone()}</span> }.into_any()
+                                    let readable = n.readable;
+                                    view! {
+                                        <button type="button" class="tree-row" style=style title=title disabled=!readable
+                                            class:selected=move || selected.with(|s| s.as_ref() == Some(&addr_sel))
+                                            on:click=move |_| on_open.run(addr.clone())>
+                                            <span class="tree-chevron"></span>
+                                            <span class=format!("tree-icon kind-{}", n.kind)>{icon(kind_icon)}</span>
+                                            <span class="tree-name">{n.name.clone()}</span>
+                                            {count.map(|c| view! { <span class="tree-count">{c}</span> })}
+                                        </button>
+                                    }.into_any()
                                 }}
                                 {move || expanded.get().then(|| view! {
-                                    <TreeLevel connection_id=cid.clone() database=child_db.clone() schema=child_schema.clone() on_open=on_open />
+                                    <TreeLevel connection_id=cid.clone() database=child_db.clone() schema=child_schema.clone() depth=depth + 1 on_open=on_open filter=filter selected=selected />
                                 }.into_any())}
                             </li>
                         }
@@ -297,8 +338,28 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     let cid = StoredValue::new(connection_id);
     let obj = StoredValue::new(object.clone());
 
+    // Total for the pager: a cheap estimate when nothing is filtered.
+    let estimate = move || {
+        if applied.get_untracked().is_some() {
+            return;
+        }
+        let args = CountArgs {
+            connection_id: cid.get_value(),
+            object: obj.get_value(),
+            filter: None,
+            exact: false,
+        };
+        spawn_local(async move {
+            if let Ok(c) =
+                call::<_, Option<CountDto>>(commands::EXPLORER_COUNT, &Wrap { args: &args }).await
+            {
+                count.set(c);
+            }
+        });
+    };
     let load = move || {
         page.set(Load::Loading);
+        estimate();
         let args = BrowseArgs {
             connection_id: cid.get_value(),
             object: obj.get_value(),
@@ -333,10 +394,12 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
             connection_id: cid.get_value(),
             object: obj.get_value(),
             filter: applied.get_untracked(),
+            exact: true,
         };
         spawn_local(async move {
-            match call::<_, CountDto>(commands::EXPLORER_COUNT, &Wrap { args: &args }).await {
-                Ok(c) => count.set(Some(c)),
+            match call::<_, Option<CountDto>>(commands::EXPLORER_COUNT, &Wrap { args: &args }).await
+            {
+                Ok(c) => count.set(c),
                 Err(e) => message.set(Some((false, e.message))),
             }
         });
@@ -493,24 +556,29 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     };
 
     view! {
-        <section class="card viewer-card" aria-labelledby="viewer-title">
+        <section class="viewer-card" aria-labelledby="viewer-title">
             <header class="viewer-head">
-                <h2 id="viewer-title"><span class="tree-kind">{object.kind.clone()}</span><bdi>{object.display()}</bdi></h2>
-                <div class="toolbar">
+                <h2 id="viewer-title" class="crumbs">
+                    <span class=format!("tree-icon kind-{}", object.kind)>{icon(Icon::for_kind(&object.kind))}</span>
+                    {object.database.clone().map(|d| view! { <span class="crumb muted"><bdi>{d}</bdi></span><span class="crumb-sep">"/"</span> })}
+                    {object.schema.clone().map(|d| view! { <span class="crumb muted"><bdi>{d}</bdi></span><span class="crumb-sep">"/"</span> })}
+                    <span class="crumb"><bdi>{object.name.clone()}</bdi></span>
+                </h2>
+                <div class="toolbar tight">
                     <div class="segmented" role="group" aria-label=ui.tr("explorer.view_mode")>
-                        <button type="button" class:active=move || mode.get() == ViewMode::Table aria-pressed=move || (mode.get() == ViewMode::Table).to_string() on:click=move |_| mode.set(ViewMode::Table)>{ui.tr("explorer.view_table")}</button>
-                        <button type="button" class:active=move || mode.get() == ViewMode::Json aria-pressed=move || (mode.get() == ViewMode::Json).to_string() on:click=move |_| mode.set(ViewMode::Json)>{ui.tr("explorer.view_json")}</button>
-                        <button type="button" class:active=move || mode.get() == ViewMode::Tree aria-pressed=move || (mode.get() == ViewMode::Tree).to_string() on:click=move |_| mode.set(ViewMode::Tree)>{ui.tr("explorer.view_tree")}</button>
+                        <button type="button" title=ui.tr("explorer.view_table") class:active=move || mode.get() == ViewMode::Table aria-pressed=move || (mode.get() == ViewMode::Table).to_string() on:click=move |_| mode.set(ViewMode::Table)>{icon(Icon::Table)}<span>{ui.tr("explorer.view_table")}</span></button>
+                        <button type="button" title=ui.tr("explorer.view_json") class:active=move || mode.get() == ViewMode::Json aria-pressed=move || (mode.get() == ViewMode::Json).to_string() on:click=move |_| mode.set(ViewMode::Json)>{icon(Icon::Braces)}<span>{ui.tr("explorer.view_json")}</span></button>
+                        <button type="button" title=ui.tr("explorer.view_tree") class:active=move || mode.get() == ViewMode::Tree aria-pressed=move || (mode.get() == ViewMode::Tree).to_string() on:click=move |_| mode.set(ViewMode::Tree)>{icon(Icon::ListTree)}<span>{ui.tr("explorer.view_tree")}</span></button>
                     </div>
-                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| load()>{ui.tr("common.refresh")}</button>
-                    <button type="button" class="btn btn-small btn-secondary" on:click=run_count>{ui.tr("explorer.count")}</button>
-                    {move || count.get().map(|c| view! { <span class="muted small">{format!("{}: {}", ui.text("explorer.count_label"), c.count)}</span> })}
-                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Export))>{ui.tr("transfer.export")}</button>
+                    <span class="spacer"></span>
+                    <button type="button" class="icon-btn" title=ui.tr("common.refresh") aria-label=ui.tr("common.refresh") on:click=move |_| load()>{icon(Icon::Refresh)}</button>
+                    <button type="button" class="icon-btn" title=ui.tr("explorer.count") aria-label=ui.tr("explorer.count") on:click=run_count>{icon(Icon::Hash)}</button>
+                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Export))>{icon(Icon::Upload)}{ui.tr("transfer.export")}</button>
                     <Show when=importable>
-                        <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Import))>{ui.tr("transfer.import")}</button>
+                        <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Import))>{icon(Icon::Download)}{ui.tr("transfer.import")}</button>
                     </Show>
                     <Show when=editable>
-                        <button type="button" class="btn btn-small" on:click=open_insert>{ui.tr("explorer.insert")}</button>
+                        <button type="button" class="btn btn-small" on:click=open_insert>{icon(Icon::Plus)}{ui.tr("explorer.insert")}</button>
                     </Show>
                 </div>
             </header>
@@ -518,6 +586,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
             // Filter builder
             <details class="filter-box">
                 <summary>
+                    {icon(Icon::Filter)}
                     {ui.tr("explorer.filter")}
                     {move || applied.get().map(|f| view! { <span class="badge">{f.conditions.len()}</span> })}
                 </summary>
@@ -544,7 +613,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                                     on:change=move |e| conditions.update(|cs| cs[i].value = event_target_value(&e)) />
                             })}
                             <button type="button" class="btn btn-small btn-secondary" aria-label=ui.tr("explorer.remove_condition")
-                                on:click=move |_| conditions.update(|cs| { cs.remove(i); })>"×"</button>
+                                on:click=move |_| conditions.update(|cs| { cs.remove(i); })>{icon(Icon::X)}</button>
                         </div>
                     }
                 }).collect_view()}
@@ -657,7 +726,7 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                                             view! {
                                                 <th scope="col" title=title>
                                                     <button type="button" class="sort-btn" on:click=move |_| toggle_sort(name_sort.clone())>
-                                                        {c.key.then_some("🔑 ")}<bdi>{c.name.clone()}</bdi>{arrow}
+                                                        {c.key.then(|| view! { <span class="key-mark" title=ui.tr("explorer.key_column")>{icon(Icon::Key)}</span> })}<bdi>{c.name.clone()}</bdi>{arrow}
                                                     </button>
                                                 </th>
                                             }
@@ -679,8 +748,8 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                                                     }).collect_view()}
                                                     <td class="row-actions">
                                                         {can_edit.then(|| view! {
-                                                            <button type="button" class="btn btn-small btn-secondary" on:click=move |_| open_edit(json_e.clone())>{ui.tr("connections.edit")}</button>
-                                                            <button type="button" class="btn btn-small btn-danger" on:click=move |_| confirm_delete.set(Some(json_d.clone()))>{ui.tr("connections.delete")}</button>
+                                                            <button type="button" class="icon-btn" title=ui.tr("connections.edit") aria-label=ui.tr("connections.edit") on:click=move |_| open_edit(json_e.clone())>{icon(Icon::Pencil)}</button>
+                                                            <button type="button" class="icon-btn danger" title=ui.tr("connections.delete") aria-label=ui.tr("connections.delete") on:click=move |_| confirm_delete.set(Some(json_d.clone()))>{icon(Icon::Trash)}</button>
                                                         })}
                                                     </td>
                                                 </tr>
@@ -699,8 +768,8 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                                             <pre class="mono">{r.json}</pre>
                                             {can_edit.then(|| view! {
                                                 <div class="toolbar">
-                                                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| open_edit(json_e.clone())>{ui.tr("connections.edit")}</button>
-                                                    <button type="button" class="btn btn-small btn-danger" on:click=move |_| confirm_delete.set(Some(json_d.clone()))>{ui.tr("connections.delete")}</button>
+                                                    <button type="button" class="icon-btn" title=ui.tr("connections.edit") aria-label=ui.tr("connections.edit") on:click=move |_| open_edit(json_e.clone())>{icon(Icon::Pencil)}</button>
+                                                    <button type="button" class="icon-btn danger" title=ui.tr("connections.delete") aria-label=ui.tr("connections.delete") on:click=move |_| confirm_delete.set(Some(json_d.clone()))>{icon(Icon::Trash)}</button>
                                                 </div>
                                             })}
                                         </article>
@@ -722,18 +791,27 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
 
             // Paging
             <div class="toolbar pager">
-                <button type="button" class="btn btn-small btn-secondary"
+                <button type="button" class="icon-btn flip"
                     disabled=move || offset.get() == 0
-                    on:click=move |_| { offset.update(|o| *o = o.saturating_sub(u64::from(limit.get_untracked()))); load(); }>{ui.tr("explorer.previous")}</button>
+                    title=ui.tr("explorer.previous") aria-label=ui.tr("explorer.previous")
+                    on:click=move |_| { offset.update(|o| *o = o.saturating_sub(u64::from(limit.get_untracked()))); load(); }>{icon(Icon::ChevronRight)}</button>
                 <span class="muted small">
                     {move || match page.get() {
-                        Load::Ready(p) if !p.rows.is_empty() => format!("{}–{}", p.offset + 1, p.offset + p.rows.len() as u64),
+                        Load::Ready(p) if !p.rows.is_empty() => {
+                            let range = format!("{}–{}", p.offset + 1, p.offset + p.rows.len() as u64);
+                            match count.get() {
+                                Some(c) if c.exact => format!("{range} {} {}", ui.text("explorer.of"), c.count),
+                                Some(c) => format!("{range} {} ~{}", ui.text("explorer.of"), c.count),
+                                None => range,
+                            }
+                        }
                         _ => String::new(),
                     }}
                 </span>
-                <button type="button" class="btn btn-small btn-secondary"
+                <button type="button" class="icon-btn"
                     disabled=move || !matches!(page.get(), Load::Ready(ref p) if p.has_more)
-                    on:click=move |_| { offset.update(|o| *o += u64::from(limit.get_untracked())); load(); }>{ui.tr("explorer.next")}</button>
+                    title=ui.tr("explorer.next") aria-label=ui.tr("explorer.next")
+                    on:click=move |_| { offset.update(|o| *o += u64::from(limit.get_untracked())); load(); }>{icon(Icon::ChevronRight)}</button>
                 <label class="field-inline">
                     <span>{ui.tr("explorer.page_size")}</span>
                     <select class="input" on:change=move |e| {

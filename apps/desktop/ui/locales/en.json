@@ -330,5 +330,9 @@
   "editor.testing": "Testing…",
   "editor.save_connect": "Save & Connect",
   "editor.use_hosts": "Use host list instead",
-  "connections.error_details": "Details"
+  "connections.error_details": "Details",
+  "explorer.find_object": "Find a table or collection",
+  "explorer.of": "of",
+  "explorer.key_column": "Record key",
+  "nav.coming_soon": "Coming soon"
 }

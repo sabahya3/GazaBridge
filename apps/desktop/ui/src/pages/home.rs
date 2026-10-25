@@ -24,7 +24,7 @@ pub fn HomePage() -> impl IntoView {
         let available = s.is_available();
         view! {
             <li class="module" class:module-planned=!available>
-                <span class="nav-icon" aria-hidden="true">{s.icon()}</span>
+                <span class="nav-icon">{crate::icons::icon(s.icon())}</span>
                 <span>{ui.tr(s.label_key())}</span>
                 <span class="badge" class:badge-ok=available class:badge-muted=!available>
                     {if available { ui.tr("home.available") } else { ui.tr("home.planned") }}

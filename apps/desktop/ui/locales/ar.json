@@ -330,5 +330,9 @@
   "editor.testing": "جارٍ الاختبار…",
   "editor.save_connect": "حفظ واتصال",
   "editor.use_hosts": "استخدام قائمة المضيفين بدلًا منه",
-  "connections.error_details": "التفاصيل"
+  "connections.error_details": "التفاصيل",
+  "explorer.find_object": "ابحث عن جدول أو مجموعة",
+  "explorer.of": "من",
+  "explorer.key_column": "مفتاح السجل",
+  "nav.coming_soon": "قريبًا"
 }
