@@ -98,6 +98,18 @@ On macOS with Homebrew Rust (which has no wasm target), install `rustup`
 (`brew install rustup trunk`) and put `/opt/homebrew/opt/rustup/bin` first in
 `PATH` for these commands.
 
+To get a normal Mac application (`GazaBridge.app` with its icon, which you
+can move to Applications and open from Launchpad or the Dock):
+
+```bash
+scripts/build-mac-app.sh
+```
+
+A release build compiles about 800 crates with link-time optimisation, so it
+keeps the CPU busy (and warm) for a few minutes. The script runs at low
+priority on half the cores; set `JOBS` to change that. For day-to-day work
+use `cargo tauri dev` or debug builds, which rebuild only what changed.
+
 Integration tests that need Docker (Testcontainers) or the OS keychain are
 marked `#[ignore]` and run in CI; locally:
 
