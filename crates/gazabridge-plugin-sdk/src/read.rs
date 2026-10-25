@@ -27,6 +27,9 @@ pub struct ReadRequest {
     /// Fields to return; empty means all.
     #[serde(default)]
     pub projection: Vec<String>,
+    /// Fields to leave out (document stores); used when `projection` is empty.
+    #[serde(default)]
+    pub exclude: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<Filter>,
     /// Ordering. When resuming, connectors require a stable unique order
@@ -48,6 +51,7 @@ impl ReadRequest {
         Self {
             object,
             projection: Vec::new(),
+            exclude: Vec::new(),
             filter: None,
             order_by: Vec::new(),
             batch_size,
@@ -98,6 +102,9 @@ pub struct PageRequest {
     pub object: ObjectRef,
     #[serde(default)]
     pub projection: Vec<String>,
+    /// Fields to leave out (document stores); used when `projection` is empty.
+    #[serde(default)]
+    pub exclude: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<Filter>,
     #[serde(default)]

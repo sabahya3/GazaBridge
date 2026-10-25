@@ -6,7 +6,7 @@ use gazabridge_domain::{CanonicalType, Value};
 use gazabridge_plugin_sdk::ddl::{ColumnDefinition, DdlPlan, SchemaOperation, TableDefinition};
 use gazabridge_plugin_sdk::filter::{Filter, SortDirection, SortKey};
 use gazabridge_plugin_sdk::schema::{NamespacePath, ObjectKind, ObjectRef};
-use gazabridge_plugin_sdk::{Capability, ConnectorError, ConnectorResult};
+use gazabridge_plugin_sdk::{Capability, ConnectorError, ConnectorResult, ErrorKind};
 
 use crate::types::{ColumnShape, TextParam, encode, native_type_for, shape_of};
 
@@ -142,6 +142,12 @@ pub fn filter_sql(
             format!("({})", parts.join(if and { " AND " } else { " OR " }))
         }
         Filter::Not { filter } => format!("NOT ({})", filter_sql(filter, types, out)?),
+        Filter::Native { .. } => {
+            return Err(ConnectorError::new(
+                ErrorKind::Unsupported,
+                "native MongoDB filters cannot be used with PostgreSQL",
+            ));
+        }
     })
 }
 

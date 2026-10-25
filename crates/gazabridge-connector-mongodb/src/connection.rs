@@ -96,6 +96,11 @@ impl MongoConnection {
     }
 }
 
+/// Projection leaving out `fields` (used when nothing is included).
+fn exclusion(fields: &[String]) -> Option<Document> {
+    (!fields.is_empty()).then(|| fields.iter().map(|f| (f.clone(), Bson::Int32(0))).collect())
+}
+
 fn projection(fields: &[String], keep: &[String]) -> Option<Document> {
     if fields.is_empty() {
         return None;
@@ -908,8 +913,21 @@ impl Connection for MongoConnection {
             })
             .collect();
         let key_names: Vec<String> = keys.iter().map(|(k, _)| k.clone()).collect();
+        // Excluded fields stay out, except sort keys the resumable read needs
+        // (those are read and then hidden).
+        let excluded: Vec<String> = request
+            .exclude
+            .iter()
+            .filter(|f| !key_names.contains(f))
+            .cloned()
+            .collect();
         let hidden: Vec<String> = if request.projection.is_empty() {
-            Vec::new()
+            request
+                .exclude
+                .iter()
+                .filter(|f| key_names.contains(f))
+                .cloned()
+                .collect()
         } else {
             key_names
                 .iter()
@@ -931,7 +949,8 @@ impl Connection for MongoConnection {
                 .transpose()?
                 .unwrap_or_default(),
             sort: to_sort(&sort_keys)?,
-            projection: projection(&request.projection, &key_names),
+            projection: projection(&request.projection, &key_names)
+                .or_else(|| exclusion(&excluded)),
             hidden,
             keys,
             after,
@@ -966,7 +985,9 @@ impl Connection for MongoConnection {
             .sort(sort)
             .skip(request.offset)
             .limit(i64::from(limit) + 1);
-        if let Some(p) = projection(&request.projection, &[]) {
+        if let Some(p) =
+            projection(&request.projection, &[]).or_else(|| exclusion(&request.exclude))
+        {
             find = find.projection(p);
         }
         let fetch = async {

@@ -8,7 +8,6 @@ pub enum Icon {
     Home,
     Plug,
     Database,
-    Folder,
     Table,
     Collection,
     Eye,
@@ -38,6 +37,7 @@ pub enum Icon {
     Trash,
     Play,
     Unplug,
+    PanelLeft,
     X,
 }
 
@@ -53,13 +53,13 @@ impl Icon {
             Self::Database => {
                 r#"<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>"#
             }
-            Self::Folder => {
-                r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#
-            }
             Self::Table => {
                 r#"<path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>"#
             }
-            Self::Collection | Self::Braces => {
+            Self::Collection => {
+                r#"<path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/>"#
+            }
+            Self::Braces => {
                 r#"<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>"#
             }
             Self::Eye => {
@@ -128,6 +128,9 @@ impl Icon {
             Self::Unplug => {
                 r#"<path d="m19 5 3-3"/><path d="m2 22 3-3"/><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/>"#
             }
+            Self::PanelLeft => {
+                r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>"#
+            }
             Self::X => r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#,
         }
     }
@@ -136,7 +139,7 @@ impl Icon {
     pub fn for_kind(kind: &str) -> Self {
         match kind {
             "database" => Self::Database,
-            "schema" => Self::Folder,
+            "schema" => Self::Layers,
             "collection" => Self::Collection,
             "view" | "materialized_view" => Self::Eye,
             _ => Self::Table,

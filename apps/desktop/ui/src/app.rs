@@ -89,7 +89,7 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <div class="shell">
+        <div class="shell" class:nav-collapsed=move || ui.prefs.with(|p| p.sidebar_collapsed)>
             <a class="skip-link" href="#main">{ui.tr("nav.primary")}</a>
             <Header palette_open=palette_open />
             <Sidebar />
@@ -110,12 +110,31 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// Collapses or expands the main navigation and remembers the choice.
+fn toggle_sidebar(ui: Ui) {
+    #[derive(serde::Serialize)]
+    struct Args {
+        preferences: Preferences,
+    }
+    ui.prefs
+        .update(|p| p.sidebar_collapsed = !p.sidebar_collapsed);
+    let preferences = ui.prefs.get_untracked();
+    spawn_local(async move {
+        let _ = call::<_, ()>(commands::SET_PREFERENCES, &Args { preferences }).await;
+    });
+}
+
 #[component]
 fn Header(palette_open: RwSignal<bool>) -> impl IntoView {
     let ui = use_ui();
     view! {
         <header class="header">
             <div class="brand">
+                <button type="button" class="icon-btn" aria-label=ui.tr("nav.toggle") title=ui.tr("nav.toggle")
+                    aria-expanded=move || (!ui.prefs.with(|p| p.sidebar_collapsed)).to_string()
+                    on:click=move |_| toggle_sidebar(ui)>
+                    {crate::icons::icon(crate::icons::Icon::PanelLeft)}
+                </button>
                 <img class="brand-mark" src="assets/logo-mark.svg" alt="" width="28" height="28" />
                 <div class="brand-text">
                     <span class="brand-name">{ui.tr("app.name")}</span>

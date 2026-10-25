@@ -9,7 +9,7 @@ use gazabridge_domain::{CanonicalType, Value};
 use gazabridge_plugin_sdk::ddl::{ColumnDefinition, DdlPlan, SchemaOperation, TableDefinition};
 use gazabridge_plugin_sdk::filter::{Filter, SortDirection, SortKey};
 use gazabridge_plugin_sdk::schema::{ObjectKind, ObjectRef};
-use gazabridge_plugin_sdk::{Capability, ConnectorError, ConnectorResult};
+use gazabridge_plugin_sdk::{Capability, ConnectorError, ConnectorResult, ErrorKind};
 
 use crate::types::{Bind, encode, is_text_encoded_number, native_type_for};
 
@@ -170,6 +170,12 @@ pub fn filter_sql(filter: &Filter, types: &ColumnTypes, out: &mut SqlParts) -> C
             out.sql.push_str("NOT (");
             filter_sql(filter, types, out)?;
             out.sql.push(')');
+        }
+        Filter::Native { .. } => {
+            return Err(ConnectorError::new(
+                ErrorKind::Unsupported,
+                "native MongoDB filters cannot be used with SQLite",
+            ));
         }
     }
     Ok(())

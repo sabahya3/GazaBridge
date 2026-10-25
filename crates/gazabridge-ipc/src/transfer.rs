@@ -12,6 +12,9 @@ pub struct ExportArgs {
     pub object: ObjectAddr,
     #[serde(default)]
     pub filter: Option<FilterDto>,
+    /// The query bar's filter and projection (sort does not apply).
+    #[serde(default)]
+    pub query: Option<crate::explorer::NativeQueryDto>,
     pub path: String,
     /// `json`, `jsonl`, `bson` or `csv`.
     pub format: String,

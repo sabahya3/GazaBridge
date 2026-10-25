@@ -43,12 +43,18 @@ pub enum EditBlocker {
     NotWritable,
     NoPrimaryKey,
     Unsupported,
+    /// Only some fields are shown, so a record cannot be edited safely.
+    Projected,
 }
 
 #[derive(Debug, Clone)]
 pub struct BrowseRequest {
     pub object: ObjectRef,
     pub filter: Option<Filter>,
+    /// Fields to show; empty means all.
+    pub projection: Vec<String>,
+    /// Fields to hide (documents), when `projection` is empty.
+    pub exclude: Vec<String>,
     pub order_by: Vec<SortKey>,
     pub offset: u64,
     pub limit: u32,
@@ -321,9 +327,11 @@ impl ExplorerService {
     pub async fn browse(&self, id: ConnectionId, req: BrowseRequest) -> AppResult<BrowseResult> {
         let conn = self.session(id).await?;
         let info = self.info(id, conn.as_ref(), &req.object).await?;
+        let projected = !req.projection.is_empty() || !req.exclude.is_empty();
         let page_req = PageRequest {
             object: req.object.clone(),
-            projection: Vec::new(),
+            projection: req.projection,
+            exclude: req.exclude,
             filter: req.filter,
             order_by: req.order_by,
             offset: req.offset,
@@ -342,7 +350,8 @@ impl ExplorerService {
             columns.iter().map(|c| c.name.clone()).collect()
         };
         Ok(BrowseResult {
-            edit_blocker: Self::blocker(conn.as_ref(), &req.object, &info),
+            edit_blocker: Self::blocker(conn.as_ref(), &req.object, &info)
+                .or(projected.then_some(EditBlocker::Projected)),
             columns,
             fields,
             records: page.records,
@@ -408,6 +417,7 @@ impl ExplorerService {
         let req = PageRequest {
             object: object.clone(),
             projection: Vec::new(),
+            exclude: Vec::new(),
             filter: Some(filter.clone()),
             order_by: Vec::new(),
             offset: 0,

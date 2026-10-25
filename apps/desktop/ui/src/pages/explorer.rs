@@ -4,7 +4,7 @@
 use gazabridge_ipc::{
     BrowseArgs, BrowsePageDto, ConditionDto, ConnectionSummary, CountArgs, CountDto,
     DeleteRecordArgs, EditArgs, EditPlanDto, ExplorerListArgs, FilterDto, FilterOp, InsertArgs,
-    MutationDto, NodeDto, ObjectAddr, SortDto, commands,
+    MutationDto, NativeQueryDto, NodeDto, ObjectAddr, SortDto, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -47,6 +47,7 @@ fn blocker_key(code: &str) -> &'static str {
         "read_only_connection" => "explorer.blocked_read_only",
         "no_primary_key" => "explorer.blocked_no_key",
         "not_writable" => "explorer.blocked_not_writable",
+        "projected" => "explorer.blocked_projected",
         _ => "explorer.blocked_unsupported",
     }
 }
@@ -105,9 +106,11 @@ pub fn ExplorerPage() -> impl IntoView {
 
     let filter = RwSignal::new(String::new());
     let selected = RwSignal::new(None::<ObjectAddr>);
+    let side_open = RwSignal::new(true);
+    provide_context(SidePanel(side_open));
 
     view! {
-        <section class="workspace" aria-labelledby="explorer-title">
+        <section class="workspace" class:side-hidden=move || !side_open.get() aria-labelledby="explorer-title">
             <h1 id="explorer-title" class="sr-only">{ui.tr("nav.explorer")}</h1>
             <aside class="ws-side">
                 {move || match connections.get() {
@@ -175,6 +178,25 @@ pub fn ExplorerPage() -> impl IntoView {
             </div>
         </section>
     }
+}
+
+/// Columns whose loaded values are all text (ignoring null and missing).
+fn text_columns(p: &BrowsePageDto) -> std::collections::HashSet<String> {
+    p.columns
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| {
+            let kinds: Vec<&str> = p
+                .rows
+                .iter()
+                .filter_map(|r| r.cells.get(*i))
+                .map(|c| c.kind.as_str())
+                .filter(|k| !matches!(*k, "null" | "missing"))
+                .collect();
+            !kinds.is_empty() && kinds.iter().all(|k| *k == "string")
+        })
+        .map(|(_, c)| c.name.clone())
+        .collect()
 }
 
 fn compact_count(n: u64) -> String {
@@ -316,9 +338,14 @@ fn json_tree(value: &serde_json::Value) -> AnyView {
     }
 }
 
+/// Whether the Explorer's object panel is shown.
+#[derive(Clone, Copy)]
+struct SidePanel(RwSignal<bool>);
+
 #[component]
 fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     let ui = use_ui();
+    let side = use_context::<SidePanel>().map(|s| s.0);
     let page = RwSignal::new(Load::<BrowsePageDto>::Loading);
     let conditions = RwSignal::new(Vec::<ConditionDto>::new());
     let match_any = RwSignal::new(false);
@@ -337,17 +364,32 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     let confirm_delete = RwSignal::new(None::<String>);
     let cid = StoredValue::new(connection_id);
     let obj = StoredValue::new(object.clone());
+    let is_collection = object.kind == "collection";
+    // Query bar (MongoDB collections), as typed and as last applied.
+    let q_filter = RwSignal::new(String::new());
+    let q_project = RwSignal::new(String::new());
+    let q_sort = RwSignal::new(String::new());
+    let q_skip = RwSignal::new(0u64);
+    let q_limit = RwSignal::new(0u64);
+    let q_options = RwSignal::new(false);
+    let query = RwSignal::new(None::<NativeQueryDto>);
+    let skip = RwSignal::new(0u64);
+    let cap = RwSignal::new(None::<u64>);
 
-    // Total for the pager: a cheap estimate when nothing is filtered.
+    // Total for the pager: exact when a filter or query applies, otherwise
+    // a cheap estimate.
     let estimate = move || {
-        if applied.get_untracked().is_some() {
-            return;
-        }
+        let filtered = applied.get_untracked().is_some()
+            || query.with_untracked(|q| {
+                q.as_ref()
+                    .is_some_and(|q| !q.filter.trim().is_empty() && q.filter.trim() != "{}")
+            });
         let args = CountArgs {
             connection_id: cid.get_value(),
             object: obj.get_value(),
-            filter: None,
-            exact: false,
+            filter: applied.get_untracked(),
+            query: query.get_untracked(),
+            exact: filtered,
         };
         spawn_local(async move {
             if let Ok(c) =
@@ -360,13 +402,21 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     let load = move || {
         page.set(Load::Loading);
         estimate();
+        // Skip moves the start; Limit caps the total, like Compass.
+        let page_limit = match cap.get_untracked() {
+            Some(c) => limit
+                .get_untracked()
+                .min(c.saturating_sub(offset.get_untracked()).max(1) as u32),
+            None => limit.get_untracked(),
+        };
         let args = BrowseArgs {
             connection_id: cid.get_value(),
             object: obj.get_value(),
             filter: applied.get_untracked(),
             sort: sort.get_untracked(),
-            offset: offset.get_untracked(),
-            limit: limit.get_untracked(),
+            query: query.get_untracked(),
+            offset: skip.get_untracked() + offset.get_untracked(),
+            limit: page_limit,
         };
         spawn_local(async move {
             page.set(
@@ -380,7 +430,24 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
     load();
 
     let apply_filter = move || {
-        let conds = conditions.get_untracked();
+        // A value typed for a text field is text, even if it looks like a
+        // number (phone numbers, codes): `966…` must not become a number.
+        let text_fields = match page.get_untracked() {
+            Load::Ready(p) => text_columns(&p),
+            _ => Default::default(),
+        };
+        let conds: Vec<ConditionDto> = conditions
+            .get_untracked()
+            .into_iter()
+            .map(|mut c| {
+                let v = c.value.trim();
+                let explicit = v.starts_with('"') || v.starts_with('{') || v.starts_with('[');
+                if c.op.takes_value() && !explicit && text_fields.contains(c.field.trim()) {
+                    c.value = serde_json::Value::String(c.value.clone()).to_string();
+                }
+                c
+            })
+            .collect();
         applied.set((!conds.is_empty()).then(|| FilterDto {
             any: match_any.get_untracked(),
             conditions: conds,
@@ -389,11 +456,33 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
         count.set(None);
         load();
     };
+    let find = move || {
+        let q = NativeQueryDto {
+            filter: q_filter.get_untracked(),
+            project: q_project.get_untracked(),
+            sort: q_sort.get_untracked(),
+        };
+        query.set((!q.is_empty()).then_some(q));
+        skip.set(q_skip.get_untracked());
+        cap.set((q_limit.get_untracked() > 0).then(|| q_limit.get_untracked()));
+        offset.set(0);
+        count.set(None);
+        load();
+    };
+    let reset_query = move || {
+        q_filter.set(String::new());
+        q_project.set(String::new());
+        q_sort.set(String::new());
+        q_skip.set(0);
+        q_limit.set(0);
+        find();
+    };
     let run_count = move |_| {
         let args = CountArgs {
             connection_id: cid.get_value(),
             object: obj.get_value(),
             filter: applied.get_untracked(),
+            query: query.get_untracked(),
             exact: true,
         };
         spawn_local(async move {
@@ -559,6 +648,12 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
         <section class="viewer-card" aria-labelledby="viewer-title">
             <header class="viewer-head">
                 <h2 id="viewer-title" class="crumbs">
+                    {side.map(|open| view! {
+                        <button type="button" class="icon-btn" aria-label=ui.tr("explorer.toggle_panel") title=ui.tr("explorer.toggle_panel")
+                            aria-expanded=move || open.get().to_string() on:click=move |_| open.update(|o| *o = !*o)>
+                            {icon(Icon::PanelLeft)}
+                        </button>
+                    })}
                     <span class=format!("tree-icon kind-{}", object.kind)>{icon(Icon::for_kind(&object.kind))}</span>
                     {object.database.clone().map(|d| view! { <span class="crumb muted"><bdi>{d}</bdi></span><span class="crumb-sep">"/"</span> })}
                     {object.schema.clone().map(|d| view! { <span class="crumb muted"><bdi>{d}</bdi></span><span class="crumb-sep">"/"</span> })}
@@ -583,7 +678,54 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                 </div>
             </header>
 
-            // Filter builder
+            // Query bar (collections) or condition builder (tables).
+            {if is_collection {
+                let on_key = move |e: leptos::ev::KeyboardEvent| if e.key() == "Enter" { e.prevent_default(); find(); };
+                view! {
+                    <div class="query-bar">
+                        <div class="qb-row">
+                            <label class="qb-field qb-main">
+                                <span class="qb-label">{icon(Icon::Filter)}{ui.tr("explorer.q_filter")}</span>
+                                <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: \"value\" }"
+                                    prop:value=move || q_filter.get() on:input=move |e| q_filter.set(event_target_value(&e)) on:keydown=on_key />
+                            </label>
+                            <button type="button" class="btn btn-small btn-secondary" aria-expanded=move || q_options.get().to_string()
+                                on:click=move |_| q_options.update(|o| *o = !*o)>
+                                {move || icon(if q_options.get() { Icon::ChevronDown } else { Icon::ChevronRight })}{ui.tr("explorer.q_options")}
+                            </button>
+                            <button type="button" class="btn btn-small btn-secondary" on:click=move |_| reset_query()>{ui.tr("explorer.q_reset")}</button>
+                            <button type="button" class="btn btn-small" on:click=move |_| find()>{icon(Icon::Search)}{ui.tr("explorer.q_find")}</button>
+                        </div>
+                        <Show when=move || q_options.get()>
+                            <div class="qb-row qb-options">
+                                <label class="qb-field">
+                                    <span class="qb-label">{ui.tr("explorer.q_project")}</span>
+                                    <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: 1 }"
+                                        prop:value=move || q_project.get() on:input=move |e| q_project.set(event_target_value(&e)) on:keydown=on_key />
+                                </label>
+                                <label class="qb-field">
+                                    <span class="qb-label">{ui.tr("explorer.q_sort")}</span>
+                                    <input class="qb-input mono" type="text" spellcheck="false" placeholder="{ field: -1 }"
+                                        prop:value=move || q_sort.get() on:input=move |e| q_sort.set(event_target_value(&e)) on:keydown=on_key />
+                                </label>
+                                <label class="qb-field qb-num">
+                                    <span class="qb-label">{ui.tr("explorer.q_skip")}</span>
+                                    <input class="qb-input" type="number" min="0" placeholder="0"
+                                        prop:value=move || { let v = q_skip.get(); if v == 0 { String::new() } else { v.to_string() } }
+                                        on:input=move |e| q_skip.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
+                                </label>
+                                <label class="qb-field qb-num">
+                                    <span class="qb-label">{ui.tr("explorer.q_limit")}</span>
+                                    <input class="qb-input" type="number" min="0" placeholder="0"
+                                        prop:value=move || { let v = q_limit.get(); if v == 0 { String::new() } else { v.to_string() } }
+                                        on:input=move |e| q_limit.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
+                                </label>
+                            </div>
+                        </Show>
+                    </div>
+                }.into_any()
+            } else {
+                view! {
             <details class="filter-box">
                 <summary>
                     {icon(Icon::Filter)}
@@ -628,6 +770,9 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                 </div>
             </details>
 
+                }.into_any()
+            }}
+
             <div role="status" aria-live="polite">
                 {move || message.get().map(|(ok, m)| view! { <p class=if ok { "notice notice-ok" } else { "error-detail" }>{m}</p> })}
                 {move || match page.get() {
@@ -643,6 +788,8 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     object=obj.get_value()
                     direction=direction
                     filter=Signal::derive(move || applied.get())
+                    query=Signal::derive(move || query.get())
+                    matching=Signal::derive(move || count.get())
                     key_fields=key_fields()
                     on_close=Callback::new(move |_| transfer.set(None))
                     on_imported=Callback::new(move |_| { count.set(None); load(); })

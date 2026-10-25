@@ -178,6 +178,8 @@ async fn mongodb_collections_round_trip_through_every_file_format() {
                 ExportRequest {
                     object: orders.clone(),
                     filter: None,
+                    projection: vec![],
+                    exclude: vec![],
                     path: path.clone(),
                     options,
                 },
@@ -218,6 +220,8 @@ async fn mongodb_collections_round_trip_through_every_file_format() {
             ExportRequest {
                 object: orders.clone(),
                 filter: Some(Filter::eq("status", Value::String("open".into()))),
+                projection: vec![],
+                exclude: vec![],
                 path: csv.clone(),
                 options,
             },
@@ -298,6 +302,8 @@ async fn mongodb_collections_round_trip_through_every_file_format() {
             ExportRequest {
                 object: orders,
                 filter: None,
+                projection: vec![],
+                exclude: vec![],
                 path: cancelled.clone(),
                 options: WriteOptions::new(FileFormat::Jsonl),
             },
@@ -384,6 +390,8 @@ async fn postgres_tables_export_and_import() {
             ExportRequest {
                 object: src.clone(),
                 filter: None,
+                projection: vec![],
+                exclude: vec![],
                 path: path.clone(),
                 options: WriteOptions::new(FileFormat::Jsonl),
             },
@@ -470,6 +478,8 @@ async fn postgres_tables_export_and_import() {
             id,
             ExportRequest {
                 object: src,
+                projection: vec![],
+                exclude: vec![],
                 filter: Some(Filter::Le {
                     field: FieldPath::new("price"),
                     value: Value::Int(5),

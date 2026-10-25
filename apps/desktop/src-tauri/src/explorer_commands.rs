@@ -5,7 +5,7 @@ use gazabridge_domain::ejson;
 use gazabridge_ipc::{
     BrowseArgs, BrowsePageDto, CellDto, ColumnDto, CommandError, ConditionDto, CountArgs, CountDto,
     DeleteRecordArgs, EditArgs, EditPlanDto, ExplorerListArgs, FieldEditDto, FilterDto, FilterOp,
-    InsertArgs, MutationDto, NodeDto, ObjectAddr,
+    InsertArgs, MutationDto, NativeQueryDto, NodeDto, ObjectAddr,
 };
 use gazabridge_plugin_sdk::filter::{FieldPath, Filter, SortDirection, SortKey};
 use gazabridge_plugin_sdk::schema::{NamespacePath, ObjectKind, ObjectRef};
@@ -94,6 +94,100 @@ fn condition(c: &ConditionDto) -> Result<Filter, CommandError> {
         FilterOp::IsNotNull => Filter::IsNotNull { field },
         FilterOp::IsMissing => Filter::IsMissing { field },
     })
+}
+
+/// The query bar's parts: native filter, included and excluded fields, sort.
+#[derive(Debug)]
+pub struct NativeParts {
+    pub filter: Option<Filter>,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub sort: Vec<SortKey>,
+}
+
+fn shell(
+    what: &str,
+    text: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, CommandError> {
+    match gazabridge_domain::shell_json::parse(text) {
+        Ok(serde_json::Value::Object(m)) => Ok(m),
+        Ok(_) => Err(invalid(format!(
+            "{what} must be a document, e.g. {{ field: 1 }}"
+        ))),
+        Err(e) => Err(invalid(format!("{what}: {e}"))),
+    }
+}
+
+fn truthy(v: &serde_json::Value) -> Option<bool> {
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0),
+        _ => None,
+    }
+}
+
+pub fn native(q: Option<&NativeQueryDto>) -> Result<NativeParts, CommandError> {
+    let mut parts = NativeParts {
+        filter: None,
+        include: vec![],
+        exclude: vec![],
+        sort: vec![],
+    };
+    let Some(q) = q else { return Ok(parts) };
+    let f = shell("Filter", &q.filter)?;
+    if !f.is_empty() {
+        parts.filter = Some(Filter::Native {
+            query: serde_json::Value::Object(f),
+        });
+    }
+    for (k, v) in shell("Project", &q.project)? {
+        match truthy(&v) {
+            Some(true) => parts.include.push(k),
+            Some(false) => parts.exclude.push(k),
+            None => {
+                return Err(invalid(format!(
+                    "Project: use 1 to show `{k}` or 0 to hide it"
+                )));
+            }
+        }
+    }
+    if !parts.include.is_empty() && parts.exclude.iter().any(|k| k != "_id") {
+        return Err(invalid(
+            "Project: either list fields to show (1) or fields to hide (0), not both (except _id: 0)",
+        ));
+    }
+    if !parts.include.is_empty() && parts.exclude.iter().any(|k| k == "_id") {
+        parts.exclude.clear();
+    } else if !parts.include.is_empty() && !parts.include.iter().any(|k| k == "_id") {
+        // MongoDB shows _id unless it is hidden explicitly.
+        parts.include.insert(0, "_id".into());
+    }
+    for (k, v) in shell("Sort", &q.sort)? {
+        let direction = match v.as_i64() {
+            Some(1) => SortDirection::Asc,
+            Some(-1) => SortDirection::Desc,
+            _ => {
+                return Err(invalid(format!(
+                    "Sort: use 1 (ascending) or -1 (descending) for `{k}`"
+                )));
+            }
+        };
+        parts.sort.push(SortKey {
+            field: FieldPath::new(k),
+            direction,
+        });
+    }
+    Ok(parts)
+}
+
+/// Both the condition builder and the query bar's filter, when present.
+pub fn combine(a: Option<Filter>, b: Option<Filter>) -> Option<Filter> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(Filter::And {
+            filters: vec![a, b],
+        }),
+        (a, b) => a.or(b),
+    }
 }
 
 pub fn filter(dto: Option<&FilterDto>) -> Result<Option<Filter>, CommandError> {
@@ -218,21 +312,27 @@ pub async fn browse_impl(
     args: BrowseArgs,
 ) -> Result<BrowsePageDto, CommandError> {
     let id = parse_id(&args.connection_id)?;
+    let q = native(args.query.as_ref())?;
     let request = BrowseRequest {
         object: object_ref(&args.object)?,
-        filter: filter(args.filter.as_ref())?,
-        order_by: args
-            .sort
-            .iter()
-            .map(|s| SortKey {
-                field: FieldPath::new(s.field.clone()),
-                direction: if s.descending {
-                    SortDirection::Desc
-                } else {
-                    SortDirection::Asc
-                },
-            })
-            .collect(),
+        filter: combine(filter(args.filter.as_ref())?, q.filter),
+        projection: q.include,
+        exclude: q.exclude,
+        order_by: if !q.sort.is_empty() {
+            q.sort
+        } else {
+            args.sort
+                .iter()
+                .map(|s| SortKey {
+                    field: FieldPath::new(s.field.clone()),
+                    direction: if s.descending {
+                        SortDirection::Desc
+                    } else {
+                        SortDirection::Asc
+                    },
+                })
+                .collect()
+        },
         offset: args.offset,
         limit: args.limit,
     };
@@ -250,7 +350,10 @@ pub async fn count_impl(
 ) -> Result<Option<CountDto>, CommandError> {
     let id = parse_id(&args.connection_id)?;
     let object = object_ref(&args.object)?;
-    let filter = filter(args.filter.as_ref())?;
+    let filter = combine(
+        filter(args.filter.as_ref())?,
+        native(args.query.as_ref())?.filter,
+    );
     let c = state
         .explorer
         .count(id, &object, filter.as_ref(), args.exact)
@@ -396,6 +499,44 @@ mod tests {
 
     use super::*;
     use crate::connection_commands::save_connection_impl;
+
+    #[test]
+    fn query_bar_parts_follow_mongodb_rules() {
+        let q = |filter: &str, project: &str, sort: &str| NativeQueryDto {
+            filter: filter.into(),
+            project: project.into(),
+            sort: sort.into(),
+        };
+        let p = native(Some(&q(
+            "{status: 'open'}",
+            "{name: 1, email: 1}",
+            "{createdAt: -1}",
+        )))
+        .unwrap();
+        assert!(matches!(p.filter, Some(Filter::Native { .. })));
+        assert_eq!(
+            p.include,
+            ["_id", "name", "email"],
+            "_id is shown unless hidden"
+        );
+        assert!(matches!(p.sort[0].direction, SortDirection::Desc));
+        let p = native(Some(&q("", "{name: 1, _id: 0}", ""))).unwrap();
+        assert_eq!(
+            (p.include.clone(), p.exclude.clone()),
+            (vec!["name".to_owned()], vec![])
+        );
+        assert!(p.filter.is_none());
+        let p = native(Some(&q("{}", "{secret: 0}", ""))).unwrap();
+        assert_eq!(p.exclude, ["secret"]);
+        assert!(native(Some(&q("", "{a: 1, b: 0}", ""))).is_err());
+        assert!(native(Some(&q("", "", "{a: 2}"))).is_err());
+        assert!(
+            native(Some(&q("{status: open}", "", "")))
+                .unwrap_err()
+                .message
+                .contains("quote")
+        );
+    }
 
     #[test]
     fn conditions_parse_typed_json_and_fall_back_to_text() {
@@ -582,6 +723,7 @@ mod tests {
             object: object.clone(),
             filter,
             sort,
+            query: None,
             offset,
             limit,
         };
@@ -621,6 +763,7 @@ mod tests {
                 connection_id: cid.clone(),
                 object: object.clone(),
                 filter: Some(filtered.clone()),
+                query: None,
                 exact: true,
             },
         )

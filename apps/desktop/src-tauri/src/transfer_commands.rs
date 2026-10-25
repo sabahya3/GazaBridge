@@ -19,7 +19,7 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::connection_commands::{app_error, parse_id};
-use crate::explorer_commands::{filter, object_ref};
+use crate::explorer_commands::{combine, filter, native, object_ref};
 use crate::state::AppState;
 
 fn invalid(message: impl Into<String>) -> CommandError {
@@ -59,9 +59,12 @@ pub fn export_request(args: &ExportArgs) -> Result<ExportRequest, CommandError> 
         "|" => b'|',
         other => return Err(invalid(format!("unsupported CSV delimiter `{other}`"))),
     };
+    let q = native(args.query.as_ref())?;
     Ok(ExportRequest {
         object: object_ref(&args.object)?,
-        filter: filter(args.filter.as_ref())?,
+        filter: combine(filter(args.filter.as_ref())?, q.filter),
+        projection: q.include,
+        exclude: q.exclude,
         path: PathBuf::from(&args.path),
         options: WriteOptions {
             format,
@@ -352,6 +355,7 @@ mod tests {
             op_id: "e1".into(),
             object: table("a"),
             filter: None,
+            query: None,
             path: out.display().to_string(),
             format: "jsonl".into(),
             json_flavor: String::new(),

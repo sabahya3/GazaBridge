@@ -56,6 +56,8 @@ fn browse(object: &ObjectRef, filter: Option<Filter>, order_by: Vec<SortKey>) ->
     BrowseRequest {
         object: object.clone(),
         filter,
+        projection: vec![],
+        exclude: vec![],
         order_by,
         offset: 0,
         limit: 50,

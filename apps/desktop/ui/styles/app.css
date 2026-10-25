@@ -672,3 +672,48 @@ html, body { font-size: 13.5px; -webkit-font-smoothing: antialiased; }
 .card { border-color: var(--border); }
 .page { padding: 22px 28px 40px; }
 .page h1 { font-size: 22px; letter-spacing: -0.01em; }
+
+
+/* Collapsible navigation and object panel. */
+.shell { transition: grid-template-columns 0.15s ease; }
+.shell.nav-collapsed { grid-template-columns: 56px 1fr; }
+.shell.nav-collapsed .nav-label, .shell.nav-collapsed .nav-soon { display: none; }
+.shell.nav-collapsed .nav-item { justify-content: center; padding-inline: 0; }
+.brand { gap: 8px; }
+.workspace.side-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+.workspace.side-hidden .ws-side { display: none; }
+.crumbs .icon-btn { margin-inline-end: 2px; }
+
+/* MongoDB query bar (Compass style). */
+.query-bar {
+  display: grid; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.qb-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.qb-field {
+  display: flex; align-items: center; flex: 1 1 220px; min-inline-size: 0;
+  border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-2); overflow: hidden;
+}
+.qb-field:focus-within { border-color: var(--focus); }
+.qb-main { flex: 1 1 420px; }
+.qb-num { flex: 0 1 130px; }
+.qb-label {
+  display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; align-self: stretch;
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); border-inline-end: 1px solid var(--border); background: var(--surface-3);
+}
+.qb-input { flex: 1; min-inline-size: 0; border: 0; background: none; color: var(--text); font: inherit; padding: 6px 9px; }
+.qb-input.mono { font-family: var(--mono); font-size: 12.5px; }
+.qb-input:focus { outline: none; }
+
+/* Export: what is exported. */
+.scope { gap: 8px; }
+.scope-option {
+  display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+}
+.scope-option:has(input:checked) { border-color: var(--primary); background: var(--primary-tint); }
+.scope-option.disabled { opacity: 0.55; cursor: default; }
+.scope-option input { margin-block-start: 3px; }
+.scope-text { display: grid; gap: 2px; min-inline-size: 0; }
+.scope-query { overflow-wrap: anywhere; color: var(--text); }

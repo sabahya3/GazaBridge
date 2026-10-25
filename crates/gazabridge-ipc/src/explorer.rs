@@ -137,6 +137,27 @@ pub struct SortDto {
     pub descending: bool,
 }
 
+/// A MongoDB query as typed in the query bar (mongosh / Compass syntax):
+/// `{ status: "open" }`, `{ name: 1, _id: 0 }`, `{ createdAt: -1 }`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeQueryDto {
+    #[serde(default)]
+    pub filter: String,
+    #[serde(default)]
+    pub project: String,
+    #[serde(default)]
+    pub sort: String,
+}
+
+impl NativeQueryDto {
+    pub fn is_empty(&self) -> bool {
+        [&self.filter, &self.project, &self.sort].iter().all(|t| {
+            let t = t.trim();
+            t.is_empty() || t == "{}"
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowseArgs {
     pub connection_id: String,
@@ -145,6 +166,8 @@ pub struct BrowseArgs {
     pub filter: Option<FilterDto>,
     #[serde(default)]
     pub sort: Option<SortDto>,
+    #[serde(default)]
+    pub query: Option<NativeQueryDto>,
     pub offset: u64,
     pub limit: u32,
 }
@@ -193,6 +216,8 @@ pub struct CountArgs {
     pub object: ObjectAddr,
     #[serde(default)]
     pub filter: Option<FilterDto>,
+    #[serde(default)]
+    pub query: Option<NativeQueryDto>,
     /// False asks for a cheap estimate (no filter only).
     #[serde(default = "exact_default")]
     pub exact: bool,

@@ -85,6 +85,12 @@ pub enum Filter {
     Not {
         filter: Box<Filter>,
     },
+    /// A query in the engine's own language, as typed JSON (a MongoDB
+    /// filter document). Only connectors that declare native queries
+    /// accept it; others fail with `Unsupported`.
+    Native {
+        query: serde_json::Value,
+    },
 }
 
 impl Filter {
@@ -126,6 +132,7 @@ impl Filter {
                 }
             }
             Self::Not { filter } => filter.collect_fields(out),
+            Self::Native { .. } => {}
         }
     }
 
@@ -140,6 +147,8 @@ impl Filter {
             Self::Not { filter } => {
                 !matches!(**filter, Self::And { ref filters } if filters.is_empty())
             }
+            // An empty native query matches everything.
+            Self::Native { query } => query.as_object().is_some_and(|o| !o.is_empty()),
             _ => true,
         }
     }

@@ -38,6 +38,10 @@ const MAX_MESSAGES: usize = 100;
 pub struct ExportRequest {
     pub object: ObjectRef,
     pub filter: Option<Filter>,
+    /// Fields to export; empty means all.
+    pub projection: Vec<String>,
+    /// Fields to leave out (documents), when `projection` is empty.
+    pub exclude: Vec<String>,
     pub path: PathBuf,
     /// For CSV, empty columns mean "the object's columns" (tables) or the
     /// top-level fields found by sampling (collections).
@@ -225,6 +229,8 @@ impl TransferService {
         let mut writer = blocking(move || FileWriter::create(&path, options)).await??;
         let mut read = ReadRequest::new(req.object.clone(), DEFAULT_BATCH);
         read.filter = req.filter.clone();
+        read.projection = req.projection.clone();
+        read.exclude = req.exclude.clone();
         let r = conn.read(read, cancel.clone()).await;
         let mut stream = self.explorer.checked(id, r).await?;
         let mut progress = Progress::running();

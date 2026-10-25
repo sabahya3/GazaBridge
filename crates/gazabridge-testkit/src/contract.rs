@@ -639,6 +639,7 @@ pub async fn run_contract_suite(harness: &dyn ContractHarness) -> ContractReport
                         PageRequest {
                             object: s.object.clone(),
                             projection: vec!["id".into()],
+                            exclude: Vec::new(),
                             filter: None,
                             order_by: Suite::order_by_id(),
                             offset,

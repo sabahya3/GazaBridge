@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use gazabridge_ipc::{
-    ExportArgs, FilterDto, ImportArgs, ObjectAddr, OpArgs, PickPathArgs, TransferStatusDto,
-    commands, detect_format,
+    CountArgs, CountDto, ExportArgs, FilterDto, ImportArgs, NativeQueryDto, ObjectAddr, OpArgs,
+    PickPathArgs, TransferStatusDto, commands, detect_format,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -65,6 +65,10 @@ pub fn TransferPanel(
     direction: Direction,
     /// The filter applied in the viewer (exports can use it).
     filter: Signal<Option<FilterDto>>,
+    /// The query bar's applied query (filter and projection).
+    query: Signal<Option<NativeQueryDto>>,
+    /// How many records the viewer's current filter or query matches.
+    matching: Signal<Option<CountDto>>,
     key_fields: Vec<String>,
     on_close: Callback<()>,
     /// Called after a successful import.
@@ -83,7 +87,11 @@ pub fn TransferPanel(
     );
     let gzip = RwSignal::new(false);
     let pretty = RwSignal::new(false);
-    let use_filter = RwSignal::new(filter.get_untracked().is_some());
+    let has_query = move || filter.get().is_some() || query.get().is_some();
+    let use_filter =
+        RwSignal::new(filter.get_untracked().is_some() || query.get_untracked().is_some());
+    // Size of the whole object, for the "everything" choice.
+    let total = RwSignal::new(None::<CountDto>);
     let path = RwSignal::new(String::new());
     let csv_columns = RwSignal::new(String::new());
     let csv_delimiter = RwSignal::new(",".to_owned());
@@ -101,6 +109,61 @@ pub fn TransferPanel(
     let obj = StoredValue::new(object.clone());
 
     let running = move || status.get().is_some_and(|s| s.phase == "running");
+    if direction == Direction::Export {
+        let args = CountArgs {
+            connection_id: cid.get_value(),
+            object: obj.get_value(),
+            filter: None,
+            query: None,
+            exact: false,
+        };
+        spawn_local(async move {
+            if let Ok(c) =
+                call::<_, Option<CountDto>>(commands::EXPLORER_COUNT, &Wrap { args: &args }).await
+            {
+                total.set(c);
+            }
+        });
+    }
+    let count_text = move |c: Option<CountDto>| match c {
+        Some(c) if c.exact => format!("{} {}", c.count, ui.text("transfer.records")),
+        Some(c) => format!("~{} {}", c.count, ui.text("transfer.records")),
+        None => String::new(),
+    };
+    let query_text = move || {
+        let mut parts = Vec::new();
+        if let Some(q) = query.get() {
+            if !q.filter.trim().is_empty() {
+                parts.push(format!(
+                    "{}: {}",
+                    ui.text("explorer.q_filter"),
+                    q.filter.trim()
+                ));
+            }
+            if !q.project.trim().is_empty() {
+                parts.push(format!(
+                    "{}: {}",
+                    ui.text("explorer.q_project"),
+                    q.project.trim()
+                ));
+            }
+        }
+        if let Some(f) = filter.get() {
+            let joiner = if f.any { " OR " } else { " AND " };
+            parts.push(
+                f.conditions
+                    .iter()
+                    .map(|c| {
+                        format!("{} {} {}", c.field, c.op.as_str(), c.value)
+                            .trim()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(joiner),
+            );
+        }
+        parts.join("  ·  ")
+    };
 
     let poll = move |op: String| {
         let handle = StoredValue::new(None::<IntervalHandle>);
@@ -205,6 +268,11 @@ pub fn TransferPanel(
                         } else {
                             None
                         },
+                        query: if use_filter.get_untracked() {
+                            query.get_untracked()
+                        } else {
+                            None
+                        },
                         path: path.get_untracked(),
                         format: format.get_untracked(),
                         json_flavor: flavor.get_untracked(),
@@ -284,6 +352,34 @@ pub fn TransferPanel(
         <section class="editor record-editor transfer" aria-labelledby="transfer-title">
             <h3 id="transfer-title">{title}" — "<bdi>{object.display()}</bdi></h3>
 
+            {(direction == Direction::Export).then(|| view! {
+                <fieldset class="field-group scope">
+                    <legend>{ui.tr("transfer.what")}</legend>
+                    <label class="scope-option">
+                        <input type="radio" name="export-scope" prop:checked=move || !use_filter.get() on:change=move |_| use_filter.set(false) />
+                        <span class="scope-text">
+                            <strong>{if is_collection { ui.tr("transfer.all_collection") } else { ui.tr("transfer.all_table") }}</strong>
+                            <span class="muted small">{move || count_text(total.get())}</span>
+                        </span>
+                    </label>
+                    <label class="scope-option" class:disabled=move || !has_query()>
+                        <input type="radio" name="export-scope" disabled=move || !has_query() prop:checked=move || use_filter.get() && has_query() on:change=move |_| use_filter.set(true) />
+                        <span class="scope-text">
+                            <strong>{ui.tr("transfer.current_query")}</strong>
+                            {move || if has_query() {
+                                view! {
+                                    <code class="mono small scope-query"><bdi>{query_text()}</bdi></code>
+                                    <span class="muted small">{count_text(matching.get())}</span>
+                                }.into_any()
+                            } else {
+                                view! { <span class="muted small">{ui.tr("transfer.no_query")}</span> }.into_any()
+                            }}
+                        </span>
+                    </label>
+                    <p class="muted small">{ui.tr("transfer.sort_note")}</p>
+                </fieldset>
+            })}
+
             <div class="toolbar">
                 <label class="field-inline">
                     <span>{ui.tr("transfer.format")}</span>
@@ -329,11 +425,6 @@ pub fn TransferPanel(
             {match direction {
                 Direction::Export => view! {
                     <div class="toolbar">
-                        <label class="field-check">
-                            <input type="checkbox" prop:checked=move || use_filter.get() disabled=move || filter.get().is_none()
-                                on:change=move |e| use_filter.set(event_target_checked(&e)) />
-                            <span>{ui.tr("transfer.use_filter")}</span>
-                        </label>
                         <Show when=move || format.get() == "json">
                             <label class="field-check">
                                 <input type="checkbox" prop:checked=move || pretty.get() on:change=move |e| pretty.set(event_target_checked(&e)) />

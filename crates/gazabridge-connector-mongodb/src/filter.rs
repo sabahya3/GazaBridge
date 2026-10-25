@@ -41,6 +41,21 @@ pub fn regex_escape(s: &str) -> String {
     out
 }
 
+/// A native query given as (Extended) JSON, converted exactly: `$oid`,
+/// `$date`, `$numberDecimal`, regexes and other typed values keep their
+/// BSON types.
+pub fn native_document(query: &serde_json::Value) -> ConnectorResult<Document> {
+    match mongodb::bson::Bson::try_from(query.clone()) {
+        Ok(mongodb::bson::Bson::Document(d)) => Ok(d),
+        Ok(_) => Err(ConnectorError::invalid_input(
+            "a MongoDB query must be a document, e.g. { \"status\": \"active\" }",
+        )),
+        Err(e) => Err(ConnectorError::invalid_input(format!(
+            "invalid MongoDB query: {e}"
+        ))),
+    }
+}
+
 pub fn to_query(f: &Filter) -> ConnectorResult<Document> {
     let op = |path: &str, op: &str, v: &Value| -> ConnectorResult<Document> {
         Ok(doc! { field(path)?: { op: value(v)? } })
@@ -104,6 +119,7 @@ pub fn to_query(f: &Filter) -> ConnectorResult<Document> {
             doc! { "$or": parts }
         }
         Filter::Not { filter } => doc! { "$nor": [to_query(filter)?] },
+        Filter::Native { query } => native_document(query)?,
     })
 }
 
