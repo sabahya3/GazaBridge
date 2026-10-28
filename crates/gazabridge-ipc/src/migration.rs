@@ -34,18 +34,45 @@ pub struct MigrationArgs {
     /// The user confirmed dropping existing target collections.
     #[serde(default)]
     pub confirm_destructive: bool,
+    /// MongoDB → PostgreSQL: `flatten` (default), `normalize`, `jsonb`, `hybrid`.
+    #[serde(default)]
+    pub doc_mode: String,
+    /// PostgreSQL → MongoDB: `reference` (default) or `embed`.
+    #[serde(default)]
+    pub table_mode: String,
+}
+
+/// A planned table with the rows the first documents become.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TablePreviewDto {
+    pub table: ObjectAddr,
+    pub columns: Vec<String>,
+    pub types: Vec<String>,
+    /// Where each column's value comes from (`address.city`).
+    pub sources: Vec<String>,
+    pub rows: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanItemDto {
     pub source: ObjectAddr,
     pub target: ObjectAddr,
+    /// `copy`, `doc_to_table`, `table_to_doc` or `embedded`.
+    #[serde(default)]
+    pub kind: String,
     pub source_count: Option<u64>,
     pub target_exists: bool,
     pub target_count: Option<u64>,
     pub indexes: Vec<String>,
     pub statements: Vec<String>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub tables: Vec<TablePreviewDto>,
+    /// Pretty JSON documents: source samples (to tables) or results (from tables).
+    #[serde(default)]
+    pub documents: Vec<String>,
+    #[serde(default)]
+    pub embedded_into: Option<ObjectAddr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -6,8 +6,10 @@ use gazabridge_application::{
 use gazabridge_domain::ids::RunId;
 use gazabridge_ipc::{
     CommandError, CopyItemDto, MigrationArgs, MigrationPlanDto, ObjectAddr, PlanItemDto, RunArgs,
-    RunDto, RunEventDto, StreamDto,
+    RunDto, RunEventDto, StreamDto, TablePreviewDto,
 };
+use gazabridge_mapping::doc_to_table::DocMode;
+use gazabridge_mapping::table_to_doc::TableMode;
 use gazabridge_plugin_sdk::schema::ObjectRef;
 use tauri::State;
 
@@ -54,6 +56,18 @@ pub fn request(args: &MigrationArgs) -> Result<MigrationRequest, CommandError> {
             )));
         }
     };
+    let doc_mode = match args.doc_mode.as_str() {
+        "" | "flatten" => DocMode::Flatten,
+        "normalize" => DocMode::Normalize,
+        "jsonb" => DocMode::Jsonb,
+        "hybrid" => DocMode::Hybrid,
+        other => return Err(invalid(format!("unknown document mapping `{other}`"))),
+    };
+    let table_mode = match args.table_mode.as_str() {
+        "" | "reference" => TableMode::Reference,
+        "embed" => TableMode::Embed,
+        other => return Err(invalid(format!("unknown table mapping `{other}`"))),
+    };
     let on_record_error = match args.on_record_error.as_str() {
         "" | "stop" => OnRecordError::Stop,
         "quarantine" => OnRecordError::Quarantine,
@@ -87,6 +101,8 @@ pub fn request(args: &MigrationArgs) -> Result<MigrationRequest, CommandError> {
         on_record_error,
         max_records_per_sec: args.max_records_per_sec.filter(|r| *r > 0),
         parallel: (args.parallel as usize).clamp(1, 4),
+        doc_mode,
+        table_mode,
     })
 }
 
@@ -98,6 +114,20 @@ pub fn plan_dto(p: MigrationPlan) -> MigrationPlanDto {
             .map(|i| PlanItemDto {
                 source: addr(&i.source),
                 target: addr(&i.target),
+                kind: i.kind,
+                tables: i
+                    .tables
+                    .into_iter()
+                    .map(|t| TablePreviewDto {
+                        table: addr(&t.table),
+                        columns: t.columns,
+                        types: t.types,
+                        sources: t.sources,
+                        rows: t.rows,
+                    })
+                    .collect(),
+                documents: i.documents,
+                embedded_into: i.embedded_into.as_ref().map(addr),
                 source_count: i.source_count,
                 target_exists: i.target_exists,
                 target_count: i.target_count,
@@ -287,6 +317,8 @@ mod tests {
             parallel: 9,
             name: Some("  ".into()),
             confirm_destructive: false,
+            doc_mode: String::new(),
+            table_mode: String::new(),
         }
     }
 
@@ -305,12 +337,22 @@ mod tests {
         a.existing = "truncate".into();
         assert!(request(&a).is_err());
         let mut a = args();
+        a.doc_mode = "normalize".into();
+        a.table_mode = "embed".into();
+        let r = request(&a).unwrap();
+        assert_eq!(
+            (r.doc_mode, r.table_mode),
+            (DocMode::Normalize, TableMode::Embed)
+        );
+        a.doc_mode = "csv".into();
+        assert!(request(&a).is_err());
+        let mut a = args();
         a.items[0].source.kind = "rocket".into();
         assert!(request(&a).is_err());
     }
 
     #[tokio::test]
-    async fn only_mongodb_to_mongodb_is_offered_for_now() {
+    async fn engine_pairs_without_a_conversion_are_refused() {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::initialize(dir.path().join("data"), dir.path().join("logs"))
             .await
@@ -355,7 +397,7 @@ mod tests {
         };
         let plan = plan_impl(&state, a).await.unwrap();
         assert!(
-            plan.blockers.iter().any(|b| b.contains("MongoDB")),
+            plan.blockers.iter().any(|b| b.contains("not supported")),
             "{:?}",
             plan.blockers
         );

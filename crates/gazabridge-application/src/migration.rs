@@ -1,6 +1,7 @@
-//! Copying collections between connections (MongoDB → MongoDB for now).
+//! Copying and converting between connections: MongoDB → MongoDB copies,
+//! MongoDB → PostgreSQL and PostgreSQL → MongoDB conversions.
 //!
-//! A copy is a job with runs. Each collection is a stream copied by the
+//! A copy is a job with runs. Each collection or table is a stream copied by the
 //! migration engine; progress is checkpointed in the metadata store after
 //! every durable write, so a run can be paused, resumed, cancelled, and
 //! continued after the app was closed or crashed, without losing or
@@ -20,9 +21,11 @@ use futures::StreamExt;
 use gazabridge_domain::connection::EngineFamily;
 use gazabridge_domain::ids::{ConnectionId, RunId};
 use gazabridge_domain::job::{JobKind, JobStatus, WriteMode};
+use gazabridge_mapping::doc_to_table::{DocMode, TablePreview};
+use gazabridge_mapping::table_to_doc::TableMode;
 use gazabridge_migration::{
     Checkpoints, EngineOptions, RecordErrors, Resume, RetryPolicy, StreamSpec, StreamStats,
-    copy_stream,
+    convert_stream, copy_stream,
 };
 use gazabridge_plugin_sdk::connector::{Connection, InspectOptions};
 use gazabridge_plugin_sdk::ddl::{IndexDefinition, SchemaOperation};
@@ -35,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+use crate::convert::{self, Direction, ItemMapping};
 use crate::explorer::ExplorerService;
 use crate::{AppError, AppResult};
 
@@ -101,6 +105,32 @@ pub struct MigrationRequest {
     /// Collections copied at the same time.
     #[serde(default = "one")]
     pub parallel: usize,
+    /// MongoDB → PostgreSQL: how documents become rows.
+    #[serde(default)]
+    pub doc_mode: DocMode,
+    /// PostgreSQL → MongoDB: how rows become documents.
+    #[serde(default)]
+    pub table_mode: TableMode,
+}
+
+/// What a run stores: the request and the mapping decided for each item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct RunDefinition {
+    request: MigrationRequest,
+    mappings: Vec<ItemMapping>,
+}
+
+impl RunDefinition {
+    fn parse(v: &serde_json::Value) -> AppResult<Self> {
+        if let Ok(d) = serde_json::from_value::<Self>(v.clone()) {
+            return Ok(d);
+        }
+        // Runs recorded before conversions existed hold the request alone.
+        let request: MigrationRequest = serde_json::from_value(v.clone())
+            .map_err(|e| AppError::Invalid(format!("unreadable copy definition: {e}")))?;
+        let mappings = vec![ItemMapping::Copy; request.items.len()];
+        Ok(Self { request, mappings })
+    }
 }
 
 fn yes() -> bool {
@@ -117,15 +147,26 @@ fn one() -> usize {
 pub struct PlanItem {
     pub source: ObjectRef,
     pub target: ObjectRef,
+    /// `copy`, `doc_to_table`, `table_to_doc` or `embedded`.
+    pub kind: String,
     /// Estimated documents in the source.
     pub source_count: Option<u64>,
     pub target_exists: bool,
     pub target_count: Option<u64>,
     /// Indexes that will be created (the `_id` index always exists).
     pub indexes: Vec<String>,
-    /// What will run on the target, as shell statements.
+    /// What will run on the target, as shell statements or SQL.
     pub statements: Vec<String>,
     pub warnings: Vec<String>,
+    /// Conversions to tables: the planned tables with sample rows.
+    #[serde(default)]
+    pub tables: Vec<TablePreview>,
+    /// Sample source documents (to tables) or resulting documents (from tables).
+    #[serde(default)]
+    pub documents: Vec<String>,
+    /// Rows embedded in this collection's documents instead of their own.
+    #[serde(default)]
+    pub embedded_into: Option<ObjectRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -355,6 +396,14 @@ impl MigrationService {
 
     /// Checks the request and describes what a copy would do. Reads only.
     pub async fn plan(&self, req: &MigrationRequest) -> AppResult<MigrationPlan> {
+        Ok(self.prepare(req).await?.0)
+    }
+
+    /// The plan and, for each item, the mapping a run will use.
+    async fn prepare(
+        &self,
+        req: &MigrationRequest,
+    ) -> AppResult<(MigrationPlan, Vec<ItemMapping>)> {
         let mut plan = MigrationPlan {
             items: Vec::new(),
             blockers: Vec::new(),
@@ -364,29 +413,51 @@ impl MigrationService {
         if req.items.is_empty() {
             plan.blockers
                 .push("choose at least one collection to copy".into());
-            return Ok(plan);
+            return Ok((plan, Vec::new()));
         }
         let source = self.explorer.session(req.source).await?;
         let target = self.explorer.session(req.target).await?;
-        if family(source.as_ref()) != EngineFamily::MongoDb
-            || family(target.as_ref()) != EngineFamily::MongoDb
-        {
-            plan.blockers.push(
-                "copies between connections support MongoDB → MongoDB for now; MongoDB ⇄ PostgreSQL comes next"
-                    .into(),
-            );
-            return Ok(plan);
-        }
+        let (sf, tf) = (family(source.as_ref()), family(target.as_ref()));
+        let Some(direction) = convert::direction(sf, tf) else {
+            plan.blockers.push(format!(
+                "{sf:?} → {tf:?} is not supported yet; supported: MongoDB → MongoDB, MongoDB → PostgreSQL, PostgreSQL → MongoDB"
+            ));
+            return Ok((plan, Vec::new()));
+        };
         if target.is_read_only() {
             plan.blockers
                 .push("the target connection is read-only; edit it to allow writes".into());
         }
+        let mut targets = BTreeSet::new();
+        for item in &req.items {
+            if !targets.insert(item.target.to_string()) {
+                plan.blockers
+                    .push(format!("`{}` is the target of two sources", item.target));
+            }
+        }
+        if direction != Direction::Copy {
+            let planned = match direction {
+                Direction::DocToTable => {
+                    convert::plan_doc_to_table(req, source.as_ref(), target.as_ref()).await?
+                }
+                _ => convert::plan_table_to_doc(req, &source, target.as_ref()).await?,
+            };
+            plan.items = planned.items;
+            plan.blockers.extend(planned.blockers);
+            plan.destructive = planned.destructive;
+            return Ok((plan, planned.mappings));
+        }
+        let mut mappings = Vec::new();
         let mut seen = BTreeSet::new();
         let mut target_names: HashMap<Option<String>, BTreeSet<String>> = HashMap::new();
         for item in &req.items {
             let mut p = PlanItem {
                 source: item.source.clone(),
                 target: item.target.clone(),
+                kind: "copy".into(),
+                tables: Vec::new(),
+                documents: Vec::new(),
+                embedded_into: None,
                 source_count: None,
                 target_exists: false,
                 target_count: None,
@@ -394,12 +465,7 @@ impl MigrationService {
                 statements: Vec::new(),
                 warnings: Vec::new(),
             };
-            if !seen.insert(item.target.to_string()) {
-                plan.blockers.push(format!(
-                    "`{}` is the target of two collections",
-                    item.target
-                ));
-            }
+            seen.insert(item.target.to_string());
             if req.source == req.target && item.source == item.target {
                 plan.blockers.push(format!(
                     "`{}` would be copied onto itself; choose another target database or connection",
@@ -489,8 +555,9 @@ impl MigrationService {
                 Err(e) => plan.blockers.push(format!("{}: {e}", item.target)),
             }
             plan.items.push(p);
+            mappings.push(ItemMapping::Copy);
         }
-        Ok(plan)
+        Ok((plan, mappings))
     }
 
     /// Source indexes (except `_id`) the target does not already have.
@@ -537,7 +604,7 @@ impl MigrationService {
         req: MigrationRequest,
         confirm_destructive: bool,
     ) -> AppResult<RunId> {
-        let plan = self.plan(&req).await?;
+        let (plan, mappings) = self.prepare(&req).await?;
         if let Some(b) = plan.blockers.first() {
             return Err(AppError::Invalid(b.clone()));
         }
@@ -545,8 +612,11 @@ impl MigrationService {
             return Err(AppError::ConfirmationRequired("drop_target".into()));
         }
         let fingerprint = self.fingerprint(&req).await?;
-        let definition =
-            serde_json::to_value(&req).map_err(|e| AppError::Invalid(e.to_string()))?;
+        let definition = serde_json::to_value(RunDefinition {
+            request: req.clone(),
+            mappings: mappings.clone(),
+        })
+        .map_err(|e| AppError::Invalid(e.to_string()))?;
         let name = req
             .name
             .clone()
@@ -602,7 +672,7 @@ impl MigrationService {
         self.event(run.id, EventLevel::Info, "started", None, "Copy started")
             .await;
         let run_id = run.id;
-        self.spawn(run, req, HashMap::new());
+        self.spawn(run, req, mappings, HashMap::new());
         Ok(run_id)
     }
 
@@ -613,8 +683,10 @@ impl MigrationService {
         }
         let jobs = self.store.jobs();
         let run = jobs.require_run(run_id).await?;
-        let req: MigrationRequest = serde_json::from_value(run.definition_snapshot.clone())
-            .map_err(|e| AppError::Invalid(format!("unreadable copy definition: {e}")))?;
+        let RunDefinition {
+            request: req,
+            mappings,
+        } = RunDefinition::parse(&run.definition_snapshot)?;
         jobs.verify_resumable(run_id, &self.fingerprint(&req).await?)
             .await?;
         match run.status {
@@ -646,7 +718,7 @@ impl MigrationService {
             "Copy resumed from its last checkpoint",
         )
         .await;
-        self.spawn(run, req, saved);
+        self.spawn(run, req, mappings, saved);
         Ok(())
     }
 
@@ -739,7 +811,13 @@ impl MigrationService {
         Ok(n)
     }
 
-    fn spawn(&self, run: RunRecord, req: MigrationRequest, saved: HashMap<String, (Saved, bool)>) {
+    fn spawn(
+        &self,
+        run: RunRecord,
+        req: MigrationRequest,
+        mappings: Vec<ItemMapping>,
+        saved: HashMap<String, (Saved, bool)>,
+    ) {
         let streams = Arc::new(Mutex::new(
             req.items
                 .iter()
@@ -771,7 +849,9 @@ impl MigrationService {
         }
         let svc = self.clone();
         tokio::spawn(async move {
-            let ends = svc.run_streams(&run, &req, &saved, &streams, &stop).await;
+            let ends = svc
+                .run_streams(&run, &req, &mappings, &saved, &streams, &stop)
+                .await;
             svc.finish(&run, &req, ends, &streams, &reason).await;
             if let Ok(mut a) = svc.active.lock() {
                 a.remove(&run.id);
@@ -783,6 +863,7 @@ impl MigrationService {
         &self,
         run: &RunRecord,
         req: &MigrationRequest,
+        mappings: &[ItemMapping],
         saved: &HashMap<String, (Saved, bool)>,
         streams: &Arc<Mutex<Vec<StreamView>>>,
         stop: &CancellationToken,
@@ -799,6 +880,7 @@ impl MigrationService {
         futures::stream::iter(0..req.items.len())
             .map(|i| {
                 let item = &req.items[i];
+                let mapping = mappings.get(i).cloned().unwrap_or(ItemMapping::Copy);
                 let (source, target) = (source.clone(), target.clone());
                 async move {
                     let end = self
@@ -807,6 +889,7 @@ impl MigrationService {
                             req,
                             i,
                             item,
+                            &mapping,
                             saved.get(&stream_key(item)),
                             source,
                             target,
@@ -833,6 +916,7 @@ impl MigrationService {
         req: &MigrationRequest,
         i: usize,
         item: &CopyItem,
+        mapping: &ItemMapping,
         saved: Option<&(Saved, bool)>,
         source: Arc<dyn Connection>,
         target: Arc<dyn Connection>,
@@ -841,6 +925,18 @@ impl MigrationService {
     ) -> StreamEnd {
         let key = stream_key(item);
         if saved.is_some_and(|(_, done)| *done) {
+            return StreamEnd::Done { warnings: false };
+        }
+        if let ItemMapping::Embedded { into } = mapping {
+            set_stream(streams, i, |v| v.phase = StreamPhase::Done);
+            self.event(
+                run.id,
+                EventLevel::Info,
+                "embedded",
+                Some(&key),
+                &format!("{} is embedded in the documents of {into}", item.source),
+            )
+            .await;
             return StreamEnd::Done { warnings: false };
         }
         if stop.is_cancelled() {
@@ -855,28 +951,14 @@ impl MigrationService {
             });
             message
         };
-        let total = source
-            .count(&item.source, None, false)
-            .await
-            .ok()
-            .map(|c| c.count);
+        let total = convert::quick_count(source.as_ref(), &item.source).await;
         set_stream(streams, i, |v| {
             v.total = total;
             v.phase = StreamPhase::Preparing;
         });
         // Target preparation happens once, before the first checkpoint.
         if saved.is_none() {
-            let mut ops = Vec::new();
-            if req.existing == ExistingData::Replace {
-                ops.push(SchemaOperation::DropObject {
-                    object: item.target.clone(),
-                    if_exists: true,
-                });
-            }
-            ops.push(SchemaOperation::CreateCollection {
-                object: item.target.clone(),
-                if_not_exists: true,
-            });
+            let ops = mapping.prepare_ops(item, req.existing);
             if let Err(e) = target.apply_ddl(&ops, CancellationToken::new()).await {
                 let m = fail(format!("preparing {}: {e}", item.target));
                 self.event(run.id, EventLevel::Error, "prepare_failed", Some(&key), &m)
@@ -885,7 +967,13 @@ impl MigrationService {
             }
         }
         // Indexes are read before copying so a later failure still reports them.
-        let indexes = if req.copy_indexes {
+        let indexes = if *mapping != ItemMapping::Copy {
+            if req.copy_indexes {
+                mapping.index_ops(item)
+            } else {
+                Vec::new()
+            }
+        } else if req.copy_indexes {
             match self
                 .indexes_to_copy(
                     source.as_ref(),
@@ -896,7 +984,14 @@ impl MigrationService {
                 )
                 .await
             {
-                Ok(ix) => ix,
+                Ok(ix) => ix
+                    .into_iter()
+                    .map(|index| SchemaOperation::CreateIndex {
+                        object: item.target.clone(),
+                        index,
+                        if_not_exists: true,
+                    })
+                    .collect(),
                 Err(e) => {
                     let m = fail(format!("reading the indexes of {}: {e}", item.source));
                     return StreamEnd::Failed(m);
@@ -926,6 +1021,7 @@ impl MigrationService {
             filter: None,
             mode: req.existing.write_mode(),
             key_fields: vec!["_id".into()],
+            source_keys: mapping.source_keys(),
         };
         let checkpoints = StoreCheckpoints {
             store: self.store.clone(),
@@ -941,17 +1037,35 @@ impl MigrationService {
         let on_progress = move |s: &StreamStats| {
             set_stream(&progress_streams, i, |v| v.stats = s.clone());
         };
-        let result = copy_stream(
-            source.clone(),
-            target.clone(),
-            &spec,
-            &options,
-            resume,
-            stop.clone(),
-            &checkpoints,
-            &on_progress,
-        )
-        .await;
+        let result = match mapping.transform(req.existing, source.clone()) {
+            None => {
+                copy_stream(
+                    source.clone(),
+                    target.clone(),
+                    &spec,
+                    &options,
+                    resume,
+                    stop.clone(),
+                    &checkpoints,
+                    &on_progress,
+                )
+                .await
+            }
+            Some(transform) => {
+                convert_stream(
+                    source.clone(),
+                    target.clone(),
+                    &spec,
+                    &options,
+                    resume,
+                    stop.clone(),
+                    &checkpoints,
+                    &on_progress,
+                    transform,
+                )
+                .await
+            }
+        };
         let outcome = match result {
             Ok(o) => o,
             Err(f) => {
@@ -1000,12 +1114,10 @@ impl MigrationService {
         }
         set_stream(streams, i, |v| v.phase = StreamPhase::Indexing);
         let mut created = 0u32;
-        for ix in indexes {
-            let name = ix.name.clone();
-            let op = SchemaOperation::CreateIndex {
-                object: item.target.clone(),
-                index: ix,
-                if_not_exists: true,
+        for op in indexes {
+            let name = match &op {
+                SchemaOperation::CreateIndex { index, .. } => index.name.clone(),
+                _ => String::new(),
             };
             match target
                 .apply_ddl(std::slice::from_ref(&op), CancellationToken::new())
@@ -1138,8 +1250,7 @@ impl MigrationService {
         let jobs = self.store.jobs();
         let run = jobs.require_run(run_id).await?;
         let job = jobs.require(run.job_id).await?;
-        let req: MigrationRequest = serde_json::from_value(run.definition_snapshot.clone())
-            .map_err(|e| AppError::Invalid(format!("unreadable copy definition: {e}")))?;
+        let req = RunDefinition::parse(&run.definition_snapshot)?.request;
         let live = self.active.lock().ok().and_then(|a| {
             a.get(&run_id)
                 .and_then(|h| h.streams.lock().ok().map(|s| s.clone()))

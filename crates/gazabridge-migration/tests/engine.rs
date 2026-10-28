@@ -14,14 +14,17 @@ use gazabridge_domain::job::WriteMode;
 use gazabridge_domain::{Record, Value};
 use gazabridge_migration::{
     Checkpoints, EngineError, EngineOptions, RecordErrors, Resume, RetryPolicy, StreamSpec,
-    StreamStats, copy_stream,
+    StreamStats, TargetSpec, Transform, Transformed, convert_stream, copy_stream,
 };
 use gazabridge_plugin_sdk::capability::{CapabilityManifest, ConnectorLimits};
 use gazabridge_plugin_sdk::connector::HealthReport;
+use gazabridge_plugin_sdk::filter::Filter;
 use gazabridge_plugin_sdk::profile::Version;
 use gazabridge_plugin_sdk::read::{ReadPosition, ReadRequest, RecordBatch, RecordStream};
 use gazabridge_plugin_sdk::schema::{NamespaceEntry, NamespacePath, ObjectRef};
-use gazabridge_plugin_sdk::write::{RecordFailure, WriteBatch, WriteOutcome};
+use gazabridge_plugin_sdk::write::{
+    DeleteRequest, MutationOutcome, RecordFailure, WriteBatch, WriteOutcome,
+};
 use gazabridge_plugin_sdk::{
     ApiVersion, Connection, ConnectorError, ConnectorResult, ErrorKind, ServerInfo,
 };
@@ -34,6 +37,8 @@ struct Fake {
     manifest: CapabilityManifest,
     source: Vec<Record>,
     target: Mutex<BTreeMap<i64, Record>>,
+    /// Child rows of the `lines` target, by (`order`, `index`).
+    lines: Mutex<BTreeMap<(i64, i64), Record>>,
     /// Read batches served before the next read drops the connection.
     drop_read_after: Mutex<Option<usize>>,
     /// Writes that fail with a dropped connection before reaching the server.
@@ -56,6 +61,13 @@ fn take_one(n: &AtomicU32) -> bool {
         }
     }
     false
+}
+
+fn id_of_field(r: &Record, field: &str) -> i64 {
+    match r.get(field) {
+        Value::Int(i) => *i,
+        _ => panic!("no {field}"),
+    }
 }
 
 fn id_of(r: &Record) -> i64 {
@@ -87,6 +99,7 @@ impl Fake {
                 })
                 .collect(),
             target: Mutex::default(),
+            lines: Mutex::default(),
             drop_read_after: Mutex::new(None),
             fail_writes: AtomicU32::new(0),
             lose_acks: AtomicU32::new(0),
@@ -100,7 +113,36 @@ impl Fake {
         self.target.lock().unwrap().keys().copied().collect()
     }
 
+    fn apply_lines(&self, batch: &WriteBatch) -> WriteOutcome {
+        let mut out = WriteOutcome::default();
+        let mut t = self.lines.lock().unwrap();
+        for (index, r) in batch.records.iter().enumerate() {
+            let Value::Int(qty) = r.get("qty") else {
+                panic!()
+            };
+            if *qty < 0 {
+                out.failures.push(RecordFailure {
+                    index,
+                    kind: ErrorKind::Constraint,
+                    message: "qty must not be negative".into(),
+                    code: None,
+                });
+                continue;
+            }
+            let key = (id_of_field(r, "order"), id_of_field(r, "index"));
+            if t.insert(key, r.clone()).is_some() && batch.mode == WriteMode::Upsert {
+                out.updated += 1;
+            } else {
+                out.inserted += 1;
+            }
+        }
+        out
+    }
+
     fn apply(&self, batch: &WriteBatch) -> WriteOutcome {
+        if batch.object.name == "lines" {
+            return self.apply_lines(batch);
+        }
         let mut out = WriteOutcome::default();
         let mut t = self.target.lock().unwrap();
         for (index, r) in batch.records.iter().enumerate() {
@@ -202,6 +244,34 @@ impl Connection for Fake {
         Ok(Box::pin(futures::stream::iter(batches)))
     }
 
+    async fn delete(&self, request: DeleteRequest) -> ConnectorResult<MutationOutcome> {
+        let Filter::In { values, .. } = request.filter else {
+            panic!("unexpected filter")
+        };
+        let owners: BTreeSet<i64> = values
+            .iter()
+            .map(|v| match v {
+                Value::Int(i) => *i,
+                _ => panic!(),
+            })
+            .collect();
+        let removed = if request.object.name == "lines" {
+            let mut t = self.lines.lock().unwrap();
+            let before = t.len();
+            t.retain(|(o, _), _| !owners.contains(o));
+            before - t.len()
+        } else {
+            let mut t = self.target.lock().unwrap();
+            let before = t.len();
+            t.retain(|id, _| !owners.contains(id));
+            before - t.len()
+        };
+        Ok(MutationOutcome {
+            matched: removed as u64,
+            modified: removed as u64,
+        })
+    }
+
     async fn write_batch(
         &self,
         batch: WriteBatch,
@@ -255,6 +325,7 @@ fn spec(mode: WriteMode) -> StreamSpec {
         filter: None,
         mode,
         key_fields: vec!["_id".into()],
+        source_keys: vec![],
     }
 }
 
@@ -468,4 +539,127 @@ async fn permanent_errors_fail_at_once() {
     assert!(matches!(err.error, EngineError::Source(_)));
     assert_eq!(fake.reads_opened.load(Ordering::Relaxed), 1);
     assert!(fake.target_ids().is_empty());
+}
+
+/// Each order becomes a row in `orders` plus `n % 3` rows in `lines`.
+struct Split {
+    replace: bool,
+}
+
+#[async_trait]
+impl Transform for Split {
+    fn targets(&self) -> Vec<TargetSpec> {
+        vec![
+            TargetSpec {
+                object: ObjectRef::collection("copy", "orders"),
+                key_fields: vec!["_id".into()],
+                owner: Some("_id".into()),
+                replace: false,
+            },
+            TargetSpec {
+                object: ObjectRef::collection("copy", "lines"),
+                key_fields: vec!["order".into(), "index".into()],
+                owner: Some("order".into()),
+                replace: self.replace,
+            },
+        ]
+    }
+
+    async fn apply(&self, records: &[Record]) -> Result<Transformed, ConnectorError> {
+        let mut t = Transformed {
+            rows: vec![Vec::new(), Vec::new()],
+            ..Transformed::default()
+        };
+        for (i, r) in records.iter().enumerate() {
+            let id = id_of(r);
+            if id == 13 {
+                t.rejected.push((i, "cannot convert".into()));
+                continue;
+            }
+            t.owners.push((i, Value::Int(id)));
+            t.rows[0].push((i, r.clone()));
+            for k in 0..id % 3 {
+                // Order 41's second line is invalid in the target.
+                let qty = if id == 41 && k == 1 { -1 } else { 1 };
+                t.rows[1].push((
+                    i,
+                    Record::from_pairs([
+                        ("order", Value::Int(id)),
+                        ("index", Value::Int(k)),
+                        ("qty", Value::Int(qty)),
+                    ]),
+                ));
+            }
+        }
+        Ok(t)
+    }
+}
+
+#[tokio::test]
+async fn conversions_write_parents_and_children_and_reject_whole_records() {
+    let fake = Arc::new(Fake::new());
+    let dir = tempfile::tempdir().unwrap();
+    let mut opts = options();
+    opts.on_record_error = RecordErrors::Quarantine {
+        dir: dir.path().to_path_buf(),
+    };
+    let out = convert_stream(
+        fake.clone(),
+        fake.clone(),
+        &spec(WriteMode::Insert),
+        &opts,
+        None,
+        CancellationToken::new(),
+        &Saved::default(),
+        &|_| {},
+        Arc::new(Split { replace: false }),
+    )
+    .await
+    .unwrap();
+    // 13 failed to convert; 41 was rejected in a child table after its
+    // parent row was written: both are quarantined as whole documents.
+    assert_eq!(out.stats.read, 2_500);
+    assert_eq!(out.stats.failed, 2);
+    assert_eq!(out.rejections.len(), 2);
+    assert!(
+        out.rejections
+            .iter()
+            .any(|r| r.contains("_id=41") && r.contains("negative")),
+        "{:?}",
+        out.rejections
+    );
+    let text = std::fs::read_to_string(out.quarantine.unwrap()).unwrap();
+    assert_eq!(text.lines().count(), 2);
+    assert!(!fake.target_ids().contains(&13));
+    assert!(!fake.target_ids().contains(&41), "no half-written document");
+    let lines = fake.lines.lock().unwrap().len() as i64;
+    let expected: i64 = (0..N).filter(|i| *i != 13 && *i != 41).map(|i| i % 3).sum();
+    assert_eq!(lines, expected, "order 41 left no lines behind");
+
+    // Replacing parents first deletes their old child rows.
+    fake.lines.lock().unwrap().insert(
+        (2, 9),
+        Record::from_pairs([
+            ("order", Value::Int(2)),
+            ("index", Value::Int(9)),
+            ("qty", Value::Int(1)),
+        ]),
+    );
+    convert_stream(
+        fake.clone(),
+        fake.clone(),
+        &spec(WriteMode::Upsert),
+        &opts,
+        None,
+        CancellationToken::new(),
+        &Saved::default(),
+        &|_| {},
+        Arc::new(Split { replace: true }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !fake.lines.lock().unwrap().contains_key(&(2, 9)),
+        "stale child row removed"
+    );
 }

@@ -19,7 +19,9 @@
 //!   that can be imported again once fixed.
 
 mod quarantine;
+pub mod transform;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,19 +29,20 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use gazabridge_domain::Record;
 use gazabridge_domain::conversion::scalar_to_text;
 use gazabridge_domain::job::WriteMode;
-use gazabridge_plugin_sdk::filter::Filter;
+use gazabridge_domain::{Record, Value};
+use gazabridge_plugin_sdk::filter::{FieldPath, Filter};
 use gazabridge_plugin_sdk::read::{ReadPosition, ReadRequest, RecordBatch};
 use gazabridge_plugin_sdk::schema::ObjectRef;
-use gazabridge_plugin_sdk::write::{RecordFailure, WriteBatch};
+use gazabridge_plugin_sdk::write::{DeleteRequest, WriteBatch};
 use gazabridge_plugin_sdk::{Connection, ConnectorError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::quarantine::Quarantine;
+pub use crate::transform::{Identity, TargetSpec, Transform, Transformed};
 
 /// Rejection messages kept per stream; the rest are only counted.
 const MAX_REJECTIONS: usize = 20;
@@ -59,6 +62,10 @@ pub struct StreamSpec {
     /// Identity of a record in the target (MongoDB: `_id`). Needed for
     /// idempotent retries and resumes, and for upserts.
     pub key_fields: Vec<String>,
+    /// Identity of a record in the source, for messages about rejected
+    /// records; defaults to `key_fields`.
+    #[serde(default)]
+    pub source_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +183,8 @@ pub enum EngineError {
     Source(ConnectorError),
     #[error("writing to the target failed: {0}")]
     Target(ConnectorError),
+    #[error("converting records failed: {0}")]
+    Transform(ConnectorError),
     #[error("the target rejected {0}")]
     Rejected(String),
     #[error("saving the checkpoint failed: {0}")]
@@ -203,9 +212,9 @@ fn idempotent(mode: WriteMode, keys: &[String]) -> WriteMode {
     }
 }
 
-fn describe(records: &[Record], keys: &[String], f: &RecordFailure) -> String {
+fn describe(records: &[Record], keys: &[String], index: usize, message: &str) -> String {
     let id = records
-        .get(f.index)
+        .get(index)
         .map(|r| {
             keys.iter()
                 .map(|k| {
@@ -219,8 +228,8 @@ fn describe(records: &[Record], keys: &[String], f: &RecordFailure) -> String {
                 .join(", ")
         })
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("#{}", f.index));
-    format!("record {id}: {}", f.message)
+        .unwrap_or_else(|| format!("#{index}"));
+    format!("record {id}: {message}")
 }
 
 type Item = Result<RecordBatch, ConnectorError>;
@@ -298,6 +307,8 @@ struct Writer<'a> {
     checkpoints: &'a dyn Checkpoints,
     on_progress: &'a (dyn Fn(&StreamStats) + Send + Sync),
     quarantine: Option<Quarantine>,
+    transform: Arc<dyn Transform>,
+    targets: Vec<TargetSpec>,
     stats: StreamStats,
     position: Option<ReadPosition>,
     rejections: Vec<String>,
@@ -316,10 +327,10 @@ impl Writer<'_> {
     ) -> Result<bool, EngineError> {
         // A non-resumable source restarts from the beginning: everything
         // up to the checkpoint is already in the target.
-        let careful_all = resumed && self.position.is_none() && self.stats.processed() > 0;
+        let careful_all = resumed && self.position.is_none() && self.stats.read > 0;
         let mut careful = resumed;
         let started = Instant::now();
-        let base = self.stats.processed();
+        let base = self.stats.read;
         loop {
             let item = tokio::select! {
                 biased;
@@ -333,72 +344,154 @@ impl Writer<'_> {
             if batch.records.is_empty() {
                 continue;
             }
-            self.stats.read += batch.records.len() as u64;
-            self.stats.bytes += batch.approx_bytes;
-            let keys = &self.spec.key_fields;
-            let mut mode = if careful {
-                idempotent(self.spec.mode, keys)
+            let records = batch.records;
+            let Some(out) = self.transform(&records, stop).await? else {
+                return Ok(true);
+            };
+            let source_keys = if self.spec.source_keys.is_empty() {
+                &self.spec.key_fields
             } else {
-                self.spec.mode
+                &self.spec.source_keys
             };
-            let mut attempt = 0u32;
-            let outcome = loop {
-                let write = WriteBatch {
-                    object: self.spec.target.clone(),
-                    mode,
-                    records: batch.records.clone(),
-                    key_fields: keys.clone(),
-                    atomic: false,
+            let mut rejected: BTreeMap<usize, String> = out
+                .rejected
+                .into_iter()
+                .map(|(i, m)| (i, describe(&records, source_keys, i, &m)))
+                .collect();
+            let mut rows_by_target = out.rows;
+            rows_by_target.resize_with(self.targets.len(), Vec::new);
+            // Source records with rows already written, per target.
+            let mut written: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); self.targets.len()];
+            for (t, rows) in rows_by_target.into_iter().enumerate() {
+                let target = self.targets[t].clone();
+                if let Some(column) = target.owner.as_ref().filter(|_| target.replace) {
+                    let owners: Vec<Value> = out
+                        .owners
+                        .iter()
+                        .filter(|(i, _)| !rejected.contains_key(i))
+                        .map(|(_, v)| v.clone())
+                        .collect();
+                    if !owners.is_empty() && self.delete(&target, column, owners, stop).await? {
+                        return Ok(true);
+                    }
+                }
+                let rows: Vec<(usize, Record)> = rows
+                    .into_iter()
+                    .filter(|(i, _)| !rejected.contains_key(i))
+                    .collect();
+                if rows.is_empty() {
+                    continue;
+                }
+                let origin: Vec<usize> = rows.iter().map(|(i, _)| *i).collect();
+                let records_out: Vec<Record> = rows.into_iter().map(|(_, r)| r).collect();
+                let keys = &target.key_fields;
+                let mut mode = if careful {
+                    idempotent(self.spec.mode, keys)
+                } else {
+                    self.spec.mode
                 };
-                // Never interrupt a write half-way: stopping happens between
-                // batches, so every checkpoint matches the target.
-                match self
-                    .target
-                    .write_batch(write, CancellationToken::new())
-                    .await
-                {
-                    Ok(o) => break o,
-                    Err(e)
-                        if e.is_retryable()
-                            && attempt + 1 < self.options.retry.max_attempts
-                            && !stop.is_cancelled() =>
+                let mut attempt = 0u32;
+                let outcome = loop {
+                    let write = WriteBatch {
+                        object: target.object.clone(),
+                        mode,
+                        records: records_out.clone(),
+                        key_fields: keys.clone(),
+                        atomic: false,
+                    };
+                    // Never interrupt a write half-way: stopping happens between
+                    // batches, so every checkpoint matches the target.
+                    match self
+                        .target
+                        .write_batch(write, CancellationToken::new())
+                        .await
                     {
-                        attempt += 1;
-                        self.write_retries += 1;
-                        mode = idempotent(self.spec.mode, keys);
-                        tracing::warn!(stream = %self.spec.key, attempt, error = %e, "write failed; retrying");
-                        tokio::select! {
-                            () = tokio::time::sleep(self.options.retry.delay(attempt)) => {}
-                            () = stop.cancelled() => return Ok(true),
+                        Ok(o) => break o,
+                        Err(e)
+                            if e.is_retryable()
+                                && attempt + 1 < self.options.retry.max_attempts
+                                && !stop.is_cancelled() =>
+                        {
+                            attempt += 1;
+                            self.write_retries += 1;
+                            mode = idempotent(self.spec.mode, keys);
+                            tracing::warn!(stream = %self.spec.key, attempt, error = %e, "write failed; retrying");
+                            tokio::select! {
+                                () = tokio::time::sleep(self.options.retry.delay(attempt)) => {}
+                                () = stop.cancelled() => return Ok(true),
+                            }
                         }
+                        Err(e) => return Err(EngineError::Target(e)),
                     }
-                    Err(e) => return Err(EngineError::Target(e)),
+                };
+                self.stats.inserted += outcome.inserted;
+                self.stats.updated += outcome.updated;
+                self.stats.skipped += outcome.skipped;
+                let failed_rows: BTreeSet<usize> =
+                    outcome.failures.iter().map(|f| f.index).collect();
+                for f in &outcome.failures {
+                    let src = origin.get(f.index).copied().unwrap_or(f.index);
+                    rejected
+                        .entry(src)
+                        .or_insert_with(|| describe(&records, source_keys, src, &f.message));
                 }
-            };
-            self.stats.inserted += outcome.inserted;
-            self.stats.updated += outcome.updated;
-            self.stats.skipped += outcome.skipped;
-            self.stats.failed += outcome.failures.len() as u64;
-            for f in &outcome.failures {
-                if self.rejections.len() < MAX_REJECTIONS {
-                    self.rejections.push(describe(&batch.records, keys, f));
+                written[t].extend(
+                    origin
+                        .iter()
+                        .enumerate()
+                        .filter(|(row, _)| !failed_rows.contains(row))
+                        .map(|(_, src)| *src),
+                );
+            }
+            // A record rejected by a later target keeps nothing in earlier
+            // ones: its rows are removed, children first.
+            let partial: BTreeSet<usize> = rejected
+                .keys()
+                .filter(|i| written.iter().any(|w| w.contains(i)))
+                .copied()
+                .collect();
+            if !partial.is_empty() {
+                let owners: Vec<Value> = out
+                    .owners
+                    .iter()
+                    .filter(|(i, _)| partial.contains(i))
+                    .map(|(_, v)| v.clone())
+                    .collect();
+                for t in (0..self.targets.len()).rev() {
+                    let target = self.targets[t].clone();
+                    let column = match (&target.owner, target.key_fields.as_slice()) {
+                        (Some(c), _) => c.clone(),
+                        (None, [k]) => k.clone(),
+                        _ => continue,
+                    };
+                    if !owners.is_empty()
+                        && written[t].iter().any(|i| partial.contains(i))
+                        && self.delete(&target, &column, owners.clone(), stop).await?
+                    {
+                        return Ok(true);
+                    }
                 }
             }
-            if let Some(first) = outcome.failures.first() {
+            if let Some(first) = rejected.values().next().cloned() {
+                self.stats.failed += rejected.len() as u64;
+                for m in rejected.values() {
+                    if self.rejections.len() < MAX_REJECTIONS {
+                        self.rejections.push(m.clone());
+                    }
+                }
                 match self.quarantine.take() {
-                    None => {
-                        return Err(EngineError::Rejected(describe(&batch.records, keys, first)));
-                    }
+                    None => return Err(EngineError::Rejected(first)),
                     Some(q) => {
-                        let rejected: Vec<Record> = outcome
-                            .failures
-                            .iter()
-                            .filter_map(|f| batch.records.get(f.index).cloned())
+                        let bad: Vec<Record> = rejected
+                            .keys()
+                            .filter_map(|i| records.get(*i).cloned())
                             .collect();
-                        self.quarantine = Some(q.add(rejected).await?);
+                        self.quarantine = Some(q.add(bad).await?);
                     }
                 }
             }
+            self.stats.read += records.len() as u64;
+            self.stats.bytes += batch.approx_bytes;
             self.position = batch.position.clone();
             self.stats.retries = self.base_retries
                 + self.write_retries
@@ -410,8 +503,7 @@ impl Writer<'_> {
             (self.on_progress)(&self.stats);
             careful = careful_all;
             if let Some(rate) = self.options.max_records_per_sec.filter(|r| *r > 0) {
-                let due =
-                    Duration::from_secs_f64((self.stats.processed() - base) as f64 / rate as f64);
+                let due = Duration::from_secs_f64((self.stats.read - base) as f64 / rate as f64);
                 let elapsed = started.elapsed();
                 if due > elapsed {
                     tokio::select! {
@@ -419,6 +511,74 @@ impl Writer<'_> {
                         () = stop.cancelled() => return Ok(true),
                     }
                 }
+            }
+        }
+    }
+}
+
+impl Writer<'_> {
+    /// Applies the transform, retrying transient failures. `None` when
+    /// stopped while waiting to retry.
+    async fn transform(
+        &mut self,
+        records: &[Record],
+        stop: &CancellationToken,
+    ) -> Result<Option<Transformed>, EngineError> {
+        let mut attempt = 0u32;
+        loop {
+            match self.transform.apply(records).await {
+                Ok(t) => return Ok(Some(t)),
+                Err(e)
+                    if e.is_retryable()
+                        && attempt + 1 < self.options.retry.max_attempts
+                        && !stop.is_cancelled() =>
+                {
+                    attempt += 1;
+                    self.write_retries += 1;
+                    tokio::select! {
+                        () = tokio::time::sleep(self.options.retry.delay(attempt)) => {}
+                        () = stop.cancelled() => return Ok(None),
+                    }
+                }
+                Err(e) => return Err(EngineError::Transform(e)),
+            }
+        }
+    }
+
+    /// Deletes rows owned by the batch (see [`TargetSpec::owner`]).
+    /// Returns whether the copy was stopped meanwhile.
+    async fn delete(
+        &mut self,
+        target: &TargetSpec,
+        column: &str,
+        owners: Vec<Value>,
+        stop: &CancellationToken,
+    ) -> Result<bool, EngineError> {
+        let mut attempt = 0u32;
+        loop {
+            let request = DeleteRequest {
+                object: target.object.clone(),
+                filter: Filter::In {
+                    field: FieldPath::new(column),
+                    values: owners.clone(),
+                },
+                expect_matched: None,
+            };
+            match self.target.delete(request).await {
+                Ok(_) => return Ok(false),
+                Err(e)
+                    if e.is_retryable()
+                        && attempt + 1 < self.options.retry.max_attempts
+                        && !stop.is_cancelled() =>
+                {
+                    attempt += 1;
+                    self.write_retries += 1;
+                    tokio::select! {
+                        () = tokio::time::sleep(self.options.retry.delay(attempt)) => {}
+                        () = stop.cancelled() => return Ok(true),
+                    }
+                }
+                Err(e) => return Err(EngineError::Target(e)),
             }
         }
     }
@@ -438,6 +598,40 @@ pub async fn copy_stream(
     stop: CancellationToken,
     checkpoints: &dyn Checkpoints,
     on_progress: &(dyn Fn(&StreamStats) + Send + Sync),
+) -> Result<Outcome, Box<Failure>> {
+    let identity = Arc::new(Identity(TargetSpec {
+        object: spec.target.clone(),
+        key_fields: spec.key_fields.clone(),
+        owner: None,
+        replace: false,
+    }));
+    convert_stream(
+        source,
+        target,
+        spec,
+        options,
+        resume,
+        stop,
+        checkpoints,
+        on_progress,
+        identity,
+    )
+    .await
+}
+
+/// Like [`copy_stream`], converting records with `transform` on the way
+/// (into one or several target objects).
+#[allow(clippy::too_many_arguments)] // the engine's whole contract, kept explicit
+pub async fn convert_stream(
+    source: Arc<dyn Connection>,
+    target: Arc<dyn Connection>,
+    spec: &StreamSpec,
+    options: &EngineOptions,
+    resume: Option<Resume>,
+    stop: CancellationToken,
+    checkpoints: &dyn Checkpoints,
+    on_progress: &(dyn Fn(&StreamStats) + Send + Sync),
+    transform: Arc<dyn Transform>,
 ) -> Result<Outcome, Box<Failure>> {
     let resumed = resume.is_some();
     let (stats, position) =
@@ -466,6 +660,8 @@ pub async fn copy_stream(
             RecordErrors::Fail => None,
             RecordErrors::Quarantine { dir } => Some(Quarantine::new(dir.clone(), &spec.key)),
         },
+        targets: transform.targets(),
+        transform,
         base_retries: stats.retries,
         stats,
         position,

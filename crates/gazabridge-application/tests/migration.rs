@@ -169,6 +169,8 @@ fn request(source: ConnectionId, target: ConnectionId, items: Vec<CopyItem>) -> 
         on_record_error: OnRecordError::Stop,
         max_records_per_sec: None,
         parallel: 2,
+        doc_mode: Default::default(),
+        table_mode: Default::default(),
     }
 }
 

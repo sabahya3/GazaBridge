@@ -18,6 +18,7 @@ members = [
     "crates/gazabridge-files",
     "crates/gazabridge-query",
     "crates/gazabridge-migration",
+    "crates/gazabridge-mapping",
     "apps/desktop/src-tauri",
     "apps/desktop/ui",
 ]
@@ -50,6 +51,7 @@ gazabridge-bson = { path = "crates/gazabridge-bson" }
 gazabridge-files = { path = "crates/gazabridge-files" }
 gazabridge-query = { path = "crates/gazabridge-query" }
 gazabridge-migration = { path = "crates/gazabridge-migration" }
+gazabridge-mapping = { path = "crates/gazabridge-mapping" }
 
 # External crates
 async-trait = "0.1.89"

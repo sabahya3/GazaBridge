@@ -2,6 +2,7 @@
 //! CLI. Drivers (Tauri commands, CLI subcommands) stay thin and call these.
 
 pub mod connections;
+pub mod convert;
 pub mod explorer;
 pub mod migration;
 pub mod profiled;

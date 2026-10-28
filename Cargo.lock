@@ -2076,12 +2076,14 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "gazabridge-bson",
  "gazabridge-connector-mongodb",
  "gazabridge-connector-postgres",
  "gazabridge-connector-sqlite",
  "gazabridge-connectors",
  "gazabridge-domain",
  "gazabridge-files",
+ "gazabridge-mapping",
  "gazabridge-migration",
  "gazabridge-plugin-sdk",
  "gazabridge-query",
@@ -2229,6 +2231,7 @@ dependencies = [
  "gazabridge-domain",
  "gazabridge-files",
  "gazabridge-ipc",
+ "gazabridge-mapping",
  "gazabridge-observability",
  "gazabridge-plugin-sdk",
  "gazabridge-query",
@@ -2292,6 +2295,20 @@ dependencies = [
  "serde",
  "serde_json",
  "zeroize",
+]
+
+[[package]]
+name = "gazabridge-mapping"
+version = "0.1.0"
+dependencies = [
+ "gazabridge-bson",
+ "gazabridge-domain",
+ "gazabridge-plugin-sdk",
+ "hex",
+ "indexmap 2.14.2",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
