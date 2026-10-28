@@ -591,74 +591,75 @@ pub fn QueryBar(
             }}
 
             <Show when=move || options.get()>
-                <div class="qb-options-grid">
-                    <section class="qb-section">
-                        <header class="qb-section-head">
-                            <strong>{ui.tr("explorer.q_sort")}</strong>
-                            <span class="muted small">{ui.tr("qb.sort_help")}</span>
-                        </header>
+                <div class="qb-form">
+                    <span class="qb-form-label" title=ui.tr("qb.sort_help")>{ui.tr("explorer.q_sort")}</span>
+                    <div class="qb-form-value">
                         {move || match mode.get() {
                             Mode::Builder => view! {
                                 {move || sort.get().into_iter().enumerate().map(|(i, k)| {
                                     let desc = k.descending;
                                     view! {
                                         <div class="qb-sort-row">
-                                            <span class="qb-order">{i + 1}</span>
                                             <input class="input mono qb-sort-field" type="text" list="qb-fields" prop:value=k.field.clone() aria-label=ui.tr("explorer.field")
                                                 placeholder=ui.tr("explorer.field")
                                                 on:change=move |e| { let v = event_target_value(&e); sort.update(|s| s[i].field = v); } />
-                                            <div class="segmented" role="group">
-                                                <button type="button" class:active=!desc title=ui.tr("qb.ascending") on:click=move |_| sort.update(|s| s[i].descending = false)>"A → Z"</button>
-                                                <button type="button" class:active=desc title=ui.tr("qb.descending") on:click=move |_| sort.update(|s| s[i].descending = true)>"Z → A"</button>
+                                            <div class="segmented qb-dir" role="group">
+                                                <button type="button" class:active=!desc title=ui.tr("qb.ascending") on:click=move |_| sort.update(|s| s[i].descending = false)>"A→Z"</button>
+                                                <button type="button" class:active=desc title=ui.tr("qb.descending") on:click=move |_| sort.update(|s| s[i].descending = true)>"Z→A"</button>
                                             </div>
-                                            <button type="button" class="icon-btn" disabled=i == 0 aria-label=ui.tr("qb.move_up") title=ui.tr("qb.move_up")
-                                                on:click=move |_| sort.update(|s| s.swap(i, i - 1))>{icon(Icon::ArrowUp)}</button>
+                                            {if i > 0 {
+                                                view! {
+                                                    <button type="button" class="icon-btn" aria-label=ui.tr("qb.move_up") title=ui.tr("qb.move_up")
+                                                        on:click=move |_| sort.update(|s| s.swap(i, i - 1))>{icon(Icon::ArrowUp)}</button>
+                                                }.into_any()
+                                            } else {
+                                                view! { <span class="icon-slot" aria-hidden="true"></span> }.into_any()
+                                            }}
                                             <button type="button" class="icon-btn danger" aria-label=ui.tr("qb.remove_sort") title=ui.tr("qb.remove_sort")
                                                 on:click=move |_| sort.update(|s| { s.remove(i); })>{icon(Icon::X)}</button>
                                         </div>
                                     }
                                 }).collect_view()}
-                                <button type="button" class="btn btn-small btn-secondary qb-add" on:click=move |_| sort.update(|s| s.push(SortField::default()))>{icon(Icon::Plus)}{ui.tr("qb.add_sort")}</button>
+                                <div class="qb-inline">
+                                    {move || sort.with(Vec::is_empty).then(|| view! { <span class="qb-none">{ui.tr("qb.none")}</span> })}
+                                    <button type="button" class="link-btn" on:click=move |_| sort.update(|s| s.push(SortField::default()))>{icon(Icon::Plus)}<span>{ui.tr("qb.add_sort")}</span></button>
+                                </div>
                             }.into_any(),
                             Mode::Text => text_box(Part::Sort, "explorer.q_sort", "{ field: -1 }", sort_text).into_any(),
                         }}
-                    </section>
-                    <section class="qb-section">
-                        <header class="qb-section-head">
-                            <strong>{ui.tr("qb.fields_title")}</strong>
-                            {move || (mode.get() == Mode::Builder).then(|| view! {
-                                <div class="segmented" role="group">
-                                    <button type="button" class:active=move || !project_hide.get() on:click=move |_| project_hide.set(false)>{ui.tr("qb.show_only")}</button>
-                                    <button type="button" class:active=move || project_hide.get() on:click=move |_| project_hide.set(true)>{ui.tr("qb.hide")}</button>
-                                </div>
-                            })}
-                        </header>
+                    </div>
+
+                    <span class="qb-form-label">{ui.tr("qb.fields_title")}</span>
+                    <div class="qb-form-value">
                         {move || match mode.get() {
                             Mode::Builder => view! {
-                                <FieldPicker fields=fields chosen=project_fields />
-                                <p class="muted small">{move || if project_fields.with(Vec::is_empty) { ui.text("qb.all_fields") } else if project_hide.get() { ui.text("qb.hiding") } else { ui.text("qb.showing_only") }}</p>
+                                <div class="qb-inline">
+                                    <div class="segmented qb-dir" role="group" title=move || if project_fields.with(Vec::is_empty) { ui.text("qb.all_fields") } else if project_hide.get() { ui.text("qb.hiding") } else { ui.text("qb.showing_only") }>
+                                        <button type="button" class:active=move || !project_hide.get() on:click=move |_| project_hide.set(false)>{ui.tr("qb.show_only")}</button>
+                                        <button type="button" class:active=move || project_hide.get() on:click=move |_| project_hide.set(true)>{ui.tr("qb.hide")}</button>
+                                    </div>
+                                    <FieldPicker fields=fields chosen=project_fields />
+                                </div>
                             }.into_any(),
                             Mode::Text => text_box(Part::Project, "explorer.q_project", "{ field: 1 }", project_text).into_any(),
                         }}
-                    </section>
-                    <section class="qb-section qb-paging">
-                        <header class="qb-section-head"><strong>{ui.tr("qb.paging")}</strong></header>
-                        <div class="qb-row">
-                            <label class="qb-field qb-num">
-                                <span class="qb-label">{ui.tr("explorer.q_skip")}</span>
-                                <input class="qb-input" type="number" min="0" placeholder="0"
-                                    prop:value=move || { let v = skip.get(); if v == 0 { String::new() } else { v.to_string() } }
-                                    on:input=move |e| skip.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
-                            </label>
-                            <label class="qb-field qb-num">
-                                <span class="qb-label">{ui.tr("explorer.q_limit")}</span>
-                                <input class="qb-input" type="number" min="0" placeholder="0"
-                                    prop:value=move || { let v = limit.get(); if v == 0 { String::new() } else { v.to_string() } }
-                                    on:input=move |e| limit.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
-                            </label>
-                        </div>
-                        <p class="muted small">{ui.tr("qb.paging_help")}</p>
-                    </section>
+                    </div>
+
+                    <span class="qb-form-label" title=ui.tr("qb.paging_help")>{ui.tr("qb.paging")}</span>
+                    <div class="qb-form-value qb-inline">
+                        <label class="qb-field qb-num">
+                            <span class="qb-label">{ui.tr("explorer.q_skip")}</span>
+                            <input class="qb-input" type="number" min="0" placeholder="0"
+                                prop:value=move || { let v = skip.get(); if v == 0 { String::new() } else { v.to_string() } }
+                                on:input=move |e| skip.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
+                        </label>
+                        <label class="qb-field qb-num">
+                            <span class="qb-label">{ui.tr("explorer.q_limit")}</span>
+                            <input class="qb-input" type="number" min="0" placeholder="0"
+                                prop:value=move || { let v = limit.get(); if v == 0 { String::new() } else { v.to_string() } }
+                                on:input=move |e| limit.set(event_target_value(&e).parse().unwrap_or(0)) on:keydown=on_key />
+                        </label>
+                    </div>
                 </div>
             </Show>
         </div>

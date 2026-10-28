@@ -433,7 +433,7 @@
   "qb.all_fields": "All fields are shown.",
   "qb.hiding": "The chosen fields are hidden.",
   "qb.showing_only": "Only the chosen fields are shown (and _id).",
-  "qb.paging": "Skip and limit",
+  "qb.paging": "Paging",
   "qb.paging_help": "Skip jumps over the first documents; Limit caps how many are shown.",
   "qb.did_you_mean": "Did you mean",
   "qb.use_it": "Use it",
@@ -442,5 +442,6 @@
   "qb.err_sort": "Sort: use 1 for ascending or -1 for descending, e.g. { createdAt: -1 }.",
   "qb.from": "from",
   "qb.to": "to",
-  "qb.no_value": "no value needed"
+  "qb.no_value": "no value needed",
+  "qb.none": "None"
 }
