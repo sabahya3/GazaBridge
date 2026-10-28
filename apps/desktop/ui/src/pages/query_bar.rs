@@ -116,54 +116,62 @@ fn ConditionRow(ctx: Ctx, path: Vec<usize>, index: usize, cond: Condition) -> im
         Some(t) => format!("{} ({})", ui.text("qb.type_auto"), ui.text(type_key(t))),
         None => ui.text("qb.type_auto"),
     };
+    // Fixed columns (field | operator | value | type | remove) so every
+    // row lines up; empty cells keep their place.
     view! {
         <div class="qb-cond">
-            <input class="input qb-cond-field mono" type="text" list="qb-fields" placeholder=ui.tr("explorer.field") aria-label=ui.tr("explorer.field")
+            <input class="input qb-c-field mono" type="text" list="qb-fields" placeholder=ui.tr("explorer.field") aria-label=ui.tr("explorer.field")
                 prop:value=field on:change=move |e| { let v = event_target_value(&e); edit(Box::new(move |c| c.field = v)); } />
-            <select class="input qb-cond-op" aria-label=ui.tr("explorer.operator")
+            <select class="input qb-c-op" aria-label=ui.tr("explorer.operator")
                 on:change=move |e| { if let Some(o) = Op::parse(&event_target_value(&e)) { edit(Box::new(move |c| c.op = o)); } }>
                 {Op::ALL.into_iter().map(|o| view! { <option value=o.as_str() selected=o == op>{ui.tr(op_key(o))}</option> }).collect_view()}
             </select>
-            {(op.arity() >= 1).then(|| {
-                let placeholder = match op {
-                    Op::In | Op::Nin => ui.text("qb.ph_list"),
-                    Op::Type => "string, int, objectId…".to_owned(),
-                    Op::ElemMatch => "{ qty: { $gt: 2 } }".to_owned(),
-                    Op::Regex => "^abc".to_owned(),
-                    _ => ui.text("explorer.value"),
-                };
-                view! {
-                    <input class="input qb-cond-value mono" type="text" placeholder=placeholder aria-label=ui.tr("explorer.value")
-                        prop:value=cond.value.clone() on:change=move |e| { let v = event_target_value(&e); edit(Box::new(move |c| c.value = v)); } />
-                }
-            })}
-            {(op.arity() == 2).then(|| view! {
-                <span class="muted small">{ui.tr("qb.and")}</span>
-                <input class="input qb-cond-value mono" type="text" aria-label=ui.tr("explorer.value")
-                    prop:value=cond.value2.clone() on:change=move |e| { let v = event_target_value(&e); edit(Box::new(move |c| c.value2 = v)); } />
-            })}
-            {op.typed().then(|| {
-                let current = cond.value_type;
-                view! {
-                    <select class="input qb-cond-type" aria-label=ui.tr("qb.type")
-                        on:change=move |e| { let t = ValueType::parse(&event_target_value(&e)); edit(Box::new(move |c| c.value_type = t)); }>
-                        {ValueType::ALL.into_iter().map(|t| {
-                            let label = if t == ValueType::Auto { auto_label.clone() } else { ui.text(type_key(t)) };
-                            view! { <option value=t.as_str() selected=t == current>{label}</option> }
-                        }).collect_view()}
-                    </select>
-                }
-            })}
-            {(op == Op::Regex).then(|| {
-                let ci = cond.case_insensitive;
-                view! {
-                    <label class="field-check small">
-                        <input type="checkbox" prop:checked=ci on:change=move |e| { let v = event_target_checked(&e); edit(Box::new(move |c| c.case_insensitive = v)); } />
-                        <span>{ui.tr("qb.ignore_case")}</span>
-                    </label>
-                }
-            })}
-            <button type="button" class="icon-btn danger" aria-label=ui.tr("explorer.remove_condition") title=ui.tr("explorer.remove_condition")
+            <div class="qb-c-value">
+                {(op.arity() >= 1).then(|| {
+                    let placeholder = match op {
+                        Op::In | Op::Nin => ui.text("qb.ph_list"),
+                        Op::Type => "string, int, objectId…".to_owned(),
+                        Op::ElemMatch => "{ qty: { $gt: 2 } }".to_owned(),
+                        Op::Regex => "^abc".to_owned(),
+                        Op::Between => ui.text("qb.from"),
+                        _ => ui.text("explorer.value"),
+                    };
+                    view! {
+                        <input class="input mono" type="text" placeholder=placeholder aria-label=ui.tr("explorer.value")
+                            prop:value=cond.value.clone() on:change=move |e| { let v = event_target_value(&e); edit(Box::new(move |c| c.value = v)); } />
+                    }
+                })}
+                {(op.arity() == 2).then(|| view! {
+                    <span class="qb-c-and">{ui.tr("qb.and")}</span>
+                    <input class="input mono" type="text" placeholder=ui.tr("qb.to") aria-label=ui.tr("explorer.value")
+                        prop:value=cond.value2.clone() on:change=move |e| { let v = event_target_value(&e); edit(Box::new(move |c| c.value2 = v)); } />
+                })}
+                {(op.arity() == 0).then(|| view! { <span class="qb-c-none">{ui.tr("qb.no_value")}</span> })}
+            </div>
+            <div class="qb-c-type">
+                {op.typed().then(|| {
+                    let current = cond.value_type;
+                    view! {
+                        <select class="input" aria-label=ui.tr("qb.type") title=ui.tr("qb.type")
+                            on:change=move |e| { let t = ValueType::parse(&event_target_value(&e)); edit(Box::new(move |c| c.value_type = t)); }>
+                            {ValueType::ALL.into_iter().map(|t| {
+                                let label = if t == ValueType::Auto { auto_label.clone() } else { ui.text(type_key(t)) };
+                                view! { <option value=t.as_str() selected=t == current>{label}</option> }
+                            }).collect_view()}
+                        </select>
+                    }
+                })}
+                {(op == Op::Regex).then(|| {
+                    let ci = cond.case_insensitive;
+                    view! {
+                        <label class="qb-c-toggle" title=ui.tr("qb.ignore_case")>
+                            <input type="checkbox" prop:checked=ci on:change=move |e| { let v = event_target_checked(&e); edit(Box::new(move |c| c.case_insensitive = v)); } />
+                            <span>{ui.tr("qb.ignore_case")}</span>
+                        </label>
+                    }
+                })}
+            </div>
+            <button type="button" class="icon-btn danger qb-c-x" aria-label=ui.tr("explorer.remove_condition") title=ui.tr("explorer.remove_condition")
                 on:click=move |_| ctx.update(&p.get_value(), move |g| { g.children.remove(index); })>{icon(Icon::X)}</button>
         </div>
     }
@@ -183,22 +191,15 @@ fn GroupEditor(ctx: Ctx, path: Vec<usize>) -> impl IntoView {
         })
     };
     view! {
-        <div class="qb-group" class:qb-root=is_root>
+        <div class="qb-group" class:qb-root=is_root class:qb-or=move || group().any>
             <div class="qb-group-head">
                 <div class="segmented qb-andor" role="group" aria-label=ui.tr("qb.match")>
                     <button type="button" class:active=move || !group().any on:click=move |_| ctx.update(&p.get_value(), |g| g.any = false)>{ui.tr("qb.all")}</button>
                     <button type="button" class:active=move || group().any on:click=move |_| ctx.update(&p.get_value(), |g| g.any = true)>{ui.tr("qb.any")}</button>
                 </div>
-                <span class="muted small">{move || if group().any { ui.text("qb.any_help") } else { ui.text("qb.all_help") }}</span>
-                <span class="spacer"></span>
-                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| ctx.update(&p.get_value(), |g| g.children.push(new_condition()))>
-                    {icon(Icon::Plus)}{ui.tr("qb.add_condition")}
-                </button>
-                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| ctx.update(&p.get_value(), |g| g.children.push(Node::Group(Group { any: true, children: vec![new_condition()] })))>
-                    {icon(Icon::Plus)}{ui.tr("qb.add_group")}
-                </button>
+                <span class="qb-hint">{move || if group().any { ui.text("qb.any_help") } else { ui.text("qb.all_help") }}</span>
                 {(!is_root).then(|| view! {
-                    <button type="button" class="icon-btn danger" aria-label=ui.tr("qb.remove_group") title=ui.tr("qb.remove_group")
+                    <button type="button" class="icon-btn danger qb-group-x" aria-label=ui.tr("qb.remove_group") title=ui.tr("qb.remove_group")
                         on:click=move |_| {
                             let path = p.get_value();
                             if let Some((last, parent)) = path.split_last() {
@@ -211,7 +212,7 @@ fn GroupEditor(ctx: Ctx, path: Vec<usize>) -> impl IntoView {
             {move || {
                 let g = group();
                 if g.children.is_empty() {
-                    return view! { <p class="muted small qb-empty">{ui.tr("qb.no_conditions")}</p> }.into_any();
+                    return view! { <p class="qb-empty">{ui.tr("qb.no_conditions")}</p> }.into_any();
                 }
                 g.children.into_iter().enumerate().map(|(i, child)| match child {
                     Node::Condition(c) => view! { <ConditionRow ctx=ctx path=p.get_value() index=i cond=c /> }.into_any(),
@@ -222,6 +223,14 @@ fn GroupEditor(ctx: Ctx, path: Vec<usize>) -> impl IntoView {
                     }
                 }).collect_view().into_any()
             }}
+            <div class="qb-group-add">
+                <button type="button" class="link-btn" on:click=move |_| ctx.update(&p.get_value(), |g| g.children.push(new_condition()))>
+                    {icon(Icon::Plus)}<span>{ui.tr("qb.add_condition")}</span>
+                </button>
+                <button type="button" class="link-btn" on:click=move |_| ctx.update(&p.get_value(), |g| g.children.push(Node::Group(Group { any: true, children: vec![new_condition()] })))>
+                    {icon(Icon::Plus)}<span>{ui.tr("qb.add_group")}</span>
+                </button>
+            </div>
         </div>
     }
 }
@@ -554,23 +563,23 @@ pub fn QueryBar(
     };
 
     view! {
-        <div class="query-bar">
+        <div class="query-bar" class:options-open=move || options.get()>
             <datalist id="qb-fields">
                 {move || fields.get().into_iter().map(|(f, _)| view! { <option value=f></option> }).collect_view()}
             </datalist>
             <div class="qb-top">
                 <div class="segmented" role="group" aria-label=ui.tr("qb.mode")>
-                    <button type="button" class:active=move || mode.get() == Mode::Builder on:click=move |_| switch(Mode::Builder)>{icon(Icon::ListTree)}<span>{ui.tr("qb.builder")}</span></button>
-                    <button type="button" class:active=move || mode.get() == Mode::Text on:click=move |_| switch(Mode::Text)>{icon(Icon::Code)}<span>{ui.tr("qb.text")}</span></button>
+                    <button type="button" title=ui.tr("qb.builder") class:active=move || mode.get() == Mode::Builder on:click=move |_| switch(Mode::Builder)>{icon(Icon::ListTree)}<span class="btn-label">{ui.tr("qb.builder")}</span></button>
+                    <button type="button" title=ui.tr("qb.text") class:active=move || mode.get() == Mode::Text on:click=move |_| switch(Mode::Text)>{icon(Icon::Code)}<span class="btn-label">{ui.tr("qb.text")}</span></button>
                 </div>
                 <span class="qb-summary">{summary}</span>
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-small btn-secondary" aria-expanded=move || options.get().to_string()
                     on:click=move |_| options.update(|o| *o = !*o)>
-                    {move || icon(if options.get() { Icon::ChevronDown } else { Icon::ChevronRight })}{ui.tr("qb.more_options")}
+                    {move || icon(if options.get() { Icon::ChevronDown } else { Icon::ChevronRight })}<span class="btn-label">{ui.tr("qb.more_options")}</span>
                 </button>
-                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| reset()>{ui.tr("explorer.q_reset")}</button>
-                <button type="button" class="btn btn-small" on:click=move |_| find()>{icon(Icon::Search)}{ui.tr("explorer.q_find")}</button>
+                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| reset()>{icon(Icon::Refresh)}<span class="btn-label">{ui.tr("explorer.q_reset")}</span></button>
+                <button type="button" class="btn btn-small qb-find" on:click=move |_| find()>{icon(Icon::Search)}<span>{ui.tr("explorer.q_find")}</span></button>
             </div>
 
             {move || match mode.get() {

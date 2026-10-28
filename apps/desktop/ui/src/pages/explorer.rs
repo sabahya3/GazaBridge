@@ -683,22 +683,22 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                 </h2>
                 <div class="toolbar tight">
                     <div class="segmented" role="group" aria-label=ui.tr("explorer.view_mode")>
-                        <button type="button" title=ui.tr("explorer.view_table") class:active=move || mode.get() == ViewMode::Table aria-pressed=move || (mode.get() == ViewMode::Table).to_string() on:click=move |_| mode.set(ViewMode::Table)>{icon(Icon::Table)}<span>{ui.tr("explorer.view_table")}</span></button>
-                        <button type="button" title=ui.tr("explorer.view_json") class:active=move || mode.get() == ViewMode::Json aria-pressed=move || (mode.get() == ViewMode::Json).to_string() on:click=move |_| mode.set(ViewMode::Json)>{icon(Icon::Braces)}<span>{ui.tr("explorer.view_json")}</span></button>
-                        <button type="button" title=ui.tr("explorer.view_tree") class:active=move || mode.get() == ViewMode::Tree aria-pressed=move || (mode.get() == ViewMode::Tree).to_string() on:click=move |_| mode.set(ViewMode::Tree)>{icon(Icon::ListTree)}<span>{ui.tr("explorer.view_tree")}</span></button>
+                        <button type="button" title=ui.tr("explorer.view_table") class:active=move || mode.get() == ViewMode::Table aria-pressed=move || (mode.get() == ViewMode::Table).to_string() on:click=move |_| mode.set(ViewMode::Table)>{icon(Icon::Table)}<span class="btn-label">{ui.tr("explorer.view_table")}</span></button>
+                        <button type="button" title=ui.tr("explorer.view_json") class:active=move || mode.get() == ViewMode::Json aria-pressed=move || (mode.get() == ViewMode::Json).to_string() on:click=move |_| mode.set(ViewMode::Json)>{icon(Icon::Braces)}<span class="btn-label">{ui.tr("explorer.view_json")}</span></button>
+                        <button type="button" title=ui.tr("explorer.view_tree") class:active=move || mode.get() == ViewMode::Tree aria-pressed=move || (mode.get() == ViewMode::Tree).to_string() on:click=move |_| mode.set(ViewMode::Tree)>{icon(Icon::ListTree)}<span class="btn-label">{ui.tr("explorer.view_tree")}</span></button>
                         {is_collection.then(|| view! {
-                            <button type="button" title=ui.tr("agg.title") class:active=move || mode.get() == ViewMode::Aggregations aria-pressed=move || (mode.get() == ViewMode::Aggregations).to_string() on:click=move |_| mode.set(ViewMode::Aggregations)>{icon(Icon::Layers)}<span>{ui.tr("agg.title")}</span></button>
+                            <button type="button" title=ui.tr("agg.title") class:active=move || mode.get() == ViewMode::Aggregations aria-pressed=move || (mode.get() == ViewMode::Aggregations).to_string() on:click=move |_| mode.set(ViewMode::Aggregations)>{icon(Icon::Layers)}<span class="btn-label">{ui.tr("agg.title")}</span></button>
                         })}
                     </div>
                     <span class="spacer"></span>
                     <button type="button" class="icon-btn" title=ui.tr("common.refresh") aria-label=ui.tr("common.refresh") on:click=move |_| load()>{icon(Icon::Refresh)}</button>
                     <button type="button" class="icon-btn" title=ui.tr("explorer.count") aria-label=ui.tr("explorer.count") on:click=run_count>{icon(Icon::Hash)}</button>
-                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Export))>{icon(Icon::Upload)}{ui.tr("transfer.export")}</button>
+                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Export))>{icon(Icon::Upload)}<span class="btn-label">{ui.tr("transfer.export")}</span></button>
                     <Show when=importable>
-                        <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Import))>{icon(Icon::Download)}{ui.tr("transfer.import")}</button>
+                        <button type="button" class="btn btn-small btn-secondary" on:click=move |_| transfer.set(Some(Direction::Import))>{icon(Icon::Download)}<span class="btn-label">{ui.tr("transfer.import")}</span></button>
                     </Show>
                     <Show when=editable>
-                        <button type="button" class="btn btn-small" on:click=open_insert>{icon(Icon::Plus)}{ui.tr("explorer.insert")}</button>
+                        <button type="button" class="btn btn-small" on:click=open_insert>{icon(Icon::Plus)}<span class="btn-label">{ui.tr("explorer.insert")}</span></button>
                     </Show>
                 </div>
             </header>

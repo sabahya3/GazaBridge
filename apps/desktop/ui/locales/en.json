@@ -439,5 +439,8 @@
   "qb.use_it": "Use it",
   "qb.err_filter_doc": "The filter must be a document, e.g. { status: \"active\" }.",
   "qb.err_project": "Fields: use 1 to show a field or 0 to hide it, not both (except _id: 0).",
-  "qb.err_sort": "Sort: use 1 for ascending or -1 for descending, e.g. { createdAt: -1 }."
+  "qb.err_sort": "Sort: use 1 for ascending or -1 for descending, e.g. { createdAt: -1 }.",
+  "qb.from": "from",
+  "qb.to": "to",
+  "qb.no_value": "no value needed"
 }
