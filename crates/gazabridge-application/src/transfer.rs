@@ -323,14 +323,17 @@ impl TransferService {
                 req.object
             )));
         }
-        if matches!(req.mode, WriteMode::Upsert) && req.key_fields.is_empty() {
-            return Err(AppError::Invalid("an upsert needs key fields".into()));
+        if matches!(req.mode, WriteMode::Upsert | WriteMode::SkipExisting)
+            && req.key_fields.is_empty()
+        {
+            return Err(AppError::Invalid(
+                "upserts and skipping existing records need key fields".into(),
+            ));
         }
-        if !matches!(
-            req.mode,
-            WriteMode::Insert | WriteMode::Append | WriteMode::Upsert
-        ) {
-            return Err(AppError::Invalid("imports insert, append or upsert; destructive modes belong to migrations with a dry run".into()));
+        // Nothing an import does removes data; dropping and truncating
+        // belong to migrations, with a dry run and confirmation.
+        if req.mode.is_destructive() {
+            return Err(AppError::Invalid("imports insert, append, upsert or skip existing records; destructive modes belong to migrations with a dry run".into()));
         }
         let conn = self.explorer.session(id).await?;
         ensure_writable(conn.as_ref())?;

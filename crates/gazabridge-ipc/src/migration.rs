@@ -40,6 +40,9 @@ pub struct MigrationArgs {
     /// PostgreSQL → MongoDB: `reference` (default) or `embed`.
     #[serde(default)]
     pub table_mode: String,
+    /// Back up targets before dropping them; default yes.
+    #[serde(default)]
+    pub backup_before_replace: Option<bool>,
 }
 
 /// A planned table with the rows the first documents become.
@@ -106,6 +109,9 @@ pub struct StreamDto {
     pub quarantine: Option<String>,
     pub rejections: Vec<String>,
     pub error: Option<String>,
+    /// Folder of the backup taken before the target was dropped.
+    #[serde(default)]
+    pub backup: Option<String>,
 }
 
 impl StreamDto {

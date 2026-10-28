@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+use crate::backup::{BackupMethod, BackupRequest, BackupService};
 use crate::convert::{self, Direction, ItemMapping};
 use crate::explorer::ExplorerService;
 use crate::{AppError, AppResult};
@@ -112,6 +113,9 @@ pub struct MigrationRequest {
     /// PostgreSQL → MongoDB: how rows become documents.
     #[serde(default)]
     pub table_mode: TableMode,
+    /// Before dropping existing targets (replace), back them up.
+    #[serde(default = "yes")]
+    pub backup_before_replace: bool,
 }
 
 /// What a run stores: the request and the mapping decided for each item.
@@ -203,6 +207,9 @@ pub struct StreamView {
     pub quarantine: Option<PathBuf>,
     pub rejections: Vec<String>,
     pub error: Option<String>,
+    /// Backup of the target taken before it was dropped.
+    #[serde(default)]
+    pub backup: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -266,6 +273,7 @@ pub struct MigrationService {
     quarantine_dir: PathBuf,
     active: Arc<Mutex<HashMap<RunId, Handle>>>,
     validations: Arc<Mutex<HashMap<RunId, ValidationReport>>>,
+    backups: Option<BackupService>,
 }
 
 impl std::fmt::Debug for MigrationService {
@@ -364,6 +372,7 @@ fn view_for(item: &CopyItem) -> StreamView {
         quarantine: None,
         rejections: Vec::new(),
         error: None,
+        backup: None,
     }
 }
 
@@ -395,7 +404,58 @@ impl MigrationService {
             quarantine_dir,
             active: Arc::default(),
             validations: Arc::default(),
+            backups: None,
         }
+    }
+
+    /// Targets dropped by a replace are backed up here first.
+    #[must_use]
+    pub fn with_backups(mut self, backups: BackupService) -> Self {
+        self.backups = Some(backups);
+        self
+    }
+
+    /// Existing target objects a replace would drop, backed up first.
+    async fn backup_targets(
+        &self,
+        req: &MigrationRequest,
+        item: &CopyItem,
+        mapping: &ItemMapping,
+        target: &dyn Connection,
+    ) -> AppResult<Option<PathBuf>> {
+        let Some(backups) = &self.backups else {
+            return Ok(None);
+        };
+        let candidates: Vec<ObjectRef> = match mapping {
+            ItemMapping::DocToTable { mapping, .. } => {
+                mapping.tables.iter().map(|t| t.target.clone()).collect()
+            }
+            ItemMapping::Embedded { .. } => Vec::new(),
+            _ => vec![item.target.clone()],
+        };
+        let mut existing = convert::Existing::default();
+        let mut objects = Vec::new();
+        for o in candidates {
+            if existing.contains(target, &o).await {
+                objects.push(o);
+            }
+        }
+        if objects.is_empty() {
+            return Ok(None);
+        }
+        let path = backups
+            .backup(
+                &BackupRequest {
+                    connection: req.target,
+                    objects,
+                    method: BackupMethod::GazaBridge,
+                    label: Some(format!("before replacing {}", item.target)),
+                },
+                CancellationToken::new(),
+                &|_| {},
+            )
+            .await?;
+        Ok(Some(path))
     }
 
     /// Source, target and options; changing any of them invalidates
@@ -416,7 +476,12 @@ impl MigrationService {
 
     /// Checks the request and describes what a copy would do. Reads only.
     pub async fn plan(&self, req: &MigrationRequest) -> AppResult<MigrationPlan> {
-        Ok(self.prepare(req).await?.0)
+        let mut plan = self.prepare(req).await?.0;
+        if plan.destructive && req.backup_before_replace && self.backups.is_some() {
+            plan.warnings
+                .push("existing targets are backed up before they are dropped".into());
+        }
+        Ok(plan)
     }
 
     /// The plan and, for each item, the mapping a run will use.
@@ -1009,6 +1074,36 @@ impl MigrationService {
         });
         // Target preparation happens once, before the first checkpoint.
         if saved.is_none() && !run.dry_run {
+            if req.existing == ExistingData::Replace && req.backup_before_replace {
+                match self
+                    .backup_targets(req, item, mapping, target.as_ref())
+                    .await
+                {
+                    Ok(Some(path)) => {
+                        let shown = path.display().to_string();
+                        set_stream(streams, i, |v| v.backup = Some(path));
+                        self.event(
+                            run.id,
+                            EventLevel::Info,
+                            "backed_up",
+                            Some(&key),
+                            &format!("Backed up the target before dropping it: {shown}"),
+                        )
+                        .await;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // Nothing is dropped without its backup.
+                        let m = fail(format!(
+                            "backing up {} before replacing it: {e}",
+                            item.target
+                        ));
+                        self.event(run.id, EventLevel::Error, "backup_failed", Some(&key), &m)
+                            .await;
+                        return StreamEnd::Failed(m);
+                    }
+                }
+            }
             let ops = mapping.prepare_ops(item, req.existing);
             if let Err(e) = target.apply_ddl(&ops, CancellationToken::new()).await {
                 let m = fail(format!("preparing {}: {e}", item.target));

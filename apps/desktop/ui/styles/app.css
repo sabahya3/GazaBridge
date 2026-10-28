@@ -1054,3 +1054,17 @@ button.module:disabled { cursor: default; color: var(--muted); background: var(-
 .mig-val-stream { display: grid; gap: 6px; margin-block: 10px; }
 .mig-val-stream .grid-wrap { max-block-size: 30vh; }
 .mig-diffs { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4px; max-block-size: 240px; overflow: auto; }
+
+/* ------------------------------------------------------------- Backups */
+.backups { container: page / inline-size; }
+.bk-grid { grid-template-columns: minmax(0, 2fr) 0 minmax(0, 1fr); }
+.bk-tools { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.bk-actions { white-space: nowrap; display: flex; gap: 6px; }
+.bk-restore { margin-block-start: 16px; display: grid; gap: 10px; }
+.bk-restore h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.bk-restore-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.bk-plan { display: grid; gap: 8px; }
+.bk-progress { display: grid; gap: 4px; }
+@container page (max-width: 760px) {
+  .bk-grid, .bk-restore-grid { grid-template-columns: minmax(0, 1fr); }
+}

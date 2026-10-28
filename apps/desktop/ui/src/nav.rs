@@ -11,6 +11,7 @@ pub enum Section {
     QueryStudio,
     SchemaStudio,
     Migrations,
+    Backups,
     SyncJobs,
     Imports,
     Exports,
@@ -23,13 +24,14 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 15] = [
+    pub const ALL: [Section; 16] = [
         Self::Home,
         Self::Connections,
         Self::Explorer,
         Self::QueryStudio,
         Self::SchemaStudio,
         Self::Migrations,
+        Self::Backups,
         Self::SyncJobs,
         Self::Imports,
         Self::Exports,
@@ -49,6 +51,7 @@ impl Section {
             Self::QueryStudio => "nav.query_studio",
             Self::SchemaStudio => "nav.schema_studio",
             Self::Migrations => "nav.migrations",
+            Self::Backups => "nav.backups",
             Self::SyncJobs => "nav.sync_jobs",
             Self::Imports => "nav.imports",
             Self::Exports => "nav.exports",
@@ -69,6 +72,7 @@ impl Section {
             Self::QueryStudio => Icon::Code,
             Self::SchemaStudio => Icon::Layers,
             Self::Migrations => Icon::ArrowLeftRight,
+            Self::Backups => Icon::Archive,
             Self::SyncJobs => Icon::Repeat,
             Self::Imports => Icon::Download,
             Self::Exports => Icon::Upload,
@@ -89,6 +93,7 @@ impl Section {
                 | Self::Explorer
                 | Self::QueryStudio
                 | Self::Migrations
+                | Self::Backups
                 | Self::Logs
                 | Self::Settings
         )

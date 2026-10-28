@@ -106,6 +106,7 @@ pub fn request(args: &MigrationArgs) -> Result<MigrationRequest, CommandError> {
         parallel: (args.parallel as usize).clamp(1, 4),
         doc_mode,
         table_mode,
+        backup_before_replace: args.backup_before_replace.unwrap_or(true),
     })
 }
 
@@ -162,6 +163,7 @@ fn stream_dto(s: StreamView) -> StreamDto {
         quarantine: s.quarantine.map(|p| p.display().to_string()),
         rejections: s.rejections,
         error: s.error,
+        backup: s.backup.map(|p| p.display().to_string()),
     }
 }
 
@@ -405,6 +407,7 @@ mod tests {
             confirm_destructive: false,
             doc_mode: String::new(),
             table_mode: String::new(),
+            backup_before_replace: None,
         }
     }
 

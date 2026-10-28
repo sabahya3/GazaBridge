@@ -1,6 +1,7 @@
 //! Application services: the use cases shared by the desktop app and the
 //! CLI. Drivers (Tauri commands, CLI subcommands) stay thin and call these.
 
+pub mod backup;
 pub mod connections;
 pub mod convert;
 pub mod explorer;
@@ -8,6 +9,7 @@ pub mod migration;
 pub mod profiled;
 pub mod query;
 pub mod schema;
+pub mod tools;
 pub mod transfer;
 
 pub use connections::{ConnectionService, PasswordInput, TestOutcome};

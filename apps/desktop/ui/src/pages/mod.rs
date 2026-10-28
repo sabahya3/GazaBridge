@@ -1,4 +1,5 @@
 mod aggregation;
+mod backups;
 mod connection_editor;
 mod connections;
 mod explorer;
@@ -10,6 +11,7 @@ mod query_studio;
 mod settings;
 mod transfer;
 
+pub use backups::BackupsPage;
 pub use connections::ConnectionsPage;
 pub use explorer::ExplorerPage;
 pub use home::HomePage;

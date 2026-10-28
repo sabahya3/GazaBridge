@@ -5,12 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod backup;
 pub mod connections;
 pub mod explorer;
 pub mod migration;
 pub mod query;
 pub mod transfer;
 
+pub use backup::*;
 pub use connections::*;
 pub use explorer::*;
 pub use migration::*;
@@ -65,6 +67,14 @@ pub mod commands {
     pub const MIGRATION_RECENT: &str = "migration_recent";
     pub const MIGRATION_DRY_RUN: &str = "migration_dry_run";
     pub const MIGRATION_VALIDATE: &str = "migration_validate";
+    pub const BACKUP_TOOLS: &str = "backup_tools";
+    pub const BACKUP_LIST: &str = "backup_list";
+    pub const BACKUP_START: &str = "backup_start";
+    pub const BACKUP_STATUS: &str = "backup_status";
+    pub const BACKUP_CANCEL: &str = "backup_cancel";
+    pub const BACKUP_DELETE: &str = "backup_delete";
+    pub const RESTORE_PLAN: &str = "restore_plan";
+    pub const RESTORE_START: &str = "restore_start";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -101,6 +101,7 @@ pub fn MigrationsPage() -> impl IntoView {
     let selected = RwSignal::new(BTreeSet::<String>::new());
     let search = RwSignal::new(String::new());
     let existing = RwSignal::new("skip".to_owned());
+    let backup_first = RwSignal::new(true);
     let copy_indexes = RwSignal::new(true);
     let on_error = RwSignal::new("stop".to_owned());
     let batch = RwSignal::new(1_000u32);
@@ -322,6 +323,7 @@ pub fn MigrationsPage() -> impl IntoView {
             confirm_destructive: confirm,
             doc_mode: doc_mode.get_untracked(),
             table_mode: table_mode.get_untracked(),
+            backup_before_replace: Some(backup_first.get_untracked()),
         }
     };
 
@@ -653,6 +655,7 @@ pub fn MigrationsPage() -> impl IntoView {
                     {(s.retries > 0).then(|| view! { <span>{format!("{} {}", s.retries, ui.text("mig.n_retries"))}</span> })}
                 </div>
                 {s.error.clone().map(|e| view! { <p class="error-detail small">{e}</p> })}
+                {s.backup.clone().map(|b| view! { <p class="small">{ui.tr("mig.backup_at")}" "<code class="mono"><bdi>{b}</bdi></code></p> })}
                 {s.quarantine.clone().map(|q| view! { <p class="small">{ui.tr("mig.quarantine_at")}" "<code class="mono"><bdi>{q}</bdi></code></p> })}
                 {(!s.rejections.is_empty()).then(|| view! {
                     <details class="small"><summary>{ui.tr("mig.rejections")}</summary>
@@ -816,6 +819,12 @@ pub fn MigrationsPage() -> impl IntoView {
                         {existing_option("fail", "mig.ex_fail", "mig.ex_fail_help")}
                         {existing_option("replace", "mig.ex_replace", "mig.ex_replace_help")}
                     </fieldset>
+                    <Show when=move || existing.get() == "replace">
+                        <label class="field-check">
+                            <input type="checkbox" prop:checked=move || backup_first.get() on:change=move |e| backup_first.set(event_target_checked(&e)) />
+                            <span>{ui.tr("mig.backup_first")}</span>
+                        </label>
+                    </Show>
                     <label class="field-check">
                         <input type="checkbox" prop:checked=move || copy_indexes.get() on:change=move |e| copy_indexes.set(event_target_checked(&e)) />
                         <span>{ui.tr("mig.copy_indexes")}</span>

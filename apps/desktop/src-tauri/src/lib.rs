@@ -4,6 +4,7 @@
 //! filesystem, shell or network access. Commands delegate to the same crates
 //! the CLI uses.
 
+mod backup_commands;
 mod commands;
 mod connection_commands;
 mod explorer_commands;
@@ -74,6 +75,14 @@ pub fn run() {
             migration_commands::migration_recent,
             migration_commands::migration_dry_run,
             migration_commands::migration_validate,
+            backup_commands::backup_tools,
+            backup_commands::backup_list,
+            backup_commands::backup_start,
+            backup_commands::backup_status,
+            backup_commands::backup_cancel,
+            backup_commands::backup_delete,
+            backup_commands::restore_plan,
+            backup_commands::restore_start,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

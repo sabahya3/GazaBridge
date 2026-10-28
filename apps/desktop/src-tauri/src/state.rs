@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use gazabridge_application::backup::BackupService;
 use gazabridge_application::{
     ConnectionService, ExplorerService, MigrationService, QueryService, TransferService,
 };
@@ -20,6 +21,7 @@ pub struct AppState {
     pub queries: QueryService,
     pub transfers: TransferService,
     pub migrations: MigrationService,
+    pub backups: BackupService,
     pub registry: ConnectorRegistry,
     pub secrets: SecretResolver,
     pub data_dir: PathBuf,
@@ -60,12 +62,25 @@ impl AppState {
         let secrets = SecretResolver::os_default(redactor);
         let connections = ConnectionService::new(store.clone(), registry.clone(), secrets.clone());
         let explorer = ExplorerService::new(store.clone(), connections.clone());
+        let transfers = TransferService::new(
+            store.clone(),
+            explorer.clone(),
+            connections.redactor().clone(),
+        );
+        let backups = BackupService::new(
+            store.clone(),
+            connections.clone(),
+            explorer.clone(),
+            transfers.clone(),
+            data_dir.join("backups"),
+        );
         let migrations = MigrationService::new(
             store.clone(),
             explorer.clone(),
             connections.redactor().clone(),
             data_dir.join("quarantine"),
-        );
+        )
+        .with_backups(backups.clone());
         // Copies left running when the app closed become paused and resumable.
         match migrations.recover_interrupted().await {
             Ok(0) => {}
@@ -78,12 +93,9 @@ impl AppState {
                 explorer.clone(),
                 connections.redactor().clone(),
             ),
-            transfers: TransferService::new(
-                store.clone(),
-                explorer.clone(),
-                connections.redactor().clone(),
-            ),
+            transfers,
             migrations,
+            backups,
             explorer,
             connections,
             store,
