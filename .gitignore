@@ -7,3 +7,6 @@
 .DS_Store
 /.env
 /.env.*
+
+# Local code-signing identity (scripts/build-mac-app.sh)
+.signing-identity

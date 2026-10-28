@@ -14,7 +14,8 @@
 # treats every rebuild as a new app, so saved passwords must be allowed (or
 # entered) again after each build. Set GAZABRIDGE_SIGNING_IDENTITY to a
 # code-signing identity from `security find-identity -v -p codesigning`
-# (e.g. "Apple Development: …") to keep one stable signature across builds.
+# (its SHA-1, or its name when unique), or put it in `.signing-identity` at
+# the repository root (ignored by git), to keep one signature across builds.
 set -euo pipefail
 
 cd "$(dirname "$0")/../apps/desktop/src-tauri"
@@ -30,6 +31,9 @@ JOBS="${JOBS:-$(( $(sysctl -n hw.ncpu) / 2 ))}"
 BUNDLES="app"
 [[ "${1:-}" == "dmg" ]] && BUNDLES="app,dmg"
 
+if [[ -z "${GAZABRIDGE_SIGNING_IDENTITY:-}" && -f ../../../.signing-identity ]]; then
+  GAZABRIDGE_SIGNING_IDENTITY="$(tr -d '[:space:]' < ../../../.signing-identity)"
+fi
 if [[ -n "${GAZABRIDGE_SIGNING_IDENTITY:-}" ]]; then
   export APPLE_SIGNING_IDENTITY="$GAZABRIDGE_SIGNING_IDENTITY"
 fi
