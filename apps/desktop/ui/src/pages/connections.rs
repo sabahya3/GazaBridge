@@ -234,32 +234,42 @@ pub fn ConnectionsPage() -> impl IntoView {
                                     let (name_d, name_x) = (c.name.clone(), c.name.clone());
                                     let id_r = c.id.clone();
                                     view! {
-                                        <li class="card conn">
-                                            <span class="conn-swatch" style:background-color=c.color.clone().unwrap_or_default()></span>
+                                        <li class="conn-card">
+                                            <span class="conn-swatch" class:empty=c.color.is_none() style:background-color=c.color.clone().unwrap_or_default()></span>
                                             <div class="conn-main">
-                                                <strong>{c.name.clone()}</strong>
-                                                <span class="mono muted">{c.target.clone()}</span>
-                                                <span class="muted">{c.profile_name.clone()}</span>
+                                                <div class="conn-title">
+                                                    <strong>{c.name.clone()}</strong>
+                                                    {c.favorite.then(|| view! { <span class="conn-fav" title=ui.tr("connections.favorite")>"★"</span> })}
+                                                    {c.read_only.then(|| view! { <span class="pill">{ui.tr("connections.read_only")}</span> })}
+                                                    {c.tags.iter().map(|t| view! { <span class="pill">{t.clone()}</span> }).collect_view()}
+                                                </div>
+                                                <span class="mono muted small conn-target"><bdi>{c.target.clone()}</bdi></span>
+                                                <span class="muted small">{c.profile_name.clone()}</span>
                                             </div>
-                                            <div class="conn-flags">
-                                                {c.read_only.then(|| view! { <span class="badge">{ui.tr("connections.read_only")}</span> })}
-                                                {c.favorite.then(|| view! { <span class="badge">{ui.tr("connections.favorite")}</span> })}
-                                                {c.tags.iter().map(|t| view! { <span class="tag">{t.clone()}</span> }).collect_view()}
-                                                <span class="muted">
-                                                    {match (c.state.clone(), c.latency_ms) {
-                                                        (Some(s), Some(ms)) => format!("{s} · {ms} ms"),
-                                                        (Some(s), None) => s,
-                                                        _ => ui.text("connections.never_checked"),
-                                                    }}
-                                                </span>
-                                            </div>
+                                            {
+                                                let (label, class) = match c.state.as_deref() {
+                                                    Some("Ready") => (match c.latency_ms { Some(ms) => format!("{} · {ms} ms", ui.text("connections.state_ready")), None => ui.text("connections.state_ready") }, "state-pill ok"),
+                                                    Some(s) if s.contains("Fail") || s.contains("Unsupported") => (s.to_owned(), "state-pill bad"),
+                                                    Some(s) => (s.to_owned(), "state-pill warn"),
+                                                    None => (ui.text("connections.never_checked"), "state-pill"),
+                                                };
+                                                view! { <span class=class>{label}</span> }
+                                            }
                                             <div class="conn-actions">
-                                                <button type="button" class="btn btn-small" on:click=move |_| test(id_t.clone())>{ui.tr("editor.test")}</button>
-                                                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| edit(id_e.clone())>{ui.tr("connections.edit")}</button>
-                                                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| duplicate(id_d.clone(), name_d.clone())>{ui.tr("connections.duplicate")}</button>
-                                                <button type="button" class="btn btn-small btn-danger" on:click=move |_| confirm_delete.set(Some((id_x.clone(), name_x.clone())))>{ui.tr("connections.delete")}</button>
+                                                {
+                                                    let id = c.id.clone();
+                                                    view! {
+                                                        <button type="button" class="btn btn-small" on:click=move |_| { ui.open_connection.set(Some(id.clone())); ui.section.set(crate::nav::Section::Explorer); }>
+                                                            {crate::icons::icon(crate::icons::Icon::Database)}{ui.tr("connections.open")}
+                                                        </button>
+                                                    }
+                                                }
+                                                <button type="button" class="btn btn-small btn-secondary" on:click=move |_| test(id_t.clone())>{crate::icons::icon(crate::icons::Icon::Activity)}{ui.tr("editor.test")}</button>
+                                                <button type="button" class="icon-btn" title=ui.tr("connections.edit") aria-label=ui.tr("connections.edit") on:click=move |_| edit(id_e.clone())>{crate::icons::icon(crate::icons::Icon::Pencil)}</button>
+                                                <button type="button" class="icon-btn" title=ui.tr("connections.duplicate") aria-label=ui.tr("connections.duplicate") on:click=move |_| duplicate(id_d.clone(), name_d.clone())>{crate::icons::icon(crate::icons::Icon::Copy)}</button>
+                                                <button type="button" class="icon-btn danger" title=ui.tr("connections.delete") aria-label=ui.tr("connections.delete") on:click=move |_| confirm_delete.set(Some((id_x.clone(), name_x.clone())))>{crate::icons::icon(crate::icons::Icon::Trash)}</button>
                                             </div>
-                                            {move || last_test.get().filter(|(tid, _)| *tid == id_r).map(|(_, r)| view! { <TestResultView result=r /> })}
+                                            {move || last_test.get().filter(|(tid, _)| *tid == id_r).map(|(_, r)| view! { <div class="conn-test"><TestResultView result=r /></div> })}
                                         </li>
                                     }
                                 }).collect_view()}
@@ -285,8 +295,8 @@ pub fn ConnectionsPage() -> impl IntoView {
                 </div>
             </Show>
 
-            <h2>{ui.tr("connections.catalogue")}</h2>
-            <p class="muted">{ui.tr("connections.catalogue_intro")}</p>
+            <details class="catalogue-box">
+            <summary><h2>{ui.tr("connections.catalogue")}</h2><span class="muted small">{ui.tr("connections.catalogue_intro")}</span></summary>
             {move || match profiles.get() {
                 Load::Loading => view! { <p>{ui.tr("common.loading")}</p> }.into_any(),
                 Load::Failed(e) => view! { <ErrorBox message=e retry=load_profiles /> }.into_any(),
@@ -310,6 +320,7 @@ pub fn ConnectionsPage() -> impl IntoView {
                     }.into_any()
                 }
             }}
+            </details>
         </section>
     }
 }

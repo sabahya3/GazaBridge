@@ -350,7 +350,7 @@ pub fn TransferPanel(
     };
 
     view! {
-        <section class="editor record-editor transfer" aria-labelledby="transfer-title">
+        <section class="transfer" aria-labelledby="transfer-title">
             <h3 id="transfer-title">{title}" — "<bdi>{object.display()}</bdi></h3>
 
             {(direction == Direction::Export).then(|| view! {
@@ -555,7 +555,7 @@ pub fn TransferPanel(
                 </div>
             </Show>
 
-            <div class="toolbar">
+            <div class="toolbar modal-footer">
                 <button type="button" class="btn" disabled=move || running() || path.get().trim().is_empty() on:click=move |_| start(false)>
                     {if direction == Direction::Export { ui.tr("transfer.start_export") } else { ui.tr("transfer.start_import") }}
                 </button>

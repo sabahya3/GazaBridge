@@ -39,6 +39,7 @@ pub enum Icon {
     Unplug,
     PanelLeft,
     ArrowUp,
+    Copy,
     X,
 }
 
@@ -128,6 +129,9 @@ impl Icon {
             Self::Play => r#"<polygon points="6 3 20 12 6 21 6 3"/>"#,
             Self::Unplug => {
                 r#"<path d="m19 5 3-3"/><path d="m2 22 3-3"/><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/>"#
+            }
+            Self::Copy => {
+                r#"<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>"#
             }
             Self::ArrowUp => r#"<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>"#,
             Self::PanelLeft => {

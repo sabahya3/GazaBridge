@@ -269,6 +269,7 @@ fn FieldPicker(
             }
         })
     };
+    let open = RwSignal::new(false);
     view! {
         <div class="picker">
             <div class="picker-chosen">
@@ -281,12 +282,21 @@ fn FieldPicker(
                         </span>
                     }
                 }).collect_view()}
-                <details class="picker-pop">
-                    <summary class="btn btn-small btn-secondary">{icon(Icon::Plus)}{ui.tr("qb.add_field")}</summary>
-                    <div class="picker-panel">
+                <button type="button" class="btn btn-small btn-secondary" aria-expanded=move || open.get().to_string()
+                    on:click=move |_| open.update(|o| *o = !*o)>
+                    {move || icon(if open.get() { Icon::ChevronDown } else { Icon::Plus })}{ui.tr("qb.add_field")}
+                </button>
+                <Show when=move || !chosen.with(Vec::is_empty)>
+                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| chosen.set(Vec::new())>{ui.tr("qb.clear_fields")}</button>
+                </Show>
+            </div>
+            // Opens in place (not floating), so the bar never clips it.
+            <Show when=move || open.get()>
+                <div class="picker-panel" on:keydown=move |e: leptos::ev::KeyboardEvent| if e.key() == "Escape" { open.set(false); }>
+                    <div class="picker-head">
                         <label class="tree-search picker-search">
                             {icon(Icon::Search)}
-                            <input type="search" placeholder=ui.tr("qb.find_field") aria-label=ui.tr("qb.find_field")
+                            <input type="search" placeholder=ui.tr("qb.find_field") aria-label=ui.tr("qb.find_field") autofocus
                                 prop:value=move || search.get() on:input=move |e| search.set(event_target_value(&e))
                                 on:keydown=move |e: leptos::ev::KeyboardEvent| {
                                     // Enter adds a field that is not in the list.
@@ -300,34 +310,32 @@ fn FieldPicker(
                                     }
                                 } />
                         </label>
-                        <ul class="picker-list" role="listbox" aria-multiselectable="true">
-                            {move || {
-                                let q = search.get().to_lowercase();
-                                let picked = chosen.get();
-                                let items: Vec<String> = fields.get().into_iter().map(|(f, _)| f).filter(|f| q.is_empty() || f.to_lowercase().contains(&q)).collect();
-                                if items.is_empty() {
-                                    return view! { <li class="muted small picker-none">{ui.tr("qb.no_field_match")}</li> }.into_any();
-                                }
-                                items.into_iter().map(|f| {
-                                    let on = picked.contains(&f);
-                                    let name = f.clone();
-                                    view! {
-                                        <li>
-                                            <label class="picker-item" role="option" aria-selected=on.to_string()>
-                                                <input type="checkbox" prop:checked=on on:change=move |_| toggle(name.clone()) />
-                                                <bdi>{f}</bdi>
-                                            </label>
-                                        </li>
-                                    }
-                                }).collect_view().into_any()
-                            }}
-                        </ul>
+                        <button type="button" class="btn btn-small" on:click=move |_| { open.set(false); search.set(String::new()); }>{ui.tr("qb.done")}</button>
                     </div>
-                </details>
-                <Show when=move || !chosen.with(Vec::is_empty)>
-                    <button type="button" class="btn btn-small btn-secondary" on:click=move |_| chosen.set(Vec::new())>{ui.tr("qb.clear_fields")}</button>
-                </Show>
-            </div>
+                    <ul class="picker-list" role="listbox" aria-multiselectable="true">
+                        {move || {
+                            let q = search.get().to_lowercase();
+                            let picked = chosen.get();
+                            let items: Vec<String> = fields.get().into_iter().map(|(f, _)| f).filter(|f| q.is_empty() || f.to_lowercase().contains(&q)).collect();
+                            if items.is_empty() {
+                                return view! { <li class="muted small picker-none">{ui.tr("qb.no_field_match")}</li> }.into_any();
+                            }
+                            items.into_iter().map(|f| {
+                                let on = picked.contains(&f);
+                                let name = f.clone();
+                                view! {
+                                    <li>
+                                        <label class="picker-item" role="option" aria-selected=on.to_string()>
+                                            <input type="checkbox" prop:checked=on on:change=move |_| toggle(name.clone()) />
+                                            <bdi>{f}</bdi>
+                                        </label>
+                                    </li>
+                                }
+                            }).collect_view().into_any()
+                        }}
+                    </ul>
+                </div>
+            </Show>
         </div>
     }
 }

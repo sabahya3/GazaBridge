@@ -920,3 +920,91 @@ html, body { font-size: 13.5px; -webkit-font-smoothing: antialiased; }
   .qb-sort-field { flex: 1 1 auto; }
 }
 .icon-slot { inline-size: 28px; flex: none; }
+
+/* Field picker opens in place; the viewer scrolls when content is tall. */
+.qb-form .picker { display: grid; gap: 6px; min-inline-size: 0; flex: 1 1 100%; }
+.qb-form .picker-chosen { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.picker-panel {
+  position: static; inline-size: min(100%, 26rem); box-shadow: none;
+  display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
+}
+.picker-head { display: flex; gap: 6px; align-items: center; }
+.picker-head .picker-search { flex: 1; margin: 0; }
+.picker-list { max-block-size: 220px; }
+.viewer-card { overflow-y: auto; }
+
+/* Dialogs (export / import). */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px;
+  background: rgb(0 0 0 / 0.38);
+}
+.modal {
+  inline-size: min(760px, 100%); max-block-size: min(88vh, 900px); overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.3);
+}
+.modal .transfer { display: grid; gap: 12px; padding: 18px 20px 0; }
+.modal .transfer h3 { margin: 0; font-size: 16px; }
+.modal-footer {
+  position: sticky; inset-block-end: 0; margin: 4px -20px 0; padding: 12px 20px;
+  background: var(--surface); border-block-start: 1px solid var(--border); justify-content: flex-end;
+}
+
+/* Connections page cards. */
+.conn-list { display: grid; gap: 10px; }
+.conn-card {
+  display: grid; grid-template-columns: 4px minmax(0, 1fr) auto auto; gap: 14px; align-items: center;
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.conn-card:hover { border-color: var(--border-strong); }
+.conn-swatch { align-self: stretch; inline-size: 4px; border-radius: 2px; }
+.conn-swatch.empty { background: var(--surface-3); }
+.conn-main { display: grid; gap: 2px; min-inline-size: 0; }
+.conn-title { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.conn-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-fav { color: var(--kind-database); }
+.pill { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.state-pill { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.state-pill.ok { background: var(--ok-bg); color: var(--ok); }
+.state-pill.bad { background: var(--danger-bg); color: var(--danger); }
+.state-pill.warn { background: var(--warn-bg); color: var(--warn); }
+.conn-actions { display: flex; gap: 4px; align-items: center; }
+.conn-test { grid-column: 1 / -1; }
+@container page (max-width: 720px) {
+  .conn-card { grid-template-columns: 4px minmax(0, 1fr); }
+  .state-pill, .conn-actions { grid-column: 2; justify-self: start; }
+}
+.page { container: page / inline-size; }
+.catalogue-box { margin-block-start: 24px; border-block-start: 1px solid var(--border); padding-block-start: 12px; }
+.catalogue-box > summary { cursor: pointer; display: grid; gap: 2px; list-style: none; }
+.catalogue-box > summary h2 { margin: 0; font-size: 15px; display: inline; }
+.catalogue-box > summary h2::before { content: "▸ "; color: var(--muted); }
+.catalogue-box[open] > summary h2::before { content: "▾ "; }
+
+/* Explorer: saved connections in the side tree. */
+.ws-side-head { padding: 8px 8px 8px 12px; gap: 2px; }
+.ws-side-title { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.conn-tree { list-style: none; margin: 0; padding: 0; }
+.conn-node.hidden { display: none; }
+.conn-row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.conn-row .conn-toggle { flex: 1; min-inline-size: 0; font-weight: 600; padding-inline-start: 4px; }
+.conn-row.active .conn-name { color: var(--accent-text); }
+.conn-dot { inline-size: 8px; block-size: 8px; border-radius: 50%; background: var(--border-strong); flex: none; }
+.conn-x { opacity: 0; }
+.conn-row:hover .conn-x, .conn-x:focus-visible { opacity: 1; }
+.side-empty { display: grid; gap: 10px; justify-items: start; padding: 12px; color: var(--muted); font-size: 13px; }
+.side-empty p { margin: 0; }
+
+/* Home: module tiles never overflow. */
+.module { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.module > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.module .badge { margin-inline-start: 0; font-size: 11px; }
+
+.module-grid { list-style: none; }
+.module-grid > li { display: contents; }
+button.module {
+  inline-size: 100%; font: inherit; color: var(--text); text-align: start; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 12px 14px;
+}
+button.module:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-tint); }
+button.module:disabled { cursor: default; color: var(--muted); background: var(--surface-2); }

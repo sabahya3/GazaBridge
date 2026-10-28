@@ -33,7 +33,7 @@
   "home.intro": "A secure desktop workspace for exploring, converting, migrating and synchronizing data between PostgreSQL, MySQL, MongoDB, SQLite and common file formats. Everything runs locally; no account or cloud service is required.",
   "home.modules": "Modules in this build",
   "home.available": "Available",
-  "home.planned": "Not yet available",
+  "home.planned": "Soon",
   "home.safety_title": "Safety first",
   "home.safety_body": "Credentials are kept in your operating system's secure store, never in GazaBridge's own files. Lossy conversions always require your explicit approval, and destructive jobs require a Dry Run first.",
   "home.version": "Version",
@@ -443,5 +443,9 @@
   "qb.from": "from",
   "qb.to": "to",
   "qb.no_value": "no value needed",
-  "qb.none": "None"
+  "qb.none": "None",
+  "qb.done": "Done",
+  "connections.open": "Open",
+  "connections.state_ready": "Ready",
+  "explorer.open_connection": "Open a connection on the left to browse its databases."
 }

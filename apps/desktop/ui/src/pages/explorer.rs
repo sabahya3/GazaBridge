@@ -75,16 +75,41 @@ fn op_key(op: FilterOp) -> &'static str {
 pub fn ExplorerPage() -> impl IntoView {
     let ui = use_ui();
     let connections = RwSignal::new(Load::<Vec<ConnectionSummary>>::Loading);
-    let connection = RwSignal::new(ui.open_connection.get_untracked());
+    // Connections opened in the tree; "Save & Connect" opens one directly.
+    let expanded = RwSignal::new(
+        ui.open_connection
+            .get_untracked()
+            .into_iter()
+            .collect::<Vec<String>>(),
+    );
     ui.open_connection.set(None);
-    let object = RwSignal::new(None::<ObjectAddr>);
+    // The object shown on the right, with its connection.
+    let current = RwSignal::new(None::<(String, ObjectAddr)>);
+    let filter = RwSignal::new(String::new());
+    let side_open = RwSignal::new(true);
+    provide_context(SidePanel(side_open));
+    // One highlight signal per connection, so equal names in two
+    // connections are not both highlighted.
+    let highlights = StoredValue::new(Vec::<(String, RwSignal<Option<ObjectAddr>>)>::new());
 
     let load = move || {
         connections.set(Load::Loading);
         spawn_local(async move {
             connections.set(
-                match call(commands::LIST_CONNECTIONS, &ListArgs { search: None }).await {
-                    Ok(v) => Load::Ready(v),
+                match call::<_, Vec<ConnectionSummary>>(
+                    commands::LIST_CONNECTIONS,
+                    &ListArgs { search: None },
+                )
+                .await
+                {
+                    Ok(mut v) => {
+                        v.sort_by(|a, b| {
+                            b.favorite
+                                .cmp(&a.favorite)
+                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                        });
+                        Load::Ready(v)
+                    }
                     Err(e) => Load::Failed(e.message),
                 },
             );
@@ -92,90 +117,112 @@ pub fn ExplorerPage() -> impl IntoView {
     };
     load();
 
-    let disconnect = move |_| {
-        if let Some(id) = connection.get_untracked() {
-            #[derive(Serialize)]
-            struct Args {
-                connection_id: String,
-            }
-            spawn_local(async move {
-                let _ =
-                    call::<_, ()>(commands::EXPLORER_DISCONNECT, &Args { connection_id: id }).await;
-            });
+    let disconnect = move |id: String| {
+        #[derive(Serialize)]
+        struct Args {
+            connection_id: String,
         }
-        connection.set(None);
-        object.set(None);
+        expanded.update(|e| e.retain(|x| *x != id));
+        if current.with_untracked(|c| c.as_ref().is_some_and(|(cid, _)| *cid == id)) {
+            current.set(None);
+        }
+        spawn_local(async move {
+            let _ = call::<_, ()>(commands::EXPLORER_DISCONNECT, &Args { connection_id: id }).await;
+        });
     };
-
-    let filter = RwSignal::new(String::new());
-    let selected = RwSignal::new(None::<ObjectAddr>);
-    let side_open = RwSignal::new(true);
-    provide_context(SidePanel(side_open));
 
     view! {
         <section class="workspace" class:side-hidden=move || !side_open.get() aria-labelledby="explorer-title">
             <h1 id="explorer-title" class="sr-only">{ui.tr("nav.explorer")}</h1>
             <aside class="ws-side">
-                {move || match connections.get() {
-                    Load::Loading => view! { <p class="muted small pad">{ui.tr("common.loading")}</p> }.into_any(),
-                    Load::Failed(e) => view! { <div class="pad"><ErrorBox message=e retry=load /></div> }.into_any(),
-                    Load::Ready(list) if list.is_empty() => view! {
-                        <div class="empty-state small-empty">
-                            <p>{ui.tr("explorer.no_connections")}</p>
-                            <button type="button" class="btn btn-small" on:click=move |_| ui.section.set(crate::nav::Section::Connections)>
-                                {icon(Icon::Plus)}{ui.tr("connections.new")}
-                            </button>
-                        </div>
-                    }.into_any(),
-                    Load::Ready(list) => view! {
-                        <div class="ws-side-head">
-                            <select class="input conn-select" aria-label=ui.tr("explorer.connection") on:change=move |e| {
-                                let v = event_target_value(&e);
-                                object.set(None);
-                                selected.set(None);
-                                connection.set((!v.is_empty()).then_some(v));
-                            }>
-                                <option value="" selected=move || connection.get().is_none()>{ui.tr("explorer.choose")}</option>
+                <div class="ws-side-head">
+                    <span class="ws-side-title">{ui.tr("nav.connections")}</span>
+                    <span class="spacer"></span>
+                    <button type="button" class="icon-btn" title=ui.tr("common.refresh") aria-label=ui.tr("common.refresh") on:click=move |_| load()>{icon(Icon::Refresh)}</button>
+                    <button type="button" class="icon-btn" title=ui.tr("connections.new") aria-label=ui.tr("connections.new")
+                        on:click=move |_| ui.section.set(crate::nav::Section::Connections)>{icon(Icon::Plus)}</button>
+                </div>
+                <label class="tree-search">
+                    {icon(Icon::Search)}
+                    <input type="search" placeholder=ui.tr("explorer.find_object") aria-label=ui.tr("explorer.find_object")
+                        prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
+                </label>
+                <nav class="tree" aria-label=ui.tr("explorer.tree")>
+                    {move || match connections.get() {
+                        Load::Loading => view! { <p class="tree-note">{ui.tr("common.loading")}</p> }.into_any(),
+                        Load::Failed(e) => view! { <div class="pad"><ErrorBox message=e retry=load /></div> }.into_any(),
+                        Load::Ready(list) if list.is_empty() => view! {
+                            <div class="side-empty">
+                                <p>{ui.tr("explorer.no_connections")}</p>
+                                <button type="button" class="btn btn-small" on:click=move |_| ui.section.set(crate::nav::Section::Connections)>
+                                    {icon(Icon::Plus)}{ui.tr("connections.new")}
+                                </button>
+                            </div>
+                        }.into_any(),
+                        Load::Ready(list) => view! {
+                            <ul class="conn-tree">
                                 {list.into_iter().map(|c| {
-                                    let id = c.id.clone();
+                                    let cid = c.id.clone();
+                                    let selected = RwSignal::new(None::<ObjectAddr>);
+                                    highlights.update_value(|h| { h.retain(|(id, _)| *id != cid); h.push((cid.clone(), selected)); });
+                                    let (id_open, id_toggle, id_tree, id_x, id_active) = (cid.clone(), cid.clone(), cid.clone(), cid.clone(), cid.clone());
+                                    let is_open = Memo::new(move |_| expanded.with(|e| e.contains(&id_open)));
+                                    let name_lc = c.name.to_lowercase();
+                                    let visible = {
+                                        let id = cid.clone();
+                                        move || expanded.with(|e| e.contains(&id)) || filter.with(|f| f.trim().is_empty() || name_lc.contains(&f.trim().to_lowercase()))
+                                    };
+                                    let on_open = Callback::new(move |o: ObjectAddr| {
+                                        highlights.with_value(|h| for (id, sig) in h { if *id != id_tree { sig.set(None); } });
+                                        selected.set(Some(o.clone()));
+                                        current.set(Some((id_tree.clone(), o)));
+                                    });
+                                    let dot = c.color.clone().unwrap_or_default();
+                                    let title = format!("{} · {}", c.name, c.target);
                                     view! {
-                                        <option value=c.id.clone() selected=move || connection.get().as_deref() == Some(id.as_str())>{c.name.clone()}</option>
+                                        <li class="conn-node" class:hidden=move || !visible()>
+                                            <div class="conn-row" class:open=move || is_open.get()
+                                                class:active=move || current.with(|cur| cur.as_ref().is_some_and(|(id, _)| *id == id_active))>
+                                                <button type="button" class="tree-row conn-toggle" title=title aria-expanded=move || is_open.get().to_string()
+                                                    on:click=move |_| expanded.update(|e| if let Some(i) = e.iter().position(|x| *x == id_toggle) { e.remove(i); } else { e.push(id_toggle.clone()); })>
+                                                    <span class="tree-chevron">{move || icon(if is_open.get() { Icon::ChevronDown } else { Icon::ChevronRight })}</span>
+                                                    <span class="conn-dot" style:background-color=dot></span>
+                                                    <span class="tree-name conn-name">{c.name.clone()}</span>
+                                                    {c.favorite.then(|| view! { <span class="conn-fav" title=ui.tr("connections.favorite")>"★"</span> })}
+                                                    {c.read_only.then(|| view! { <span class="tree-count" title=ui.tr("connections.read_only")>"RO"</span> })}
+                                                </button>
+                                                <Show when=move || is_open.get()>
+                                                    {
+                                                        let id = id_x.clone();
+                                                        view! {
+                                                            <button type="button" class="icon-btn conn-x" title=ui.tr("explorer.disconnect") aria-label=ui.tr("explorer.disconnect")
+                                                                on:click=move |_| disconnect(id.clone())>{icon(Icon::Unplug)}</button>
+                                                        }
+                                                    }
+                                                </Show>
+                                            </div>
+                                            {
+                                                let id = cid.clone();
+                                                move || expanded.with(|e| e.contains(&id)).then(|| view! {
+                                                    <TreeLevel connection_id=id.clone() database=None schema=None depth=1 on_open=on_open filter=filter.into() selected=selected />
+                                                })
+                                            }
+                                        </li>
                                     }
                                 }).collect_view()}
-                            </select>
-                            <Show when=move || connection.get().is_some()>
-                                <button type="button" class="icon-btn" title=ui.tr("explorer.disconnect") aria-label=ui.tr("explorer.disconnect") on:click=disconnect>
-                                    {icon(Icon::Unplug)}
-                                </button>
-                            </Show>
-                        </div>
-                    }.into_any(),
-                }}
-                <Show when=move || connection.get().is_some()>
-                    <label class="tree-search">
-                        {icon(Icon::Search)}
-                        <input type="search" placeholder=ui.tr("explorer.find_object") aria-label=ui.tr("explorer.find_object")
-                            prop:value=move || filter.get() on:input=move |e| filter.set(event_target_value(&e)) />
-                    </label>
-                </Show>
-                <nav class="tree" aria-label=ui.tr("explorer.tree")>
-                    {move || connection.get().map(|cid| {
-                        let on_open = Callback::new(move |o: ObjectAddr| {
-                            selected.set(Some(o.clone()));
-                            object.set(Some(o));
-                        });
-                        view! { <TreeLevel connection_id=cid database=None schema=None depth=0 on_open=on_open filter=filter.into() selected=selected /> }
-                    })}
+                            </ul>
+                        }.into_any(),
+                    }}
                 </nav>
             </aside>
             <div class="ws-main">
-                {move || match (connection.get(), object.get()) {
-                    (Some(cid), Some(o)) => view! { <Viewer connection_id=cid object=o /> }.into_any(),
-                    (Some(_), None) => view! {
-                        <div class="ws-empty">{icon(Icon::Table)}<p>{ui.tr("explorer.pick_object")}</p></div>
-                    }.into_any(),
-                    _ => view! {
-                        <div class="ws-empty">{icon(Icon::Database)}<p>{ui.tr("explorer.choose")}</p></div>
+                {move || match current.get() {
+                    Some((cid, o)) => view! { <Viewer connection_id=cid object=o /> }.into_any(),
+                    None => view! {
+                        <div class="ws-empty">
+                            {icon(Icon::Database)}
+                            <p>{move || if expanded.with(Vec::is_empty) { ui.text("explorer.open_connection") } else { ui.text("explorer.pick_object") }}</p>
+                        </div>
                     }.into_any(),
                 }}
             </div>
@@ -778,6 +825,9 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
 
             // Export / import
             {move || transfer.get().map(|direction| view! {
+                <div class="modal-backdrop" on:click=move |_| transfer.set(None)>
+                <div class="modal" role="dialog" aria-modal="true" on:click=|e| e.stop_propagation()
+                    on:keydown=move |e: leptos::ev::KeyboardEvent| if e.key() == "Escape" { transfer.set(None); }>
                 <TransferPanel
                     connection_id=cid.get_value()
                     object=obj.get_value()
@@ -789,6 +839,8 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     on_close=Callback::new(move |_| transfer.set(None))
                     on_imported=Callback::new(move |_| { count.set(None); load(); })
                 />
+                </div>
+                </div>
             })}
 
             // Editor

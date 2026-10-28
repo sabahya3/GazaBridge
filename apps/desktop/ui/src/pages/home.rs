@@ -23,12 +23,13 @@ pub fn HomePage() -> impl IntoView {
     let module = move |s: Section| {
         let available = s.is_available();
         view! {
-            <li class="module" class:module-planned=!available>
-                <span class="nav-icon">{crate::icons::icon(s.icon())}</span>
-                <span>{ui.tr(s.label_key())}</span>
-                <span class="badge" class:badge-ok=available class:badge-muted=!available>
-                    {if available { ui.tr("home.available") } else { ui.tr("home.planned") }}
-                </span>
+            <li>
+                <button type="button" class="module" class:module-planned=!available disabled=!available
+                    on:click=move |_| ui.section.set(s)>
+                    <span class="nav-icon">{crate::icons::icon(s.icon())}</span>
+                    <span>{ui.tr(s.label_key())}</span>
+                    {(!available).then(|| view! { <span class="badge badge-muted">{ui.tr("home.planned")}</span> })}
+                </button>
             </li>
         }
     };
