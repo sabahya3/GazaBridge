@@ -63,6 +63,8 @@ pub mod commands {
     pub const MIGRATION_RESUME: &str = "migration_resume";
     pub const MIGRATION_CANCEL: &str = "migration_cancel";
     pub const MIGRATION_RECENT: &str = "migration_recent";
+    pub const MIGRATION_DRY_RUN: &str = "migration_dry_run";
+    pub const MIGRATION_VALIDATE: &str = "migration_validate";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

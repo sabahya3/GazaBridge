@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use gazabridge_domain::connection::EngineFamily;
 use gazabridge_domain::job::WriteMode;
 use gazabridge_domain::{Record, Value};
+use gazabridge_migration::validate::{Comparison, DiffKind, Level, validate_stream};
 use gazabridge_migration::{
     Checkpoints, EngineError, EngineOptions, RecordErrors, Resume, RetryPolicy, StreamSpec,
     StreamStats, TargetSpec, Transform, Transformed, convert_stream, copy_stream,
@@ -214,6 +215,40 @@ impl Connection for Fake {
         request: ReadRequest,
         _cancel: CancellationToken,
     ) -> ConnectorResult<RecordStream> {
+        if request.object.namespace.database.as_deref() == Some("copy") {
+            // Target lookups (dry runs, validation): `IN` on the key or owner.
+            let Some(Filter::In { field, values }) = request.filter else {
+                panic!("target reads are lookups")
+            };
+            let wanted: BTreeSet<i64> = values
+                .iter()
+                .map(|v| match v {
+                    Value::Int(i) => *i,
+                    _ => panic!(),
+                })
+                .collect();
+            let rows: Vec<Record> = if request.object.name == "lines" {
+                assert_eq!(field.0, "order");
+                self.lines
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|((o, _), _)| wanted.contains(o))
+                    .map(|(_, r)| r.clone())
+                    .collect()
+            } else {
+                self.target
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|(id, _)| wanted.contains(id))
+                    .map(|(_, r)| r.clone())
+                    .collect()
+            };
+            return Ok(Box::pin(futures::stream::iter([Ok(RecordBatch::new(
+                rows, None,
+            ))])));
+        }
         self.reads_opened.fetch_add(1, Ordering::Relaxed);
         if let Some(kind) = self.broken {
             return Err(ConnectorError::new(kind, "refused"));
@@ -340,6 +375,8 @@ fn options() -> EngineOptions {
         },
         on_record_error: RecordErrors::Fail,
         max_records_per_sec: None,
+        dry_run: false,
+        assume_empty_targets: false,
     }
 }
 
@@ -662,4 +699,156 @@ async fn conversions_write_parents_and_children_and_reject_whole_records() {
         !fake.lines.lock().unwrap().contains_key(&(2, 9)),
         "stale child row removed"
     );
+}
+
+#[tokio::test]
+async fn dry_runs_predict_every_outcome_and_write_nothing() {
+    let fake = Arc::new(Fake::new());
+    // The target already holds orders 0..100.
+    fake.apply(&WriteBatch {
+        object: ObjectRef::collection("copy", "orders"),
+        mode: WriteMode::Insert,
+        records: fake.source[..100].to_vec(),
+        key_fields: vec![],
+        atomic: false,
+    });
+    let before = fake.target_ids();
+    let mut opts = options();
+    opts.dry_run = true;
+    for (mode, expect) in [
+        (WriteMode::SkipExisting, (2_400, 0, 100, 0)),
+        (WriteMode::Upsert, (2_400, 100, 0, 0)),
+        (WriteMode::Insert, (2_400, 0, 0, 100)),
+    ] {
+        let saved = Saved::default();
+        let out = copy_stream(
+            fake.clone(),
+            fake.clone(),
+            &spec(mode),
+            &opts,
+            None,
+            CancellationToken::new(),
+            &saved,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        let s = &out.stats;
+        assert_eq!(
+            (s.inserted, s.updated, s.skipped, s.failed),
+            expect,
+            "{mode:?}"
+        );
+        assert_eq!(s.read, 2_500);
+        assert!(saved.0.lock().unwrap().is_empty(), "no checkpoints");
+        assert!(out.quarantine.is_none());
+        if mode == WriteMode::Insert {
+            assert!(
+                out.rejections[0].contains("already holds this key"),
+                "{:?}",
+                out.rejections
+            );
+        }
+    }
+    assert_eq!(fake.target_ids(), before, "nothing written");
+
+    // Records that cannot be converted are reported, children are probed.
+    let out = convert_stream(
+        fake.clone(),
+        fake.clone(),
+        &spec(WriteMode::SkipExisting),
+        &opts,
+        None,
+        CancellationToken::new(),
+        &Saved::default(),
+        &|_| {},
+        Arc::new(Split { replace: false }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.stats.failed, 1, "order 13 cannot be converted");
+    assert!(fake.lines.lock().unwrap().is_empty(), "nothing written");
+}
+
+#[tokio::test]
+async fn validation_finds_missing_changed_and_extra_rows() {
+    let fake = Arc::new(Fake::new());
+    copy_stream(
+        fake.clone(),
+        fake.clone(),
+        &spec(WriteMode::Insert),
+        &options(),
+        None,
+        CancellationToken::new(),
+        &Saved::default(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let identity = || {
+        Arc::new(gazabridge_migration::Identity(TargetSpec {
+            object: ObjectRef::collection("copy", "orders"),
+            key_fields: vec!["_id".into()],
+            owner: None,
+            replace: false,
+        })) as Arc<dyn Transform>
+    };
+    let check = |level| {
+        let fake = fake.clone();
+        let t = identity();
+        async move {
+            validate_stream(
+                fake.clone(),
+                fake,
+                &ObjectRef::collection("shop", "orders"),
+                t,
+                level,
+                Comparison::Exact,
+                700,
+                CancellationToken::new(),
+                &|_| {},
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let v = check(Level::Deep).await;
+    assert!(v.passed, "{v:#?}");
+    assert_eq!(
+        (v.checked, v.targets[0].matched, v.targets[0].chunks),
+        (2_500, 2_500, 4)
+    );
+    assert_eq!(v.targets[0].expected_checksum, v.targets[0].actual_checksum);
+
+    {
+        let mut t = fake.target.lock().unwrap();
+        t.remove(&10);
+        t.insert(
+            20,
+            Record::from_pairs([
+                ("_id", Value::Int(20)),
+                ("n", Value::String("changed".into())),
+            ]),
+        );
+    }
+    let v = check(Level::Deep).await;
+    assert!(!v.passed);
+    let c = &v.targets[0];
+    assert_eq!(
+        (c.missing, c.different, c.matched, c.mismatched_chunks),
+        (1, 1, 2_498, 1)
+    );
+    assert_ne!(c.expected_checksum, c.actual_checksum);
+    let changed = v
+        .differences
+        .iter()
+        .find(|d| d.kind == DiffKind::Different)
+        .unwrap();
+    assert!(
+        changed.detail.as_deref().unwrap().contains("`n`"),
+        "{changed:?}"
+    );
+    // Keys only: the changed content is not looked at.
+    let v = check(Level::Standard).await;
+    assert_eq!((v.targets[0].missing, v.targets[0].different), (1, 0));
 }

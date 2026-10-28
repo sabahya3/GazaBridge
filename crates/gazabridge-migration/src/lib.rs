@@ -20,6 +20,7 @@
 
 mod quarantine;
 pub mod transform;
+pub mod validate;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -113,6 +114,15 @@ pub struct EngineOptions {
     pub on_record_error: RecordErrors,
     /// Throttle, in records per second, to spare a busy server.
     pub max_records_per_sec: Option<u64>,
+    /// Read and convert everything but write nothing: the stats say what
+    /// would be inserted, kept, replaced or rejected. No checkpoints, no
+    /// quarantine file, no deletes.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Dry runs: the targets will be dropped first (replace), so nothing in
+    /// them counts.
+    #[serde(default)]
+    pub assume_empty_targets: bool,
 }
 
 impl Default for EngineOptions {
@@ -123,6 +133,8 @@ impl Default for EngineOptions {
             retry: RetryPolicy::default(),
             on_record_error: RecordErrors::Fail,
             max_records_per_sec: None,
+            dry_run: false,
+            assume_empty_targets: false,
         }
     }
 }
@@ -360,6 +372,21 @@ impl Writer<'_> {
                 .collect();
             let mut rows_by_target = out.rows;
             rows_by_target.resize_with(self.targets.len(), Vec::new);
+            if self.options.dry_run {
+                self.probe(&records, source_keys, rows_by_target, &mut rejected)
+                    .await?;
+                self.stats.failed += rejected.len() as u64;
+                for m in rejected.values() {
+                    if self.rejections.len() < MAX_REJECTIONS {
+                        self.rejections.push(m.clone());
+                    }
+                }
+                self.stats.read += records.len() as u64;
+                self.stats.bytes += batch.approx_bytes;
+                self.position = batch.position.clone();
+                (self.on_progress)(&self.stats);
+                continue;
+            }
             // Source records with rows already written, per target.
             let mut written: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); self.targets.len()];
             for (t, rows) in rows_by_target.into_iter().enumerate() {
@@ -517,6 +544,54 @@ impl Writer<'_> {
 }
 
 impl Writer<'_> {
+    /// Dry runs: classifies each row by whether its key already exists in
+    /// the target, the way the write mode would treat it.
+    async fn probe(
+        &mut self,
+        records: &[Record],
+        source_keys: &[String],
+        rows_by_target: Vec<Vec<(usize, Record)>>,
+        rejected: &mut BTreeMap<usize, String>,
+    ) -> Result<(), EngineError> {
+        for (t, rows) in rows_by_target.into_iter().enumerate() {
+            let target = self.targets[t].clone();
+            let rows: Vec<(usize, Record)> = rows
+                .into_iter()
+                .filter(|(i, _)| !rejected.contains_key(i))
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            let existing = if self.options.assume_empty_targets {
+                std::collections::HashMap::new()
+            } else {
+                let refs: Vec<&Record> = rows.iter().map(|(_, r)| r).collect();
+                validate::fetch_existing(self.target.as_ref(), &target, &refs)
+                    .await
+                    .map_err(EngineError::Target)?
+            };
+            for (src, r) in &rows {
+                let exists = existing.contains_key(&validate::key_of(r, &target.key_fields));
+                match (self.spec.mode, exists) {
+                    (_, false) => self.stats.inserted += 1,
+                    (WriteMode::SkipExisting, true) => self.stats.skipped += 1,
+                    (WriteMode::Upsert, true) => self.stats.updated += 1,
+                    (_, true) => {
+                        rejected.entry(*src).or_insert_with(|| {
+                            describe(
+                                records,
+                                source_keys,
+                                *src,
+                                &format!("`{}` already holds this key", target.object),
+                            )
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Applies the transform, retrying transient failures. `None` when
     /// stopped while waiting to retry.
     async fn transform(

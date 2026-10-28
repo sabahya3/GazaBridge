@@ -22,6 +22,7 @@ use gazabridge_domain::job::JobStatus;
 use gazabridge_domain::{Record, Value};
 use gazabridge_mapping::doc_to_table::DocMode;
 use gazabridge_mapping::table_to_doc::TableMode;
+use gazabridge_migration::validate::Level;
 use gazabridge_plugin_sdk::Connection;
 use gazabridge_plugin_sdk::capability::QueryLanguage;
 use gazabridge_plugin_sdk::query::QueryRequest;
@@ -159,6 +160,19 @@ async fn finish(m: &MigrationService, run: RunId) -> RunView {
             return v;
         }
         assert!(Instant::now() < deadline, "timed out: {v:#?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn validated(m: &MigrationService, run: RunId) -> gazabridge_application::ValidationReport {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if let Some(v) = m.view(run).await.unwrap().validation
+            && !v.running
+        {
+            return v;
+        }
+        assert!(Instant::now() < deadline, "validation timed out");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -359,6 +373,36 @@ async fn mongodb_and_postgresql_convert_both_ways() {
     );
     assert_eq!(scalar(&pgc, "SELECT count(*) FROM pg_indexes WHERE indexname IN ('customers_email_unique', 'customers_by_city')").await, Value::Int(2));
 
+    // Deep validation across engines: every row of every table, by key.
+    let first = run;
+    m.validate(first, Level::Deep).await.unwrap();
+    let deep = validated(m, first).await;
+    let s0 = &deep.streams[0];
+    assert!(s0.passed, "{s0:#?}");
+    assert_eq!(s0.targets.len(), 3);
+    assert_eq!(s0.targets[0].matched, 200);
+    assert_eq!(s0.targets[2].matched, orders as u64);
+    // A child row changed in PostgreSQL is found.
+    sql(&pgc, "UPDATE customers_orders SET qty = 99 WHERE _index = 0 AND _parent_id = (SELECT _id FROM customers WHERE email = 'c5@example.test')").await;
+    sql(&pgc, "INSERT INTO customers_tags (_parent_id, _index, value) SELECT _id, 50, 'stale' FROM customers WHERE email = 'c5@example.test'").await;
+    m.validate(first, Level::Deep).await.unwrap();
+    let deep = validated(m, first).await;
+    let s0 = &deep.streams[0];
+    assert!(!s0.passed);
+    assert_eq!(
+        (s0.targets[2].different, s0.targets[1].extra),
+        (1, 1),
+        "{s0:#?}"
+    );
+    assert!(
+        s0.differences
+            .iter()
+            .any(|d| d.detail.as_deref().is_some_and(|x| x.contains("`qty`"))),
+        "{:?}",
+        s0.differences
+    );
+    sql(&pgc, "DELETE FROM customers_tags WHERE _index = 50").await;
+
     // Running again keeps everything as is (skip existing, by key).
     let run = m.start(req.clone(), false).await.unwrap();
     let v = finish(m, run).await;
@@ -396,6 +440,18 @@ async fn mongodb_and_postgresql_convert_both_ways() {
         }],
     );
     to_jsonb.doc_mode = DocMode::Jsonb;
+    // A dry run into a new schema creates nothing.
+    let tables_before = sql(&pgc, "SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')").await;
+    let dry = finish(m, m.dry_run(to_jsonb.clone()).await.unwrap()).await;
+    assert_eq!(dry.status, JobStatus::Completed, "{dry:#?}");
+    assert_eq!(dry.streams[0].stats.inserted, 200);
+    assert_eq!(sql(&pgc, "SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')").await, tables_before);
+    assert!(
+        sql(&pgc, "SELECT 1 FROM pg_namespace WHERE nspname = 'raw'")
+            .await
+            .is_empty(),
+        "no schema created"
+    );
     let v = finish(m, m.start(to_jsonb, false).await.unwrap()).await;
     assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
     assert_eq!(scalar(&pgc, "SELECT doc->'address'->>'city' FROM raw.customers WHERE doc->>'email' = 'c2@example.test'").await, Value::String("Gaza".into()));
@@ -418,7 +474,8 @@ async fn mongodb_and_postgresql_convert_both_ways() {
             .iter()
             .any(|w| w.contains("restored as stored"))
     );
-    let v = finish(m, m.start(back, false).await.unwrap()).await;
+    let back_run = m.start(back, false).await.unwrap();
+    let v = finish(m, back_run).await;
     assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
     // Same documents and types (ObjectId, Int32, Decimal128, dates); JSONB
     // does not keep key order, so documents compare field by field.
@@ -461,7 +518,8 @@ async fn mongodb_and_postgresql_convert_both_ways() {
         "{}",
         plan.items[0].documents[0]
     );
-    let v = finish(m, m.start(embed, false).await.unwrap()).await;
+    let embed_run = m.start(embed, false).await.unwrap();
+    let v = finish(m, embed_run).await;
     assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
     let buyers = all(&mongo, "fromsql", "buyers").await;
     assert_eq!(buyers.len(), 150);
@@ -500,6 +558,13 @@ async fn mongodb_and_postgresql_convert_both_ways() {
         .await
         .unwrap();
     assert!(idx.contains(&"buyers_name".to_owned()), "{idx:?}");
+
+    // Rows → documents are validated too, embedded children included.
+    for run in [back_run, embed_run] {
+        m.validate(run, Level::Deep).await.unwrap();
+        let deep = validated(m, run).await;
+        assert_eq!(deep.passed, Some(true), "{deep:#?}");
+    }
 
     // Tables without a primary key are refused (no safe resume).
     let plan = m

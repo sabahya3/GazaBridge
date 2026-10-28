@@ -1047,3 +1047,10 @@ button.module:disabled { cursor: default; color: var(--muted); background: var(-
   .mig-grid { grid-template-columns: minmax(0, 1fr); }
   .mig-arrow { padding: 0; justify-self: center; transform: rotate(90deg); }
 }
+.mig-dry-note { background: var(--info-bg); color: var(--info); padding: 8px 10px; border-radius: var(--radius); }
+.mig-validation { margin-block-start: 14px; border-block-start: 1px solid var(--border); padding-block-start: 10px; }
+.mig-validation h3 { margin: 0 0 4px; font-size: 15px; }
+.mig-val-head { display: flex; gap: 10px; align-items: center; margin-block: 8px; }
+.mig-val-stream { display: grid; gap: 6px; margin-block: 10px; }
+.mig-val-stream .grid-wrap { max-block-size: 30vh; }
+.mig-diffs { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4px; max-block-size: 240px; overflow: auto; }

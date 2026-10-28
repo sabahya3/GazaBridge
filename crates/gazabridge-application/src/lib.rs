@@ -16,7 +16,7 @@ pub use explorer::{
 };
 pub use migration::{
     CopyItem, ExistingData, MigrationPlan, MigrationRequest, MigrationService, OnRecordError,
-    PlanItem, RunView, StreamPhase, StreamView,
+    PlanItem, RunView, StreamPhase, StreamView, ValidationReport,
 };
 pub use profiled::ProfiledConnection;
 pub use query::{QueryContext, QueryInput, QueryRisk, QueryService};

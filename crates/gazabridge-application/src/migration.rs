@@ -23,9 +23,10 @@ use gazabridge_domain::ids::{ConnectionId, RunId};
 use gazabridge_domain::job::{JobKind, JobStatus, WriteMode};
 use gazabridge_mapping::doc_to_table::{DocMode, TablePreview};
 use gazabridge_mapping::table_to_doc::TableMode;
+use gazabridge_migration::validate::{Comparison, Level, StreamValidation, validate_stream};
 use gazabridge_migration::{
-    Checkpoints, EngineOptions, RecordErrors, Resume, RetryPolicy, StreamSpec, StreamStats,
-    convert_stream, copy_stream,
+    Checkpoints, EngineOptions, Identity, RecordErrors, Resume, RetryPolicy, StreamSpec,
+    StreamStats, TargetSpec, Transform, convert_stream, copy_stream,
 };
 use gazabridge_plugin_sdk::connector::{Connection, InspectOptions};
 use gazabridge_plugin_sdk::ddl::{IndexDefinition, SchemaOperation};
@@ -226,6 +227,23 @@ pub struct RunView {
     pub ended_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
     pub events: Vec<RunEventView>,
+    /// Read and converted everything, wrote nothing.
+    pub dry_run: bool,
+    /// The latest validation of this run (live while it runs).
+    pub validation: Option<ValidationReport>,
+}
+
+/// Source and target compared after a copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidationReport {
+    pub level: Level,
+    pub running: bool,
+    /// `None` while running.
+    pub passed: Option<bool>,
+    pub streams: Vec<StreamValidation>,
+    pub error: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,6 +265,7 @@ pub struct MigrationService {
     redactor: gazabridge_secrets::Redactor,
     quarantine_dir: PathBuf,
     active: Arc<Mutex<HashMap<RunId, Handle>>>,
+    validations: Arc<Mutex<HashMap<RunId, ValidationReport>>>,
 }
 
 impl std::fmt::Debug for MigrationService {
@@ -375,6 +394,7 @@ impl MigrationService {
             redactor,
             quarantine_dir,
             active: Arc::default(),
+            validations: Arc::default(),
         }
     }
 
@@ -604,6 +624,22 @@ impl MigrationService {
         req: MigrationRequest,
         confirm_destructive: bool,
     ) -> AppResult<RunId> {
+        self.launch(req, confirm_destructive, false).await
+    }
+
+    /// Reads and converts everything without writing: what would be
+    /// inserted, kept, replaced, or rejected and why. Nothing is created or
+    /// dropped either.
+    pub async fn dry_run(&self, req: MigrationRequest) -> AppResult<RunId> {
+        self.launch(req, true, true).await
+    }
+
+    async fn launch(
+        &self,
+        req: MigrationRequest,
+        confirm_destructive: bool,
+        dry_run: bool,
+    ) -> AppResult<RunId> {
         let (plan, mappings) = self.prepare(&req).await?;
         if let Some(b) = plan.blockers.first() {
             return Err(AppError::Invalid(b.clone()));
@@ -624,7 +660,8 @@ impl MigrationService {
             .unwrap_or_else(|| {
                 let db = |o: &ObjectRef| o.namespace.database.clone().unwrap_or_default();
                 format!(
-                    "Copy {} → {} · {}",
+                    "{} {} → {} · {}",
+                    if dry_run { "Dry run" } else { "Copy" },
                     db(&req.items[0].source),
                     db(&req.items[0].target),
                     Utc::now().format("%Y-%m-%d %H:%M:%S")
@@ -647,7 +684,7 @@ impl MigrationService {
         let run = jobs
             .create_run(NewRun {
                 job_id: job.id,
-                dry_run: false,
+                dry_run,
                 definition_snapshot: definition,
                 config_fingerprint: fingerprint,
                 mapping_version: None,
@@ -660,16 +697,25 @@ impl MigrationService {
             .await?;
         jobs.transition_run(run.id, JobStatus::Running).await?;
         self.audit(
-            "migration.start",
+            if dry_run { "migration.dry_run" } else { "migration.start" },
             &run,
-            format!("Started copying {} collection(s)", req.items.len()),
+            format!(
+                "Started {} {} collection(s)",
+                if dry_run { "a dry run of" } else { "copying" },
+                req.items.len()
+            ),
             serde_json::json!({
                 "items": req.items.iter().map(|i| format!("{} → {}", i.source, i.target)).collect::<Vec<_>>(),
                 "existing": req.existing, "destructive": plan.destructive,
             }),
         )
         .await?;
-        self.event(run.id, EventLevel::Info, "started", None, "Copy started")
+        let started = if dry_run {
+            "Dry run started: everything is read and converted, nothing is written"
+        } else {
+            "Copy started"
+        };
+        self.event(run.id, EventLevel::Info, "started", None, started)
             .await;
         let run_id = run.id;
         self.spawn(run, req, mappings, HashMap::new());
@@ -683,6 +729,11 @@ impl MigrationService {
         }
         let jobs = self.store.jobs();
         let run = jobs.require_run(run_id).await?;
+        if run.dry_run {
+            return Err(AppError::Invalid(
+                "a dry run is not resumed; start a new one".into(),
+            ));
+        }
         let RunDefinition {
             request: req,
             mappings,
@@ -957,7 +1008,7 @@ impl MigrationService {
             v.phase = StreamPhase::Preparing;
         });
         // Target preparation happens once, before the first checkpoint.
-        if saved.is_none() {
+        if saved.is_none() && !run.dry_run {
             let ops = mapping.prepare_ops(item, req.existing);
             if let Err(e) = target.apply_ddl(&ops, CancellationToken::new()).await {
                 let m = fail(format!("preparing {}: {e}", item.target));
@@ -967,7 +1018,9 @@ impl MigrationService {
             }
         }
         // Indexes are read before copying so a later failure still reports them.
-        let indexes = if *mapping != ItemMapping::Copy {
+        let indexes = if run.dry_run {
+            Vec::new()
+        } else if *mapping != ItemMapping::Copy {
             if req.copy_indexes {
                 mapping.index_ops(item)
             } else {
@@ -1013,6 +1066,8 @@ impl MigrationService {
                 },
             },
             max_records_per_sec: req.max_records_per_sec,
+            dry_run: run.dry_run,
+            assume_empty_targets: run.dry_run && req.existing == ExistingData::Replace,
         };
         let spec = StreamSpec {
             key: key.clone(),
@@ -1140,15 +1195,16 @@ impl MigrationService {
             indexes_created: created,
             quarantine: quarantine.clone(),
         };
-        if let Err(e) = checkpoint(
-            &self.store,
-            run.id,
-            &run.config_fingerprint,
-            &key,
-            &done,
-            true,
-        )
-        .await
+        if !run.dry_run
+            && let Err(e) = checkpoint(
+                &self.store,
+                run.id,
+                &run.config_fingerprint,
+                &key,
+                &done,
+                true,
+            )
+            .await
         {
             let m = fail(format!("saving the final checkpoint: {e}"));
             return StreamEnd::Failed(m);
@@ -1163,7 +1219,8 @@ impl MigrationService {
             "stream_done",
             Some(&key),
             &format!(
-                "{} → {}: {} inserted, {} updated, {} kept, {} rejected, {created} index(es)",
+                "{}{} → {}: {} inserted, {} updated, {} kept, {} rejected, {created} index(es)",
+                if run.dry_run { "Would write: " } else { "" },
                 item.source,
                 item.target,
                 outcome.stats.inserted,
@@ -1219,8 +1276,15 @@ impl MigrationService {
             }
         }
         let status = jobs.require_run(run.id).await.map(|r| r.status);
+        if run.dry_run && matches!(status, Ok(JobStatus::Completed)) {
+            let _ = jobs.mark_dry_run_passed(run.job_id).await;
+        }
         let summary = match &status {
-            Ok(s) => format!("Copy of {} collection(s) ended: {s}", req.items.len()),
+            Ok(s) => format!(
+                "{} of {} collection(s) ended: {s}",
+                if run.dry_run { "Dry run" } else { "Copy" },
+                req.items.len()
+            ),
             Err(_) => "Copy ended".into(),
         };
         self.event(
@@ -1240,9 +1304,163 @@ impl MigrationService {
                 "migration.finish",
                 run,
                 summary,
-                serde_json::json!({ "status": status.ok(), "error": failure }),
+                serde_json::json!({ "status": status.as_ref().ok(), "error": failure }),
             )
             .await;
+        // Counts are cheap: every finished copy is checked at least this far.
+        if !run.dry_run
+            && matches!(
+                status,
+                Ok(JobStatus::Completed | JobStatus::CompletedWithWarnings)
+            )
+        {
+            self.run_validation(run, Level::Basic).await;
+        }
+    }
+
+    /// Compares a run's sources with its targets in the background; follow
+    /// it with [`Self::view`].
+    pub async fn validate(&self, run_id: RunId, level: Level) -> AppResult<()> {
+        if self.is_active(run_id) {
+            return Err(AppError::Invalid("wait until the copy has stopped".into()));
+        }
+        let run = self.store.jobs().require_run(run_id).await?;
+        if run.dry_run {
+            return Err(AppError::Invalid(
+                "a dry run wrote nothing to validate".into(),
+            ));
+        }
+        // Registered before returning, so the next view already shows it.
+        {
+            let mut v = self
+                .validations
+                .lock()
+                .map_err(|_| AppError::Invalid("state lock poisoned".into()))?;
+            if v.contains_key(&run_id) {
+                return Err(AppError::Invalid("a validation is already running".into()));
+            }
+            v.insert(run_id, Self::running_report(level));
+        }
+        let svc = self.clone();
+        tokio::spawn(async move {
+            svc.run_validation(&run, level).await;
+        });
+        Ok(())
+    }
+
+    fn running_report(level: Level) -> ValidationReport {
+        ValidationReport {
+            level,
+            running: true,
+            passed: None,
+            streams: Vec::new(),
+            error: None,
+            started_at: Utc::now(),
+            ended_at: None,
+        }
+    }
+
+    async fn run_validation(&self, run: &RunRecord, level: Level) -> ValidationReport {
+        let mut report = Self::running_report(level);
+        if let Ok(mut v) = self.validations.lock() {
+            v.entry(run.id).or_insert_with(|| report.clone());
+        }
+        let result = self.compare(run, level).await;
+        report = self
+            .validations
+            .lock()
+            .ok()
+            .and_then(|mut v| v.remove(&run.id))
+            .unwrap_or(report);
+        report.running = false;
+        report.ended_at = Some(Utc::now());
+        match result {
+            Ok(streams) => {
+                report.passed = Some(streams.iter().all(|s| s.passed));
+                report.streams = streams;
+            }
+            Err(e) => {
+                report.passed = Some(false);
+                report.error = Some(self.redactor.scrub(&e.to_string()));
+            }
+        }
+        if let Ok(json) = serde_json::to_value(&report) {
+            let _ = self.store.jobs().set_run_validation(run.id, &json).await;
+        }
+        let level_name = serde_json::to_value(level)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let (lvl, message) = match (&report.error, report.passed) {
+            (Some(e), _) => (
+                EventLevel::Error,
+                format!("Validation ({level_name}) failed: {e}"),
+            ),
+            (None, Some(true)) => (
+                EventLevel::Info,
+                format!("Validation ({level_name}) passed"),
+            ),
+            _ => (
+                EventLevel::Warning,
+                format!("Validation ({level_name}) found differences"),
+            ),
+        };
+        self.event(run.id, lvl, "validated", None, &message).await;
+        report
+    }
+
+    async fn compare(&self, run: &RunRecord, level: Level) -> AppResult<Vec<StreamValidation>> {
+        let def = RunDefinition::parse(&run.definition_snapshot)?;
+        let req = &def.request;
+        let source = self.explorer.session(req.source).await?;
+        let target = self.explorer.session(req.target).await?;
+        let mut out = Vec::new();
+        for (i, item) in req.items.iter().enumerate() {
+            let mapping = def.mappings.get(i).cloned().unwrap_or(ItemMapping::Copy);
+            if matches!(mapping, ItemMapping::Embedded { .. }) {
+                continue;
+            }
+            let (transform, how): (Arc<dyn Transform>, Comparison) =
+                match mapping.transform(req.existing, source.clone()) {
+                    Some(t) => (t, Comparison::Normalized),
+                    None => (
+                        Arc::new(Identity(TargetSpec {
+                            object: item.target.clone(),
+                            key_fields: vec!["_id".into()],
+                            owner: None,
+                            replace: false,
+                        })),
+                        Comparison::Exact,
+                    ),
+                };
+            let live = self.validations.clone();
+            let (run_id, slot) = (run.id, out.len());
+            let on_progress = move |sv: &StreamValidation| {
+                if let Ok(mut m) = live.lock()
+                    && let Some(r) = m.get_mut(&run_id)
+                {
+                    if r.streams.len() <= slot {
+                        r.streams.push(sv.clone());
+                    } else {
+                        r.streams[slot] = sv.clone();
+                    }
+                }
+            };
+            let v = validate_stream(
+                source.clone(),
+                target.clone(),
+                &item.source,
+                transform,
+                level,
+                how,
+                req.batch_size.clamp(1, 5_000),
+                CancellationToken::new(),
+                &on_progress,
+            )
+            .await?;
+            out.push(v);
+        }
+        Ok(out)
     }
 
     /// Live progress of a running copy, or the recorded state of an old one.
@@ -1288,6 +1506,17 @@ impl MigrationService {
             ended_at: run.ended_at,
             error: run.error_summary,
             events,
+            dry_run: run.dry_run,
+            validation: self
+                .validations
+                .lock()
+                .ok()
+                .and_then(|v| v.get(&run_id).cloned())
+                .or_else(|| {
+                    run.validation
+                        .as_ref()
+                        .and_then(|j| serde_json::from_value(j.clone()).ok())
+                }),
         })
     }
 

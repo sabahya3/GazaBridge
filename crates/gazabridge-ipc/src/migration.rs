@@ -139,6 +139,63 @@ pub struct RunDto {
     pub ended_at: Option<String>,
     pub error: Option<String>,
     pub events: Vec<RunEventDto>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub validation: Option<ValidationDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidateArgs {
+    pub run_id: String,
+    /// `basic` (counts), `standard` (keys) or `deep` (content).
+    pub level: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DifferenceDto {
+    pub target: String,
+    pub key: String,
+    /// `missing`, `extra` or `different`.
+    pub kind: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetCheckDto {
+    pub target: ObjectAddr,
+    pub expected: u64,
+    pub matched: u64,
+    pub missing: u64,
+    pub extra: u64,
+    pub different: u64,
+    pub chunks: u64,
+    pub mismatched_chunks: u64,
+    pub expected_checksum: Option<String>,
+    pub actual_checksum: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamValidationDto {
+    pub source: ObjectAddr,
+    pub source_count: Option<u64>,
+    pub target_count: Option<u64>,
+    /// Both counts are exact (not estimates).
+    pub counts_exact: bool,
+    pub checked: u64,
+    pub passed: bool,
+    pub notes: Vec<String>,
+    pub targets: Vec<TargetCheckDto>,
+    pub differences: Vec<DifferenceDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidationDto {
+    pub level: String,
+    pub running: bool,
+    pub passed: Option<bool>,
+    pub error: Option<String>,
+    pub streams: Vec<StreamValidationDto>,
 }
 
 impl RunDto {

@@ -10,17 +10,20 @@ publish.workspace = true
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true
+gazabridge-bson.workspace = true
 gazabridge-domain.workspace = true
 gazabridge-files.workspace = true
 gazabridge-plugin-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+bigdecimal.workspace = true
 tempfile.workspace = true
 
 [lints]

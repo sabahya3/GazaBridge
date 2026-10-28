@@ -2232,6 +2232,7 @@ dependencies = [
  "gazabridge-files",
  "gazabridge-ipc",
  "gazabridge-mapping",
+ "gazabridge-migration",
  "gazabridge-observability",
  "gazabridge-plugin-sdk",
  "gazabridge-query",
@@ -2316,12 +2317,15 @@ name = "gazabridge-migration"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bigdecimal",
  "futures",
+ "gazabridge-bson",
  "gazabridge-domain",
  "gazabridge-files",
  "gazabridge-plugin-sdk",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

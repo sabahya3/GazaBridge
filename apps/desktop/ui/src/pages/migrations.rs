@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gazabridge_ipc::{
     ConnectionSummary, CopyItemDto, ExplorerListArgs, MigrationArgs, MigrationPlanDto, NodeDto,
-    ObjectAddr, RunArgs, RunDto, StreamDto, commands,
+    ObjectAddr, RunArgs, RunDto, StreamDto, ValidateArgs, ValidationDto, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -367,7 +367,15 @@ pub fn MigrationsPage() -> impl IntoView {
             spawn_local(async move {
                 match call::<_, RunDto>(commands::MIGRATION_STATUS, &Wrap { args: &args }).await {
                     Ok(r) => {
-                        let settled = !r.is_active();
+                        // Keep following while a check runs, and until a
+                        // finished copy's automatic count check is saved.
+                        let finished =
+                            matches!(r.status.as_str(), "completed" | "completed_with_warnings");
+                        let checking = match &r.validation {
+                            Some(v) => v.running,
+                            None => finished && !r.dry_run,
+                        };
+                        let settled = !r.is_active() && !checking;
                         run.set(Some(r));
                         if settled {
                             if let Some(h) = poll_handle.get_value() {
@@ -402,6 +410,34 @@ pub fn MigrationsPage() -> impl IntoView {
                     follow(id);
                     load_history();
                 }
+                Err(e) => message.set(Some(e.message)),
+            }
+        });
+    };
+
+    let dry_run = move |_| {
+        message.set(None);
+        let a = args(false);
+        spawn_local(async move {
+            match call::<_, String>(commands::MIGRATION_DRY_RUN, &Wrap { args: &a }).await {
+                Ok(id) => {
+                    follow(id);
+                    load_history();
+                }
+                Err(e) => message.set(Some(e.message)),
+            }
+        });
+    };
+
+    let check = move |run_id: String, level: &'static str| {
+        message.set(None);
+        let args = ValidateArgs {
+            run_id: run_id.clone(),
+            level: level.into(),
+        };
+        spawn_local(async move {
+            match call::<_, ()>(commands::MIGRATION_VALIDATE, &Wrap { args: &args }).await {
+                Ok(()) => follow(run_id),
                 Err(e) => message.set(Some(e.message)),
             }
         });
@@ -503,6 +539,90 @@ pub fn MigrationsPage() -> impl IntoView {
                     <span class="muted small">{ui.tr(help)}</span>
                 </span>
             </label>
+        }
+    };
+
+    let validation_view = move |v: ValidationDto| {
+        let (class, label) = match (v.running, v.passed) {
+            (true, _) => ("status status-info", ui.text("mig.val_running")),
+            (false, Some(true)) => ("status status-ok", ui.text("mig.val_passed")),
+            _ => ("status status-error", ui.text("mig.val_failed")),
+        };
+        let level = ui.text(match v.level.as_str() {
+            "basic" => "mig.check_basic",
+            "standard" => "mig.check_standard",
+            _ => "mig.check_deep",
+        });
+        view! {
+            <div class="mig-val-head">
+                <span class=class>{label}</span>
+                <span class="muted small">{level}</span>
+            </div>
+            {v.error.clone().map(|e| view! { <p class="error-detail">{e}</p> })}
+            {v.streams.into_iter().map(|s| {
+                let counts = format!(
+                    "{}: {} · {}: {}{}",
+                    ui.text("mig.val_source"),
+                    s.source_count.map_or_else(|| "?".into(), num),
+                    ui.text("mig.val_target"),
+                    s.target_count.map_or_else(|| "?".into(), num),
+                    if s.counts_exact { String::new() } else { format!(" ({})", ui.text("mig.val_estimate")) }
+                );
+                view! {
+                    <div class="mig-val-stream" class:failed=!s.passed>
+                        <div class="mig-stream-head">
+                            <span class="mono"><bdi>{s.source.display()}</bdi></span>
+                            <span class="small">{if s.passed { "✓" } else { "✗" }}" "{counts}</span>
+                        </div>
+                        {(!s.targets.is_empty() && s.targets.iter().any(|t| t.expected > 0)).then(|| view! {
+                            <div class="grid-wrap">
+                                <table class="grid">
+                                    <thead><tr>
+                                        <th>{ui.tr("mig.val_table")}</th>
+                                        <th>{ui.tr("mig.val_expected")}</th>
+                                        <th>{ui.tr("mig.val_matched")}</th>
+                                        <th>{ui.tr("mig.val_missing")}</th>
+                                        <th>{ui.tr("mig.val_extra")}</th>
+                                        <th>{ui.tr("mig.val_different")}</th>
+                                        <th>{ui.tr("mig.val_chunks")}</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        {s.targets.iter().map(|t| {
+                                            let sums = match (&t.expected_checksum, &t.actual_checksum) {
+                                                (Some(a), Some(b)) => format!("SHA-256 {}… {}", a.get(..12).unwrap_or(a), if a == b { "=" } else { "≠" }),
+                                                _ => String::new(),
+                                            };
+                                            view! {
+                                                <tr>
+                                                    <td class="mono"><bdi>{t.target.display()}</bdi><div class="muted small">{sums}</div></td>
+                                                    <td>{num(t.expected)}</td>
+                                                    <td>{num(t.matched)}</td>
+                                                    <td class:finding-warning={t.missing > 0}>{num(t.missing)}</td>
+                                                    <td class:finding-warning={t.extra > 0}>{num(t.extra)}</td>
+                                                    <td class:finding-warning={t.different > 0}>{num(t.different)}</td>
+                                                    <td>{format!("{} / {}", num(t.mismatched_chunks), num(t.chunks))}</td>
+                                                </tr>
+                                            }
+                                        }).collect_view()}
+                                    </tbody>
+                                </table>
+                            </div>
+                        })}
+                        {s.notes.iter().map(|n| view! { <p class="small finding-warning">{n.clone()}</p> }).collect_view()}
+                        {(!s.differences.is_empty()).then(|| view! {
+                            <details class="small">
+                                <summary>{format!("{} ({})", ui.text("mig.val_differences"), s.differences.len())}</summary>
+                                <ul class="mono mig-diffs">{s.differences.iter().map(|d| view! {
+                                    <li><strong>{ui.text(match d.kind.as_str() { "missing" => "mig.val_missing", "extra" => "mig.val_extra", _ => "mig.val_different" })}</strong>
+                                        " "<bdi>{d.target.clone()}</bdi>" "<bdi>{d.key.clone()}</bdi>
+                                        {d.detail.clone().map(|x| view! { <div class="muted">{x}</div> })}
+                                    </li>
+                                }).collect_view()}</ul>
+                            </details>
+                        })}
+                    </div>
+                }
+            }).collect_view()}
         }
     };
 
@@ -815,6 +935,9 @@ pub fn MigrationsPage() -> impl IntoView {
                         </div>
                     })}
                     <div class="toolbar">
+                        <button type="button" class="btn btn-secondary" disabled=move || !plan.get().is_some_and(|p| p.blockers.is_empty()) || run.get().is_some_and(|r| r.is_active()) on:click=dry_run>
+                            {icon(Icon::Eye)}" "{ui.tr("mig.dry_run")}
+                        </button>
                         <button type="button" class="btn" class:btn-danger=p.destructive disabled=move || !can_start() on:click=start>
                             {icon(Icon::Play)}" "{ui.tr("mig.start")}
                         </button>
@@ -826,14 +949,20 @@ pub fn MigrationsPage() -> impl IntoView {
             {move || run.get().map(|r| {
                 let (id1, id2, id3) = (r.run_id.clone(), r.run_id.clone(), r.run_id.clone());
                 let active = r.is_active();
-                let resumable = r.can_resume();
+                let resumable = r.can_resume() && !r.dry_run;
+                let finished = matches!(r.status.as_str(), "completed" | "completed_with_warnings");
+                let checkable = finished && !r.dry_run;
+                let checking = r.validation.as_ref().is_some_and(|v| v.running);
+                let (c1, c2, c3) = (r.run_id.clone(), r.run_id.clone(), r.run_id.clone());
                 let paused = r.status == "paused";
                 view! {
                     <section class="card mig-run" aria-labelledby="mig-run-title">
                         <div class="mig-run-head">
                             <h2 id="mig-run-title"><bdi>{r.name.clone()}</bdi></h2>
                             <span class=status_class(&r.status)>{ui.tr(status_key(&r.status))}</span>
+                            {r.dry_run.then(|| view! { <span class="status status-info">{ui.tr("mig.dry_run_badge")}</span> })}
                         </div>
+                        {r.dry_run.then(|| view! { <p class="small mig-dry-note">{ui.tr("mig.dry_run_note")}</p> })}
                         <p class="muted small">{format!("{} → {}", conn_name(&r.source_connection_id), conn_name(&r.target_connection_id))}</p>
                         {r.error.clone().map(|e| view! { <p class="error-detail">{e}</p> })}
                         <ul class="mig-streams">{r.streams.clone().into_iter().map(stream_row).collect_view()}</ul>
@@ -852,6 +981,18 @@ pub fn MigrationsPage() -> impl IntoView {
                             })}
                         </div>
                         {resumable.then(|| view! { <p class="muted small">{ui.tr("mig.resume_help")}</p> })}
+                        {checkable.then(|| view! {
+                            <section class="mig-validation" aria-labelledby="mig-val-title">
+                                <h3 id="mig-val-title">{ui.tr("mig.check_title")}</h3>
+                                <div class="toolbar">
+                                    <button type="button" class="btn btn-secondary btn-sm" disabled=checking on:click=move |_| check(c1.clone(), "basic")>{ui.tr("mig.check_basic")}</button>
+                                    <button type="button" class="btn btn-secondary btn-sm" disabled=checking on:click=move |_| check(c2.clone(), "standard")>{ui.tr("mig.check_standard")}</button>
+                                    <button type="button" class="btn btn-sm" disabled=checking on:click=move |_| check(c3.clone(), "deep")>{ui.tr("mig.check_deep")}</button>
+                                </div>
+                                <p class="muted small">{ui.tr("mig.check_help")}</p>
+                                {r.validation.clone().map(validation_view)}
+                            </section>
+                        })}
                         {(!r.events.is_empty()).then(|| view! {
                             <details class="small" open=!active>
                                 <summary>{ui.tr("mig.events")}</summary>
@@ -885,7 +1026,7 @@ pub fn MigrationsPage() -> impl IntoView {
                                         let copied: u64 = h.streams.iter().map(StreamDto::processed).sum();
                                         view! {
                                             <tr>
-                                                <td><bdi>{h.name.clone()}</bdi><div class="muted small">{format!("{} {}", h.streams.len(), ui.text("mig.collections"))}</div></td>
+                                                <td><bdi>{h.name.clone()}</bdi>{h.dry_run.then(|| view! { " " <span class="status status-info">{ui.tr("mig.dry_run_badge")}</span> })}<div class="muted small">{format!("{} {}", h.streams.len(), ui.text("mig.collections"))}</div></td>
                                                 <td><span class=status_class(&h.status)>{ui.tr(status_key(&h.status))}</span></td>
                                                 <td>{num(copied)}</td>
                                                 <td class="small">{short_time(&h.created_at)}</td>

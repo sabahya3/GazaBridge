@@ -1,15 +1,18 @@
 //! Copying collections between connections.
 
+use gazabridge_application::ValidationReport;
 use gazabridge_application::{
     CopyItem, ExistingData, MigrationPlan, MigrationRequest, OnRecordError, RunView, StreamView,
 };
 use gazabridge_domain::ids::RunId;
 use gazabridge_ipc::{
-    CommandError, CopyItemDto, MigrationArgs, MigrationPlanDto, ObjectAddr, PlanItemDto, RunArgs,
-    RunDto, RunEventDto, StreamDto, TablePreviewDto,
+    CommandError, CopyItemDto, DifferenceDto, MigrationArgs, MigrationPlanDto, ObjectAddr,
+    PlanItemDto, RunArgs, RunDto, RunEventDto, StreamDto, StreamValidationDto, TablePreviewDto,
+    TargetCheckDto, ValidateArgs, ValidationDto,
 };
 use gazabridge_mapping::doc_to_table::DocMode;
 use gazabridge_mapping::table_to_doc::TableMode;
+use gazabridge_migration::validate::Level;
 use gazabridge_plugin_sdk::schema::ObjectRef;
 use tauri::State;
 
@@ -162,10 +165,61 @@ fn stream_dto(s: StreamView) -> StreamDto {
     }
 }
 
+fn validation_dto(v: ValidationReport) -> ValidationDto {
+    ValidationDto {
+        level: as_str(&v.level),
+        running: v.running,
+        passed: v.passed,
+        error: v.error,
+        streams: v
+            .streams
+            .into_iter()
+            .map(|s| StreamValidationDto {
+                source: addr(&s.source),
+                source_count: s.source_count.map(|c| c.count),
+                target_count: s.target_count.map(|c| c.count),
+                counts_exact: s.source_count.is_some_and(|c| c.exact)
+                    && s.target_count.is_some_and(|c| c.exact),
+                checked: s.checked,
+                passed: s.passed,
+                notes: s.notes,
+                targets: s
+                    .targets
+                    .into_iter()
+                    .map(|t| TargetCheckDto {
+                        target: addr(&t.target),
+                        expected: t.expected,
+                        matched: t.matched,
+                        missing: t.missing,
+                        extra: t.extra,
+                        different: t.different,
+                        chunks: t.chunks,
+                        mismatched_chunks: t.mismatched_chunks,
+                        expected_checksum: t.expected_checksum,
+                        actual_checksum: t.actual_checksum,
+                    })
+                    .collect(),
+                differences: s
+                    .differences
+                    .into_iter()
+                    .map(|d| DifferenceDto {
+                        target: d.target,
+                        key: d.key,
+                        kind: as_str(&d.kind),
+                        detail: d.detail,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 pub fn run_dto(v: RunView) -> RunDto {
     RunDto {
         run_id: v.run_id.to_string(),
         name: v.name,
+        dry_run: v.dry_run,
+        validation: v.validation.map(validation_dto),
         status: v.status.as_str().to_owned(),
         source_connection_id: v.source.to_string(),
         target_connection_id: v.target.to_string(),
@@ -220,6 +274,38 @@ pub async fn migration_start(
         .start(req, args.confirm_destructive)
         .await
         .map(|id| id.to_string())
+        .map_err(|e| app_error(&state, e))
+}
+
+#[tauri::command]
+pub async fn migration_dry_run(
+    state: State<'_, AppState>,
+    args: MigrationArgs,
+) -> Result<String, CommandError> {
+    let req = request(&args)?;
+    state
+        .migrations
+        .dry_run(req)
+        .await
+        .map(|id| id.to_string())
+        .map_err(|e| app_error(&state, e))
+}
+
+#[tauri::command]
+pub async fn migration_validate(
+    state: State<'_, AppState>,
+    args: ValidateArgs,
+) -> Result<(), CommandError> {
+    let level = match args.level.as_str() {
+        "basic" => Level::Basic,
+        "standard" | "" => Level::Standard,
+        "deep" => Level::Deep,
+        other => return Err(invalid(format!("unknown validation level `{other}`"))),
+    };
+    state
+        .migrations
+        .validate(run_id(&args.run_id)?, level)
+        .await
         .map_err(|e| app_error(&state, e))
 }
 

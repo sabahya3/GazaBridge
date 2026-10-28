@@ -425,3 +425,195 @@ async fn mongodb_collections_copy_between_servers_exactly_and_resumably() {
     assert_eq!(recent.len(), 4);
     assert_eq!(recent[0].run_id, run);
 }
+
+/// Every database, collection, document count and index of a server.
+async fn snapshot(c: &mongodb::Client) -> Vec<String> {
+    let mut out = Vec::new();
+    for db in c.list_database_names().await.unwrap() {
+        if matches!(db.as_str(), "admin" | "local" | "config") {
+            continue;
+        }
+        let d = c.database(&db);
+        let mut names = d.list_collection_names().await.unwrap();
+        names.sort();
+        for coll in names {
+            let n = d
+                .collection::<Document>(&coll)
+                .count_documents(doc! {})
+                .await
+                .unwrap();
+            out.push(format!(
+                "{db}.{coll}: {n} {:?}",
+                indexes(c, &db, &coll).await
+            ));
+        }
+    }
+    out
+}
+
+async fn validated(m: &MigrationService, run: RunId) -> gazabridge_application::ValidationReport {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        if let Some(v) = m.view(run).await.unwrap().validation
+            && !v.running
+        {
+            return v;
+        }
+        assert!(Instant::now() < deadline, "validation timed out");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs Docker; run with cargo test -- --ignored"]
+async fn dry_runs_change_nothing_and_validation_finds_every_difference() {
+    use gazabridge_migration::validate::{DiffKind, Level};
+
+    let (src_rs, dst_rs) = tokio::join!(common::mongo::start("8.0"), common::mongo::start("8.0"));
+    let (src, dst) = (client(&src_rs).await, client(&dst_rs).await);
+    let shop = src.database("shop");
+    shop.collection::<Document>("orders")
+        .insert_many((0..3_000).map(order))
+        .await
+        .unwrap();
+    shop.collection::<Document>("customers")
+        .insert_many(
+            (0..300)
+                .map(|i| doc! { "_id": format!("c{i}"), "email": format!("c{i}@example.test") }),
+        )
+        .await
+        .unwrap();
+    dst.database("copy")
+        .collection::<Document>("customers")
+        .insert_many([
+            doc! { "_id": "c1", "email": "kept@example.test" },
+            doc! { "_id": "c999", "email": "extra@example.test" },
+        ])
+        .await
+        .unwrap();
+    let env = Env::new().await;
+    let s = env.connect("source", &src_rs, true).await;
+    let t = env.connect("target", &dst_rs, false).await;
+    let m = env.migrations();
+    let items = vec![
+        item("shop", "orders", "copy"),
+        item("shop", "customers", "copy"),
+    ];
+
+    // A dry run predicts conflicts and writes nothing at all.
+    let before = snapshot(&dst).await;
+    let mut strict = request(s, t, items.clone());
+    strict.existing = ExistingData::Fail;
+    let run = m.dry_run(strict).await.unwrap();
+    let v = wait(&m, run, settled).await;
+    assert!(v.dry_run);
+    assert_eq!(v.status, JobStatus::CompletedWithWarnings, "{v:#?}");
+    assert_eq!(v.streams[0].stats.inserted, 3_000);
+    assert_eq!(
+        (v.streams[1].stats.inserted, v.streams[1].stats.failed),
+        (299, 1)
+    );
+    assert!(
+        v.streams[1].rejections[0].contains("_id=c1")
+            && v.streams[1].rejections[0].contains("already holds"),
+        "{:?}",
+        v.streams[1].rejections
+    );
+    // Even "delete the target first" drops nothing in a dry run.
+    let mut replace = request(s, t, items.clone());
+    replace.existing = ExistingData::Replace;
+    let v = wait(&m, m.dry_run(replace).await.unwrap(), settled).await;
+    assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+    assert_eq!(
+        v.streams[1].stats.inserted, 300,
+        "the dropped target would be empty"
+    );
+    assert_eq!(snapshot(&dst).await, before, "zero mutations");
+    assert!(m.resume(run).await.is_err(), "dry runs are not resumed");
+    assert!(m.validate(run, Level::Deep).await.is_err());
+    let jobs = env.store.jobs().list(false).await.unwrap();
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.dry_run_passed_at.is_some())
+            .count(),
+        1,
+        "only the clean dry run passes"
+    );
+
+    // A real copy is counted automatically.
+    let run = m.start(request(s, t, items.clone()), false).await.unwrap();
+    assert_eq!(wait(&m, run, settled).await.status, JobStatus::Completed);
+    let basic = validated(&m, run).await;
+    assert_eq!(basic.level, Level::Basic);
+    assert!(basic.streams[0].passed, "{basic:#?}");
+    assert!(
+        !basic.streams[1].passed,
+        "301 target documents for 300 source documents"
+    );
+
+    // Deep: identical orders (equal checksums); the kept and the extra customer.
+    m.validate(run, Level::Deep).await.unwrap();
+    let deep = validated(&m, run).await;
+    let (orders, customers) = (&deep.streams[0], &deep.streams[1]);
+    assert!(orders.passed, "{orders:#?}");
+    assert_eq!(orders.targets[0].matched, 3_000);
+    assert_eq!(
+        orders.targets[0].expected_checksum,
+        orders.targets[0].actual_checksum
+    );
+    assert_eq!(customers.targets[0].different, 1);
+    assert!(
+        customers
+            .notes
+            .iter()
+            .any(|n| n.contains("1 row(s)/document(s) that do not come from the source")),
+        "{:?}",
+        customers.notes
+    );
+
+    // Tampering is found and named.
+    let copied = dst.database("copy").collection::<Document>("orders");
+    let victims = all(&dst, "copy", "orders").await;
+    copied
+        .delete_one(doc! { "_id": victims[5].get_object_id("_id").unwrap() })
+        .await
+        .unwrap();
+    copied
+        .update_one(
+            doc! { "_id": victims[9].get_object_id("_id").unwrap() },
+            doc! { "$set": { "n32": 999_999 } },
+        )
+        .await
+        .unwrap();
+    m.validate(run, Level::Deep).await.unwrap();
+    let deep = validated(&m, run).await;
+    let orders = &deep.streams[0];
+    assert!(!orders.passed && deep.passed == Some(false));
+    assert_eq!(
+        (orders.targets[0].missing, orders.targets[0].different),
+        (1, 1)
+    );
+    assert_eq!(
+        orders.targets[0].mismatched_chunks, 1,
+        "both in the first chunk of 700"
+    );
+    let changed = orders
+        .differences
+        .iter()
+        .find(|d| d.kind == DiffKind::Different)
+        .unwrap();
+    assert!(
+        changed.detail.as_deref().unwrap().contains("`n32`"),
+        "{changed:?}"
+    );
+    // Keys only: the deleted document, not the edit.
+    m.validate(run, Level::Standard).await.unwrap();
+    let keys = validated(&m, run).await;
+    assert_eq!(
+        (
+            keys.streams[0].targets[0].missing,
+            keys.streams[0].targets[0].different
+        ),
+        (1, 0)
+    );
+}

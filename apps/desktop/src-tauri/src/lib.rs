@@ -72,6 +72,8 @@ pub fn run() {
             migration_commands::migration_resume,
             migration_commands::migration_cancel,
             migration_commands::migration_recent,
+            migration_commands::migration_dry_run,
+            migration_commands::migration_validate,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
