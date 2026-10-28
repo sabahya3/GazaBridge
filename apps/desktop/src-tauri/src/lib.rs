@@ -8,6 +8,7 @@ mod commands;
 mod connection_commands;
 mod explorer_commands;
 mod forms;
+mod migration_commands;
 mod query_commands;
 mod state;
 mod transfer_commands;
@@ -64,6 +65,13 @@ pub fn run() {
             transfer_commands::transfer_cancel,
             transfer_commands::transfer_forget,
             transfer_commands::pick_file_path,
+            migration_commands::migration_plan,
+            migration_commands::migration_start,
+            migration_commands::migration_status,
+            migration_commands::migration_pause,
+            migration_commands::migration_resume,
+            migration_commands::migration_cancel,
+            migration_commands::migration_recent,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

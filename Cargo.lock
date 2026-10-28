@@ -2082,13 +2082,16 @@ dependencies = [
  "gazabridge-connectors",
  "gazabridge-domain",
  "gazabridge-files",
+ "gazabridge-migration",
  "gazabridge-plugin-sdk",
  "gazabridge-query",
  "gazabridge-secrets",
  "gazabridge-storage",
+ "hex",
  "mongodb",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "testcontainers-modules",
  "thiserror 2.0.21",
@@ -2289,6 +2292,24 @@ dependencies = [
  "serde",
  "serde_json",
  "zeroize",
+]
+
+[[package]]
+name = "gazabridge-migration"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "gazabridge-domain",
+ "gazabridge-files",
+ "gazabridge-plugin-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

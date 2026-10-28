@@ -3,6 +3,7 @@
 
 pub mod connections;
 pub mod explorer;
+pub mod migration;
 pub mod profiled;
 pub mod query;
 pub mod schema;
@@ -11,6 +12,10 @@ pub mod transfer;
 pub use connections::{ConnectionService, PasswordInput, TestOutcome};
 pub use explorer::{
     BrowseRequest, BrowseResult, EditBlocker, EditPlan, ExplorerService, FieldEdit,
+};
+pub use migration::{
+    CopyItem, ExistingData, MigrationPlan, MigrationRequest, MigrationService, OnRecordError,
+    PlanItem, RunView, StreamPhase, StreamView,
 };
 pub use profiled::ProfiledConnection;
 pub use query::{QueryContext, QueryInput, QueryRisk, QueryService};

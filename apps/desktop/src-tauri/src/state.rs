@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use gazabridge_application::{ConnectionService, ExplorerService, QueryService, TransferService};
+use gazabridge_application::{
+    ConnectionService, ExplorerService, MigrationService, QueryService, TransferService,
+};
 use gazabridge_connectors::{ConnectorRegistry, ProfileCatalog};
 use gazabridge_observability::{LogConfig, LoggingGuard};
 use gazabridge_secrets::{Redactor, SecretResolver};
@@ -17,6 +19,7 @@ pub struct AppState {
     pub explorer: ExplorerService,
     pub queries: QueryService,
     pub transfers: TransferService,
+    pub migrations: MigrationService,
     pub registry: ConnectorRegistry,
     pub secrets: SecretResolver,
     pub data_dir: PathBuf,
@@ -57,6 +60,18 @@ impl AppState {
         let secrets = SecretResolver::os_default(redactor);
         let connections = ConnectionService::new(store.clone(), registry.clone(), secrets.clone());
         let explorer = ExplorerService::new(store.clone(), connections.clone());
+        let migrations = MigrationService::new(
+            store.clone(),
+            explorer.clone(),
+            connections.redactor().clone(),
+            data_dir.join("quarantine"),
+        );
+        // Copies left running when the app closed become paused and resumable.
+        match migrations.recover_interrupted().await {
+            Ok(0) => {}
+            Ok(n) => tracing::warn!(runs = n, "paused copies interrupted by the last shutdown"),
+            Err(e) => tracing::error!(error = %e, "could not check for interrupted copies"),
+        }
         Ok(Self {
             queries: QueryService::new(
                 store.clone(),
@@ -68,6 +83,7 @@ impl AppState {
                 explorer.clone(),
                 connections.redactor().clone(),
             ),
+            migrations,
             explorer,
             connections,
             store,

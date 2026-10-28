@@ -151,6 +151,7 @@ pub async fn indexes(conn: &mut Conn, db: &str, table: &str) -> ConnectorResult<
             columns: Vec::new(),
             predicate: None,
             definition: None,
+            native: None,
             name,
         });
         entry.columns.push(cell_str(row, 2).unwrap_or_else(|| "<expression>".into()));

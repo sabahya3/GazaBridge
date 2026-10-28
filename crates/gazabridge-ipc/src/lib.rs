@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod connections;
 pub mod explorer;
+pub mod migration;
 pub mod query;
 pub mod transfer;
 
 pub use connections::*;
 pub use explorer::*;
+pub use migration::*;
 pub use query::*;
 pub use transfer::*;
 
@@ -54,6 +56,13 @@ pub mod commands {
     pub const TRANSFER_CANCEL: &str = "transfer_cancel";
     pub const TRANSFER_FORGET: &str = "transfer_forget";
     pub const PICK_FILE_PATH: &str = "pick_file_path";
+    pub const MIGRATION_PLAN: &str = "migration_plan";
+    pub const MIGRATION_START: &str = "migration_start";
+    pub const MIGRATION_STATUS: &str = "migration_status";
+    pub const MIGRATION_PAUSE: &str = "migration_pause";
+    pub const MIGRATION_RESUME: &str = "migration_resume";
+    pub const MIGRATION_CANCEL: &str = "migration_cancel";
+    pub const MIGRATION_RECENT: &str = "migration_recent";
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

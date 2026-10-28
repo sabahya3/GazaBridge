@@ -1008,3 +1008,42 @@ button.module {
 }
 button.module:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-tint); }
 button.module:disabled { cursor: default; color: var(--muted); background: var(--surface-2); }
+
+/* ---------------------------------------------------------- Migrations */
+.migrations { container: page / inline-size; }
+.mig-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; margin-block-start: 12px; }
+.mig-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 0; min-inline-size: 0; }
+.mig-side > *, .mig-side select, .mig-side input { min-inline-size: 0; max-inline-size: 100%; }
+.mig-side h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.mig-arrow { align-self: center; color: var(--muted); padding-block-start: 40px; }
+.mig-arrow .icon { inline-size: 22px; block-size: 22px; }
+.mig-collections .toolbar input[type="search"] { flex: 1; min-inline-size: 0; }
+.mig-list { list-style: none; margin: 0; padding: 4px; max-block-size: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.mig-list li { padding: 3px 6px; border-radius: 6px; }
+.mig-list li:hover { background: var(--surface-2); }
+.mig-list .field-check { inline-size: 100%; }
+.mig-coll { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-inline-size: 0; }
+.mig-coll bdi { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope-option.danger:has(input:checked) { border-color: var(--danger); background: var(--danger-bg); }
+.mig-advanced summary { cursor: pointer; color: var(--muted); }
+.mig-plan, .mig-run { margin-block-start: 16px; }
+.mig-plan .grid-wrap { max-block-size: 40vh; }
+.code-block { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 10px; border-radius: var(--radius); max-block-size: 240px; overflow: auto; }
+.mig-run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mig-run-head h2 { margin: 0; }
+.mig-streams { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 12px; }
+.mig-stream { display: grid; gap: 5px; }
+.mig-stream-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.mig-numbers { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.progress { block-size: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.progress > span { display: block; block-size: 100%; background: var(--primary); transition: inline-size 0.4s ease; }
+.mig-stream.failed .progress > span { background: var(--danger); }
+.mig-events { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 3px; max-block-size: 220px; overflow: auto; }
+.mig-events .ev-warning { color: var(--warn); }
+.mig-events .ev-error { color: var(--danger); }
+.btn-sm { padding: 3px 10px; font-size: 12.5px; min-block-size: 0; }
+@media (prefers-reduced-motion: reduce) { .progress > span { transition: none; } }
+@container page (max-width: 760px) {
+  .mig-grid { grid-template-columns: minmax(0, 1fr); }
+  .mig-arrow { padding: 0; justify-self: center; transform: rotate(90deg); }
+}

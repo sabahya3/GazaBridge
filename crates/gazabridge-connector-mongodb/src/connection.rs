@@ -31,9 +31,8 @@ use gazabridge_plugin_sdk::{
     ServerInfo,
 };
 use mongodb::bson::{Bson, Document, doc};
-use mongodb::options::IndexOptions;
 use mongodb::results::CollectionType;
-use mongodb::{Client, ClientSession, Collection, IndexModel};
+use mongodb::{Client, ClientSession, Collection};
 use tokio_util::sync::CancellationToken;
 
 use crate::CONNECTOR_ID;
@@ -461,6 +460,14 @@ async fn write(
                 }
             }
         }
+        // Keyed by `_id`: plain inserts keep the documents' field order
+        // (update operators would sort new fields) and are faster.
+        WriteMode::SkipExisting if session.is_none() && batch.key_fields == ["_id"] => {
+            insert_skipping_existing(coll, docs, &indexes, &mut outcome).await?;
+        }
+        WriteMode::Upsert | WriteMode::SkipExisting if session.is_none() => {
+            bulk_upsert(coll, batch, docs, &indexes, &mut outcome).await?;
+        }
         WriteMode::Upsert | WriteMode::SkipExisting => {
             for (doc, &i) in docs.into_iter().zip(&indexes) {
                 let filter = match key_filter(&batch.records[i], &batch.key_fields) {
@@ -503,6 +510,211 @@ async fn write(
         _ => {}
     }
     Ok(outcome)
+}
+
+/// Server-side command size stays well under MongoDB's 16 MiB limit.
+const BULK_BYTES: usize = 8 * 1024 * 1024;
+const BULK_STATEMENTS: usize = 10_000;
+
+fn number(d: &Document, key: &str) -> u64 {
+    match d.get(key) {
+        Some(Bson::Int32(n)) => u64::try_from(*n).unwrap_or(0),
+        Some(Bson::Int64(n)) => u64::try_from(*n).unwrap_or(0),
+        Some(Bson::Double(n)) if *n >= 0.0 => *n as u64,
+        _ => 0,
+    }
+}
+
+/// Inserts documents, counting those whose `_id` already exists as skipped.
+async fn insert_skipping_existing(
+    coll: &Collection<Document>,
+    docs: Vec<Document>,
+    indexes: &[usize],
+    outcome: &mut WriteOutcome,
+) -> ConnectorResult<()> {
+    let mut keep = Vec::with_capacity(docs.len());
+    let mut origin = Vec::with_capacity(docs.len());
+    for (doc, &i) in docs.into_iter().zip(indexes) {
+        if !doc.contains_key("_id") {
+            outcome.failures.push(failure(
+                i,
+                &ConnectorError::invalid_input("the document has no `_id`"),
+            ));
+            continue;
+        }
+        keep.push(doc);
+        origin.push(i);
+    }
+    if keep.is_empty() {
+        return Ok(());
+    }
+    let n = keep.len() as u64;
+    match coll.insert_many(keep).ordered(false).await {
+        Ok(r) => outcome.inserted += r.inserted_ids.len() as u64,
+        Err(e) => {
+            let errors = match e.kind.as_ref() {
+                mongodb::error::ErrorKind::InsertMany(m) if m.write_concern_error.is_none() => {
+                    m.write_errors.clone().unwrap_or_default()
+                }
+                _ => return Err(map_mongo(e)),
+            };
+            for w in &errors {
+                // 11000 on the `_id_` index: the document is already there.
+                if w.code == 11000 && w.message.contains("index: _id_ ") {
+                    outcome.skipped += 1;
+                    continue;
+                }
+                let err = ConnectorError::from_driver(
+                    crate::error::kind_for_code(w.code),
+                    &w.message,
+                    Some(w.code.to_string()),
+                );
+                outcome.failures.push(failure(
+                    origin.get(w.index).copied().unwrap_or(w.index),
+                    &err,
+                ));
+            }
+            outcome.inserted += n - errors.len() as u64;
+        }
+    }
+    Ok(())
+}
+
+/// Upserts (`replace`) or inserts-if-absent (`$setOnInsert`) many documents
+/// in one `update` command per chunk instead of one round trip each.
+async fn bulk_upsert(
+    coll: &Collection<Document>,
+    batch: &WriteBatch,
+    docs: Vec<Document>,
+    indexes: &[usize],
+    outcome: &mut WriteOutcome,
+) -> ConnectorResult<()> {
+    let db = coll.client().database(&coll.namespace().db);
+    let mut chunk: Vec<Document> = Vec::new();
+    let mut origin: Vec<usize> = Vec::new();
+    let mut bytes = 0usize;
+    let mut pending = docs.into_iter().zip(indexes.iter().copied()).peekable();
+    while let Some((doc, i)) = pending.next() {
+        match key_filter(&batch.records[i], &batch.key_fields) {
+            Ok(q) => {
+                let u = if batch.mode == WriteMode::Upsert {
+                    doc
+                } else {
+                    doc! { "$setOnInsert": doc }
+                };
+                let stmt = doc! { "q": q, "u": u, "upsert": true };
+                bytes += mongodb::bson::to_vec(&stmt).map_or(0, |v| v.len());
+                chunk.push(stmt);
+                origin.push(i);
+            }
+            Err(e) => outcome.failures.push(failure(i, &e)),
+        }
+        let full = bytes >= BULK_BYTES || chunk.len() >= BULK_STATEMENTS;
+        if chunk.is_empty() || (!full && pending.peek().is_some()) {
+            continue;
+        }
+        let reply = db
+            .run_command(doc! {
+                "update": coll.name(),
+                "updates": std::mem::take(&mut chunk),
+                "ordered": false,
+            })
+            .await
+            .map_err(map_mongo)?;
+        if let Ok(wce) = reply.get_document("writeConcernError") {
+            return Err(ConnectorError::new(
+                ErrorKind::TransientServer,
+                format!(
+                    "write concern not satisfied: {}",
+                    wce.get_str("errmsg").unwrap_or_default()
+                ),
+            ));
+        }
+        let upserted = reply.get_array("upserted").map_or(0, |a| a.len() as u64);
+        let matched = number(&reply, "n").saturating_sub(upserted);
+        outcome.inserted += upserted;
+        if batch.mode == WriteMode::Upsert {
+            outcome.updated += matched;
+        } else {
+            outcome.skipped += matched;
+        }
+        for w in reply.get_array("writeErrors").into_iter().flatten() {
+            let Bson::Document(w) = w else { continue };
+            let at = usize::try_from(number(w, "index")).unwrap_or(0);
+            let code = w.get_i32("code").unwrap_or_default();
+            let err = ConnectorError::from_driver(
+                crate::error::kind_for_code(code),
+                w.get_str("errmsg").unwrap_or_default(),
+                Some(code.to_string()),
+            );
+            outcome
+                .failures
+                .push(failure(origin.get(at).copied().unwrap_or(at), &err));
+        }
+        origin.clear();
+        bytes = 0;
+    }
+    Ok(())
+}
+
+/// A `listIndexes` specification as an [`IndexInfo`], keeping the whole
+/// specification so another MongoDB can recreate it exactly.
+fn index_info(spec: &Document) -> IndexInfo {
+    let name = spec.get_str("name").unwrap_or_default().to_owned();
+    let key = spec.get_document("key").cloned().unwrap_or_default();
+    let mut native = spec.clone();
+    native.remove("v");
+    native.remove("ns");
+    IndexInfo {
+        primary: name == "_id_",
+        unique: name == "_id_" || spec.get_bool("unique").unwrap_or(false),
+        columns: key.keys().cloned().collect(),
+        method: Some(
+            key.values()
+                .find_map(|v| match v {
+                    Bson::String(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "btree".into()),
+        ),
+        predicate: spec
+            .get_document("partialFilterExpression")
+            .ok()
+            .map(|p| p.to_string()),
+        definition: Some(key.to_string()),
+        native: Some(Bson::Document(native).into_canonical_extjson()),
+        name,
+    }
+}
+
+/// The index specification to send to `createIndexes`.
+fn index_spec(index: &gazabridge_plugin_sdk::ddl::IndexDefinition) -> ConnectorResult<Document> {
+    let mut spec = match &index.native {
+        Some(native) => match Bson::try_from(native.clone()) {
+            Ok(Bson::Document(d)) if d.get_document("key").is_ok() => d,
+            _ => {
+                return Err(ConnectorError::invalid_input(format!(
+                    "index `{}` has an unreadable MongoDB specification",
+                    index.name
+                )));
+            }
+        },
+        None => {
+            let mut key = Document::new();
+            for c in &index.columns {
+                key.insert(c.clone(), 1);
+            }
+            let mut d = doc! { "key": key };
+            if index.unique {
+                d.insert("unique", true);
+            }
+            d
+        }
+    };
+    spec.remove("v");
+    spec.remove("ns");
+    spec.insert("name", index.name.clone());
+    Ok(spec)
 }
 
 fn check_expected(matched: u64, expected: Option<u64>) -> ConnectorResult<()> {
@@ -600,21 +812,19 @@ fn ddl_text(op: &SchemaOperation, inner: &Inner) -> ConnectorResult<String> {
                 object.name
             )
         }
-        SchemaOperation::CreateIndex { object, index, .. } => format!(
-            "db.getSiblingDB({:?}).getCollection({:?}).createIndex({}, {{ name: {:?}, unique: {} }})",
-            db(&object.namespace)?,
-            object.name,
-            serde_json::to_string(
-                &index
-                    .columns
-                    .iter()
-                    .map(|c| (c.clone(), 1))
-                    .collect::<BTreeMap<_, _>>()
+        SchemaOperation::CreateIndex { object, index, .. } => {
+            let mut spec = index_spec(index)?;
+            let key = spec
+                .remove("key")
+                .unwrap_or_else(|| Bson::Document(Document::new()));
+            format!(
+                "db.getSiblingDB({:?}).getCollection({:?}).createIndex({}, {})",
+                db(&object.namespace)?,
+                object.name,
+                key.into_relaxed_extjson(),
+                Bson::Document(spec).into_relaxed_extjson()
             )
-            .unwrap_or_default(),
-            index.name,
-            index.unique
-        ),
+        }
         SchemaOperation::DropObject { object, .. } => match object.kind {
             ObjectKind::Database | ObjectKind::Schema => {
                 format!("db.getSiblingDB({:?}).dropDatabase()", object.name)
@@ -836,37 +1046,25 @@ impl Connection for MongoConnection {
             })
             .collect();
         let indexes = if options.include_indexes {
-            let models: Vec<IndexModel> = coll
-                .list_indexes()
-                .await
-                .map_err(map_mongo)?
-                .try_collect()
-                .await
-                .map_err(map_mongo)?;
-            models
-                .into_iter()
-                .map(|m| {
-                    let name = m
-                        .options
-                        .as_ref()
-                        .and_then(|o| o.name.clone())
-                        .unwrap_or_default();
-                    IndexInfo {
-                        primary: name == "_id_",
-                        unique: name == "_id_"
-                            || m.options.as_ref().and_then(|o| o.unique).unwrap_or(false),
-                        columns: m.keys.keys().cloned().collect(),
-                        method: Some("btree".into()),
-                        predicate: m
-                            .options
-                            .as_ref()
-                            .and_then(|o| o.partial_filter_expression.as_ref())
-                            .map(|p| p.to_string()),
-                        definition: Some(m.keys.to_string()),
-                        name,
-                    }
-                })
-                .collect()
+            let raw = coll
+                .client()
+                .database(&coll.namespace().db)
+                .run_cursor_command(doc! { "listIndexes": coll.name() })
+                .await;
+            match raw {
+                Ok(cursor) => cursor
+                    .try_collect::<Vec<Document>>()
+                    .await
+                    .map_err(map_mongo)?
+                    .iter()
+                    .map(index_info)
+                    .collect(),
+                // 26 = NamespaceNotFound: no collection, no indexes.
+                Err(e) if matches!(e.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 26) => {
+                    Vec::new()
+                }
+                Err(e) => return Err(map_mongo(e)),
+            }
         } else {
             Vec::new()
         };
@@ -1247,22 +1445,11 @@ impl Connection for MongoConnection {
                     }
                 }
                 SchemaOperation::CreateIndex { object, index, .. } => {
-                    let mut keys = Document::new();
-                    for c in &index.columns {
-                        keys.insert(c.clone(), 1);
-                    }
-                    let model = IndexModel::builder()
-                        .keys(keys)
-                        .options(
-                            IndexOptions::builder()
-                                .name(index.name.clone())
-                                .unique(index.unique)
-                                .build(),
-                        )
-                        .build();
-                    self.inner
-                        .collection(object)?
-                        .create_index(model)
+                    let spec = index_spec(index)?;
+                    let coll = self.inner.collection(object)?;
+                    coll.client()
+                        .database(&coll.namespace().db)
+                        .run_command(doc! { "createIndexes": coll.name(), "indexes": [spec] })
                         .await
                         .map_err(map_mongo)?;
                 }

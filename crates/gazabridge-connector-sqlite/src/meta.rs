@@ -171,6 +171,7 @@ pub async fn indexes(pool: &SqlitePool, object: &ObjectRef) -> ConnectorResult<V
             predicate: (r.try_get::<i64, _>("partial").map_err(map_sqlx)? == 1)
                 .then(|| "partial".into()),
             definition,
+            native: None,
         });
     }
     Ok(out)

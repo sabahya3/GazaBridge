@@ -22,6 +22,12 @@ pub struct IndexDefinition {
     pub name: String,
     pub columns: Vec<String>,
     pub unique: bool,
+    /// The source engine's full index specification (for MongoDB: the
+    /// `listIndexes` document as canonical Extended JSON). A connector of the
+    /// same family recreates the index exactly from it (direction, TTL,
+    /// partial filter, collation, text/geo); others use `columns`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

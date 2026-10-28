@@ -1,0 +1,27 @@
+[package]
+name = "gazabridge-migration"
+description = "GazaBridge migration engine: streaming copy with checkpoints, retries and quarantine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures.workspace = true
+gazabridge-domain.workspace = true
+gazabridge-files.workspace = true
+gazabridge-plugin-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

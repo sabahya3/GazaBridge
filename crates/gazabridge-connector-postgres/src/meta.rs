@@ -225,6 +225,7 @@ pub async fn indexes(client: &Client, object: &ObjectRef) -> ConnectorResult<Vec
             method: r.get(3),
             predicate: r.get(4),
             definition: r.get(5),
+            native: None,
             columns: r.get(6),
         })
         .collect())

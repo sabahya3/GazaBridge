@@ -88,6 +88,7 @@ impl Section {
                 | Self::Connections
                 | Self::Explorer
                 | Self::QueryStudio
+                | Self::Migrations
                 | Self::Logs
                 | Self::Settings
         )

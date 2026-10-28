@@ -49,6 +49,15 @@ fn restore_exotic(bytes: &[u8]) -> ConnectorResult<Bson> {
         .ok_or_else(|| conversion("corrupt BSON extension"))
 }
 
+fn canonical_decimal(bytes: [u8; 16]) -> bool {
+    let again = match decimal128::decode(bytes) {
+        Dec128::Finite(v) => decimal128::encode(&v),
+        Dec128::NaN => Some(decimal128::nan()),
+        Dec128::Infinity { negative } => Some(decimal128::infinity(negative)),
+    };
+    again == Some(bytes)
+}
+
 /// Converts a BSON value to a canonical value.
 pub fn from_bson(b: &Bson) -> Value {
     match b {
@@ -63,6 +72,11 @@ pub fn from_bson(b: &Bson) -> Value {
             Some(d) => Value::UtcDateTime(d),
             None => exotic("datetime", dt.timestamp_millis().to_string(), b),
         },
+        // Non-canonical encodings (stray bits the standard ignores) keep
+        // their exact bytes so a copy is byte-identical.
+        Bson::Decimal128(d) if !canonical_decimal(d.bytes()) => {
+            exotic("decimal", format!("{:?}", decimal128::decode(d.bytes())), b)
+        }
         Bson::Decimal128(d) => match decimal128::decode(d.bytes()) {
             Dec128::Finite(v) => Value::Decimal(v),
             Dec128::NaN => Value::Float(f64::NAN),
@@ -364,6 +378,9 @@ mod tests {
             "js": Bson::JavaScriptCode("x => x".into()),
             "min": Bson::MinKey,
             "nested": { "arr": [1i32, "two", { "three": 3i64 }], "empty": [] },
+            // Non-canonical zero and infinity: stray bits survive.
+            "dec_odd": Bson::Decimal128(Decimal128::from_bytes([0x60; 16])),
+            "inf_odd": Bson::Decimal128(Decimal128::from_bytes([0x78; 16])),
         };
         let record = document_to_record(&original);
         assert_eq!(record.get("i32"), &Value::Int(7));
@@ -371,7 +388,11 @@ mod tests {
             matches!(record.get("re"), Value::Extension { type_name, .. } if type_name == "bson:regex")
         );
         let back = record_to_document(&record).unwrap();
-        assert_eq!(back, original);
+        // Byte-exact: `Document` equality ignores field order.
+        assert_eq!(
+            bson::to_vec(&back).unwrap(),
+            bson::to_vec(&original).unwrap()
+        );
     }
 
     #[test]

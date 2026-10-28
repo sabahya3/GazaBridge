@@ -153,6 +153,9 @@ pub struct IndexInfo {
     /// Native definition (e.g. `CREATE INDEX …` or a Mongo key document).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<String>,
+    /// Full machine-readable specification, see [`crate::ddl::IndexDefinition::native`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

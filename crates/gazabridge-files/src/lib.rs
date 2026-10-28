@@ -115,7 +115,7 @@ pub enum FileError {
 }
 
 impl FileError {
-    pub(crate) fn io(path: &Path, source: std::io::Error) -> Self {
+    pub fn io(path: &Path, source: std::io::Error) -> Self {
         Self::Io {
             path: path.to_path_buf(),
             source,

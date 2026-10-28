@@ -465,6 +465,7 @@ pub async fn run_contract_suite(harness: &dyn ContractHarness) -> ContractReport
                         name: "gb_contract_id".into(),
                         columns: vec!["id".into()],
                         unique: true,
+                        native: None,
                     },
                     if_not_exists: true,
                 }],
