@@ -657,6 +657,41 @@ async fn bulk_upsert(
     Ok(())
 }
 
+/// `create` options from Extended JSON (`None` when there are none).
+fn options_doc(options: Option<&serde_json::Value>) -> ConnectorResult<Option<Document>> {
+    match options {
+        None => Ok(None),
+        Some(j) => match Bson::try_from(j.clone()) {
+            Ok(Bson::Document(d)) if d.is_empty() => Ok(None),
+            Ok(Bson::Document(d)) => Ok(Some(d)),
+            _ => Err(ConnectorError::invalid_input(
+                "collection options must be a document",
+            )),
+        },
+    }
+}
+
+/// The collection's `listCollections` entry (`type` and `options`) as
+/// canonical Extended JSON text, so another MongoDB can recreate it: views,
+/// capped and time series collections, validators, collation.
+async fn collection_spec(coll: &Collection<Document>) -> ConnectorResult<Option<String>> {
+    let db = coll.client().database(&coll.namespace().db);
+    let mut cursor = db
+        .run_cursor_command(doc! { "listCollections": 1, "filter": { "name": coll.name() } })
+        .await
+        .map_err(map_mongo)?;
+    let Some(entry) = cursor.try_next().await.map_err(map_mongo)? else {
+        return Ok(None);
+    };
+    let spec = doc! {
+        "type": entry.get_str("type").unwrap_or("collection"),
+        "options": entry.get_document("options").cloned().unwrap_or_default(),
+    };
+    Ok(Some(
+        Bson::Document(spec).into_canonical_extjson().to_string(),
+    ))
+}
+
 /// A `listIndexes` specification as an [`IndexInfo`], keeping the whole
 /// specification so another MongoDB can recreate it exactly.
 fn index_info(spec: &Document) -> IndexInfo {
@@ -805,11 +840,28 @@ fn ddl_text(op: &SchemaOperation, inner: &Inner) -> ConnectorResult<String> {
                 db(namespace)?
             )
         }
-        SchemaOperation::CreateCollection { object, .. } => {
-            format!(
+        SchemaOperation::CreateCollection {
+            object, options, ..
+        } => match options_doc(options.as_ref())? {
+            Some(o) => format!(
+                "db.getSiblingDB({:?}).createCollection({:?}, {})",
+                db(&object.namespace)?,
+                object.name,
+                Bson::Document(o).into_relaxed_extjson()
+            ),
+            None => format!(
                 "db.getSiblingDB({:?}).createCollection({:?})",
                 db(&object.namespace)?,
                 object.name
+            ),
+        },
+        SchemaOperation::AlterCollection { object, options } => {
+            let mut cmd = doc! { "collMod": object.name.clone() };
+            cmd.extend(options_doc(Some(options))?.unwrap_or_default());
+            format!(
+                "db.getSiblingDB({:?}).runCommand({})",
+                db(&object.namespace)?,
+                Bson::Document(cmd).into_relaxed_extjson()
             )
         }
         SchemaOperation::CreateIndex { object, index, .. } => {
@@ -1078,7 +1130,7 @@ impl Connection for MongoConnection {
             inferred: Some(inferred),
             estimated_count: estimated,
             comment: None,
-            definition: None,
+            definition: collection_spec(&coll).await?,
         })
     }
 
@@ -1431,18 +1483,30 @@ impl Connection for MongoConnection {
                 SchemaOperation::CreateCollection {
                     object,
                     if_not_exists,
+                    options,
                 } => {
                     let db = self
                         .inner
                         .client
                         .database(&self.inner.database_name(&object.namespace)?);
-                    if let Err(e) = db.create_collection(&object.name).await {
+                    let mut cmd = doc! { "create": object.name.clone() };
+                    cmd.extend(options_doc(options.as_ref())?.unwrap_or_default());
+                    if let Err(e) = db.run_command(cmd).await {
                         // 48 = NamespaceExists
                         let exists = matches!(e.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 48);
                         if !(exists && *if_not_exists) {
                             return Err(map_mongo(e));
                         }
                     }
+                }
+                SchemaOperation::AlterCollection { object, options } => {
+                    let db = self
+                        .inner
+                        .client
+                        .database(&self.inner.database_name(&object.namespace)?);
+                    let mut cmd = doc! { "collMod": object.name.clone() };
+                    cmd.extend(options_doc(Some(options))?.unwrap_or_default());
+                    db.run_command(cmd).await.map_err(map_mongo)?;
                 }
                 SchemaOperation::CreateIndex { object, index, .. } => {
                     let spec = index_spec(index)?;

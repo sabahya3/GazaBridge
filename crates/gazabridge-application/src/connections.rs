@@ -175,11 +175,83 @@ impl ConnectionService {
             .map_err(|e| AppError::Invalid(format!("secret task failed: {e}")))??)
     }
 
+    /// Where a password entered with [`Self::unlock`] is kept for the session.
+    fn unlocked_ref(id: ConnectionId) -> SecretRef {
+        SecretRef::Session {
+            key: format!("{id}:unlocked"),
+        }
+    }
+
+    /// The connection's password: stored, or entered this session when the
+    /// store asks for it each time or does not release it.
+    async fn password_for(
+        &self,
+        profile: &ConnectionProfile,
+        r: &SecretRef,
+    ) -> AppResult<Option<SecretString>> {
+        let reason = match self.get_secret(r.clone()).await {
+            Ok(v) => return Ok(v),
+            Err(AppError::Secret(SecretError::PromptRequired)) => {
+                "This connection asks for its password each time.".to_owned()
+            }
+            Err(AppError::Secret(
+                SecretError::Unavailable(_) | SecretError::Backend(_) | SecretError::NotFound,
+            )) if matches!(r, SecretRef::Keychain { .. }) => {
+                "The macOS keychain did not release the saved password (this happens after GazaBridge is updated or rebuilt, or when the keychain request is declined).".to_owned()
+            }
+            Err(e) => return Err(e),
+        };
+        match self.get_secret(Self::unlocked_ref(profile.id)).await {
+            Ok(Some(v)) => Ok(Some(v)),
+            _ => Err(AppError::PasswordNeeded {
+                connection: profile.id,
+                name: profile.name.clone(),
+                reason,
+            }),
+        }
+    }
+
+    /// Uses `password` for this connection until the app closes; with
+    /// `remember`, saves it in the keychain again (replacing an entry an
+    /// older build of the app can no longer read). Returns whether it was
+    /// saved.
+    pub async fn unlock(
+        &self,
+        id: ConnectionId,
+        password: Zeroizing<String>,
+        remember: bool,
+    ) -> AppResult<bool> {
+        let profile = self.store.connections().require(id).await?;
+        let resolver = self.secrets.clone();
+        let session = Self::unlocked_ref(id);
+        let keychain = profile
+            .settings
+            .secret_refs()
+            .first()
+            .map(|r| (*r).clone())
+            .filter(|r| matches!(r, SecretRef::Keychain { .. }));
+        tokio::task::spawn_blocking(move || {
+            resolver.store(&session, &password)?;
+            let Some(k) = keychain.filter(|_| remember) else {
+                return Ok::<bool, SecretError>(false);
+            };
+            if resolver.store(&k, &password).is_ok() {
+                return Ok(true);
+            }
+            // An entry made by another build may refuse updates: replace it.
+            let _ = resolver.delete(&k);
+            Ok(resolver.store(&k, &password).is_ok())
+        })
+        .await
+        .map_err(|e| AppError::Invalid(format!("secret task failed: {e}")))?
+        .map_err(AppError::from)
+    }
+
     /// Resolves every secret a profile references.
     pub async fn resolve_secrets(&self, profile: &ConnectionProfile) -> AppResult<ResolvedSecrets> {
         let mut out = ResolvedSecrets::default();
         if let Some(r) = profile.settings.secret_refs().first() {
-            out.password = self.get_secret((*r).clone()).await?;
+            out.password = self.password_for(profile, r).await?;
         }
         if !profile.tls.client_key_passphrase.is_none() {
             out.client_key_passphrase = self
@@ -334,6 +406,8 @@ impl ConnectionService {
         password: PasswordInput,
     ) -> AppResult<ConnectionProfile> {
         let existing = self.store.connections().require(profile.id).await?;
+        // A password entered for the session belongs to the old settings.
+        let _ = self.secrets.delete(&Self::unlocked_ref(profile.id));
         if existing.family() != profile.family() {
             return Err(AppError::Invalid(
                 "the engine of an existing connection cannot change".into(),
@@ -466,11 +540,12 @@ impl ConnectionService {
             Err(e) => {
                 let state = if matches!(
                     e,
-                    AppError::Secret(
-                        SecretError::PromptRequired
-                            | SecretError::NotFound
-                            | SecretError::EnvMissing(_)
-                    )
+                    AppError::PasswordNeeded { .. }
+                        | AppError::Secret(
+                            SecretError::PromptRequired
+                                | SecretError::NotFound
+                                | SecretError::EnvMissing(_)
+                        )
                 ) {
                     ConnectionState::ConfigurationRequired
                 } else {
@@ -624,6 +699,64 @@ mod tests {
         // Session store stands in for the OS keychain in tests.
         let secrets = SecretResolver::new(Arc::new(SessionStore::default()), Redactor::new());
         ConnectionService::new(store, registry, secrets)
+    }
+
+    /// A keychain that accepts writes but refuses reads, the way macOS does
+    /// after the app's signature changes and the access prompt is declined.
+    #[derive(Default)]
+    struct RefusingKeychain(SessionStore);
+
+    impl gazabridge_secrets::SecretStore for RefusingKeychain {
+        fn get(&self, _r: &SecretRef) -> Result<SecretString, SecretError> {
+            Err(SecretError::Unavailable(
+                "The user name or passphrase you entered is not correct.".into(),
+            ))
+        }
+        fn set(&self, r: &SecretRef, value: &str) -> Result<(), SecretError> {
+            self.0.set(r, value)
+        }
+        fn delete(&self, r: &SecretRef) -> Result<(), SecretError> {
+            self.0.delete(r)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_keychain_asks_for_the_password_and_the_session_remembers_it() {
+        let store = MetadataStore::open_in_memory().await.unwrap();
+        let registry = ConnectorRegistry::new(ProfileCatalog::builtin().unwrap());
+        let svc = ConnectionService::new(
+            store,
+            registry,
+            SecretResolver::new(Arc::new(RefusingKeychain::default()), Redactor::new()),
+        );
+        let p = svc
+            .create(
+                pg_profile(),
+                PasswordInput::Remember(Zeroizing::new("s3cret".into())),
+            )
+            .await
+            .unwrap();
+        let err = svc.resolve_secrets(&p).await.unwrap_err();
+        assert_eq!(err.code(), "password_required");
+        assert_eq!(err.connection_id(), Some(p.id.to_string()));
+        assert!(
+            err.to_string().contains("keychain") && err.to_string().contains(&p.name),
+            "{err}"
+        );
+        // Entered for this session (and saved again: the write is accepted).
+        assert!(
+            svc.unlock(p.id, Zeroizing::new("s3cret".into()), true)
+                .await
+                .unwrap()
+        );
+        let got = svc.resolve_secrets(&p).await.unwrap();
+        assert_eq!(got.password.as_deref().map(String::as_str), Some("s3cret"));
+        // Editing the connection forgets the session password.
+        let p = svc.update(p, PasswordInput::Keep).await.unwrap();
+        assert_eq!(
+            svc.resolve_secrets(&p).await.unwrap_err().code(),
+            "password_required"
+        );
     }
 
     fn sqlite_profile(path: &Path) -> ConnectionProfile {

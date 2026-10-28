@@ -49,6 +49,9 @@ pub enum Level {
 pub enum Comparison {
     /// Byte-identical BSON (same engine copies): field order and types count.
     Exact,
+    /// Identical BSON values and types, field order aside (MongoDB time
+    /// series collections rebuild documents from buckets on every read).
+    ExactUnordered,
     /// Same values once normalized across engines (number forms, key order
     /// in JSON, ObjectId as hexadecimal text).
     Normalized,
@@ -252,8 +255,43 @@ fn short(j: &serde_json::Value) -> String {
     }
 }
 
+/// BSON bytes of a record, with keys sorted at every level when `sorted`.
+fn bson_bytes(r: &Record, sorted: bool) -> Option<Vec<u8>> {
+    fn sort(b: gazabridge_bson::bson::Bson) -> gazabridge_bson::bson::Bson {
+        use gazabridge_bson::bson::{Bson, Document};
+        match b {
+            Bson::Document(d) => {
+                let mut pairs: Vec<(String, Bson)> =
+                    d.into_iter().map(|(k, v)| (k, sort(v))).collect();
+                pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                Bson::Document(pairs.into_iter().collect::<Document>())
+            }
+            Bson::Array(a) => Bson::Array(a.into_iter().map(sort).collect()),
+            other => other,
+        }
+    }
+    let d = gazabridge_bson::record_to_document(r).ok()?;
+    let d = if sorted {
+        match sort(gazabridge_bson::bson::Bson::Document(d)) {
+            gazabridge_bson::bson::Bson::Document(d) => d,
+            _ => return None,
+        }
+    } else {
+        d
+    };
+    gazabridge_bson::bson::to_vec(&d).ok()
+}
+
 /// `None` when equal, else the first differing field.
 fn compare(expected: &Record, actual: &Record, how: Comparison) -> Option<String> {
+    if how == Comparison::ExactUnordered {
+        let e = bson_bytes(expected, true);
+        if e.is_some() && e == bson_bytes(actual, true) {
+            return None;
+        }
+        return compare(expected, actual, Comparison::Exact)
+            .or_else(|| Some("BSON types differ".into()));
+    }
     if how == Comparison::Exact {
         let bytes = |r: &Record| {
             gazabridge_bson::record_to_document(r)
@@ -312,10 +350,8 @@ fn compare(expected: &Record, actual: &Record, how: Comparison) -> Option<String
 
 fn row_hash(r: &Record, how: Comparison) -> [u8; 32] {
     let bytes = match how {
-        Comparison::Exact => gazabridge_bson::record_to_document(r)
-            .ok()
-            .and_then(|d| gazabridge_bson::bson::to_vec(&d).ok())
-            .unwrap_or_default(),
+        Comparison::Exact => bson_bytes(r, false).unwrap_or_default(),
+        Comparison::ExactUnordered => bson_bytes(r, true).unwrap_or_default(),
         Comparison::Normalized => serde_json::to_vec(&normalized(r)).unwrap_or_default(),
     };
     Sha256::digest(bytes).into()

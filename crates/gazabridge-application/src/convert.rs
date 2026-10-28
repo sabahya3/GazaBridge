@@ -55,7 +55,21 @@ pub fn direction(source: EngineFamily, target: EngineFamily) -> Option<Direction
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ItemMapping {
+    /// MongoDB → MongoDB data and indexes (runs recorded before collection
+    /// options were copied).
     Copy,
+    /// MongoDB → MongoDB: data, indexes and collection options.
+    Collection {
+        /// `create` options (capped, collation, time series…).
+        #[serde(default)]
+        options: Option<serde_json::Value>,
+        /// `validator`, `validationLevel`, `validationAction`, applied after
+        /// the data (only to collections the copy creates).
+        #[serde(default)]
+        validator: Option<serde_json::Value>,
+    },
+    /// A view recreated from its definition (`viewOn`, `pipeline`).
+    View { options: serde_json::Value },
     DocToTable {
         mapping: Box<DocMapping>,
         indexes: Vec<IndexDefinition>,
@@ -65,15 +79,14 @@ pub enum ItemMapping {
         indexes: Vec<IndexDefinition>,
     },
     /// Rows embedded in another stream's documents; not copied on their own.
-    Embedded {
-        into: ObjectRef,
-    },
+    Embedded { into: ObjectRef },
 }
 
 impl ItemMapping {
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::Copy => "copy",
+            Self::Copy | Self::Collection { .. } => "copy",
+            Self::View { .. } => "view",
             Self::DocToTable { .. } => "doc_to_table",
             Self::TableToDoc { .. } => "table_to_doc",
             Self::Embedded { .. } => "embedded",
@@ -84,7 +97,7 @@ impl ItemMapping {
     pub fn prepare_ops(&self, item: &CopyItem, existing: ExistingData) -> Vec<SchemaOperation> {
         let replace = existing == ExistingData::Replace;
         match self {
-            Self::Copy | Self::TableToDoc { .. } => {
+            Self::Copy | Self::TableToDoc { .. } | Self::Collection { .. } | Self::View { .. } => {
                 let mut ops = Vec::new();
                 if replace {
                     ops.push(SchemaOperation::DropObject {
@@ -95,6 +108,11 @@ impl ItemMapping {
                 ops.push(SchemaOperation::CreateCollection {
                     object: item.target.clone(),
                     if_not_exists: true,
+                    options: match self {
+                        Self::Collection { options, .. } => options.clone(),
+                        Self::View { options } => Some(options.clone()),
+                        _ => None,
+                    },
                 });
                 ops
             }
@@ -130,6 +148,19 @@ impl ItemMapping {
                 ops
             }
             Self::Embedded { .. } => Vec::new(),
+        }
+    }
+
+    /// What is applied once the data is in place (validation rules).
+    pub fn finish_ops(&self, item: &CopyItem) -> Vec<SchemaOperation> {
+        match self {
+            Self::Collection {
+                validator: Some(v), ..
+            } => vec![SchemaOperation::AlterCollection {
+                object: item.target.clone(),
+                options: v.clone(),
+            }],
+            _ => Vec::new(),
         }
     }
 
@@ -172,7 +203,9 @@ impl ItemMapping {
                 mapping: mapping.as_ref().clone(),
                 source,
             })),
-            Self::Copy | Self::Embedded { .. } => None,
+            Self::Copy | Self::Collection { .. } | Self::View { .. } | Self::Embedded { .. } => {
+                None
+            }
         }
     }
 }
@@ -310,6 +343,61 @@ impl Transform for TableToDoc {
             rejected: Vec::new(),
             owners: Vec::new(),
         })
+    }
+}
+
+/// A MongoDB collection's `listCollections` entry: kind and options.
+pub async fn collection_spec(
+    conn: &dyn Connection,
+    object: &ObjectRef,
+) -> Option<(String, serde_json::Map<String, serde_json::Value>)> {
+    let schema = conn
+        .inspect(
+            object,
+            &InspectOptions {
+                include_indexes: false,
+                include_constraints: false,
+                sample_size: 1,
+                sampling: SamplingMethod::First,
+            },
+        )
+        .await
+        .ok()?;
+    let spec: serde_json::Value = serde_json::from_str(schema.definition.as_deref()?).ok()?;
+    let kind = spec.get("type")?.as_str()?.to_owned();
+    let options = spec.get("options")?.as_object()?.clone();
+    Some((kind, options))
+}
+
+const VALIDATION: [&str; 3] = ["validator", "validationLevel", "validationAction"];
+
+/// The copy mapping for a collection or view. `target_kept`: an existing
+/// target stays (no replace), so its own validation rules are left alone.
+pub fn copy_mapping(
+    spec: Option<(String, serde_json::Map<String, serde_json::Value>)>,
+    target_kept: bool,
+) -> ItemMapping {
+    let Some((kind, mut options)) = spec else {
+        return ItemMapping::Collection {
+            options: None,
+            validator: None,
+        };
+    };
+    if kind == "view" {
+        return ItemMapping::View {
+            options: serde_json::Value::Object(options),
+        };
+    }
+    let mut validator = serde_json::Map::new();
+    for k in VALIDATION {
+        if let Some(v) = options.remove(k) {
+            validator.insert(k.to_owned(), v);
+        }
+    }
+    ItemMapping::Collection {
+        options: (!options.is_empty()).then(|| serde_json::Value::Object(options)),
+        validator: (!validator.is_empty() && !target_kept)
+            .then(|| serde_json::Value::Object(validator)),
     }
 }
 

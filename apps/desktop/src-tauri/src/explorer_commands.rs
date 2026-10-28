@@ -19,6 +19,7 @@ const CELL_CHARS: usize = 200;
 
 fn invalid(message: impl Into<String>) -> CommandError {
     CommandError {
+        connection_id: None,
         code: "invalid_input".into(),
         message: message.into(),
     }

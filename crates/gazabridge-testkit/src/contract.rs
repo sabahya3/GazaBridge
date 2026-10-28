@@ -215,6 +215,7 @@ impl Suite {
             SchemaOperation::CreateCollection {
                 object: self.object.clone(),
                 if_not_exists: false,
+                options: None,
             }
         } else {
             SchemaOperation::CreateTable {

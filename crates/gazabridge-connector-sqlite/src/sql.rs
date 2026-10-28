@@ -329,7 +329,7 @@ pub fn plan(ops: &[SchemaOperation]) -> ConnectorResult<DdlPlan> {
             SchemaOperation::CreateNamespace { .. } => {
                 return Err(ConnectorError::unsupported(Capability::CreateSchema));
             }
-            SchemaOperation::CreateCollection { .. } => {
+            SchemaOperation::CreateCollection { .. } | SchemaOperation::AlterCollection { .. } => {
                 return Err(ConnectorError::unsupported(Capability::CreateCollection));
             }
         }

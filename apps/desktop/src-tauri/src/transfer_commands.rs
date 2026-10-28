@@ -24,6 +24,7 @@ use crate::state::AppState;
 
 fn invalid(message: impl Into<String>) -> CommandError {
     CommandError {
+        connection_id: None,
         code: "invalid_input".into(),
         message: message.into(),
     }
@@ -191,6 +192,7 @@ pub fn status_impl(state: &AppState, op_id: &str) -> Result<TransferStatusDto, C
         .status(op_id)
         .map(status_dto)
         .ok_or_else(|| CommandError {
+            connection_id: None,
             code: "not_found".into(),
             message: format!("no operation `{op_id}`"),
         })
@@ -261,6 +263,7 @@ pub async fn pick_file_path(
         dialog.pick_file(send);
     }
     rx.await.map_err(|_| CommandError {
+        connection_id: None,
         code: "ipc".into(),
         message: "the file dialog closed unexpectedly".into(),
     })

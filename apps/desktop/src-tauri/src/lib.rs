@@ -36,6 +36,7 @@ pub fn run() {
             commands::list_profiles,
             commands::query_logs,
             connection_commands::get_connection,
+            connection_commands::unlock_connection,
             connection_commands::save_connection,
             connection_commands::create_connection_from_string,
             connection_commands::delete_connection,

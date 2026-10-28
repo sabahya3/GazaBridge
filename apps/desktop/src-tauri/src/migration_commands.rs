@@ -22,6 +22,7 @@ use crate::state::AppState;
 
 fn invalid(message: impl Into<String>) -> CommandError {
     CommandError {
+        connection_id: None,
         code: "invalid_input".into(),
         message: message.into(),
     }

@@ -243,7 +243,7 @@ pub fn plan(ops: &[SchemaOperation]) -> ConnectorResult<DdlPlan> {
                 });
             }
             SchemaOperation::TruncateObject { object } => statements.push(format!("TRUNCATE TABLE {}", qualified(object)?)),
-            SchemaOperation::CreateCollection { .. } => return Err(ConnectorError::unsupported(Capability::CreateCollection)),
+            SchemaOperation::CreateCollection { .. } | SchemaOperation::AlterCollection { .. } => return Err(ConnectorError::unsupported(Capability::CreateCollection)),
         }
     }
     if statements.len() > 1 {

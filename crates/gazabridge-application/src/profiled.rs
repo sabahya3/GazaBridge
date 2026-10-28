@@ -55,7 +55,8 @@ impl ProfiledConnection {
             self.allow(match op {
                 SchemaOperation::CreateNamespace { .. } => Capability::CreateSchema,
                 SchemaOperation::CreateTable { .. } => Capability::CreateTable,
-                SchemaOperation::CreateCollection { .. } => Capability::CreateCollection,
+                SchemaOperation::CreateCollection { .. }
+                | SchemaOperation::AlterCollection { .. } => Capability::CreateCollection,
                 SchemaOperation::CreateIndex { .. } => Capability::CreateIndex,
                 SchemaOperation::DropObject { .. } => Capability::DropObject,
                 SchemaOperation::TruncateObject { .. } => Capability::TruncateObject,

@@ -2223,6 +2223,7 @@ dependencies = [
 name = "gazabridge-desktop"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gazabridge-application",
  "gazabridge-connector-mongodb",
  "gazabridge-connector-postgres",
@@ -2238,14 +2239,17 @@ dependencies = [
  "gazabridge-query",
  "gazabridge-secrets",
  "gazabridge-storage",
+ "mongodb",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
+ "testcontainers-modules",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
  "zeroize",
 ]
@@ -2424,6 +2428,7 @@ name = "gazabridge-ui"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "futures-channel",
  "gazabridge-ipc",
  "gazabridge-query",
  "js-sys",

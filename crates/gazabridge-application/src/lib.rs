@@ -48,16 +48,33 @@ pub enum AppError {
     /// The operation needs explicit confirmation; carries the risk names.
     #[error("confirmation required: {0}")]
     ConfirmationRequired(String),
+    /// The connection's password must be entered: it is asked each time,
+    /// or the OS keychain did not release it (e.g. after an app update).
+    #[error("{reason} Enter the password of “{name}” to continue.")]
+    PasswordNeeded {
+        connection: gazabridge_domain::ids::ConnectionId,
+        name: String,
+        reason: String,
+    },
 }
 
 impl AppError {
     /// Stable machine-readable code for IPC and CLI exit mapping.
+    /// The connection a `password_required` error is about.
+    pub fn connection_id(&self) -> Option<String> {
+        match self {
+            Self::PasswordNeeded { connection, .. } => Some(connection.to_string()),
+            _ => None,
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::Storage(gazabridge_storage::StorageError::NotFound(_)) => "not_found",
             Self::Storage(gazabridge_storage::StorageError::InvalidState(_)) => "invalid_input",
             Self::Storage(_) => "storage",
             Self::Secret(gazabridge_secrets::SecretError::PromptRequired) => "password_required",
+            Self::PasswordNeeded { .. } => "password_required",
             Self::Secret(_) => "secret_store",
             Self::Connector(e) => match e.kind() {
                 ErrorKind::Authentication => "authentication",

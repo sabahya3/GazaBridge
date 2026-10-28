@@ -18,6 +18,7 @@ fn fail(state: &AppState, code: &str, e: impl std::fmt::Display) -> CommandError
     let message = state.secrets.redactor().scrub(&e.to_string());
     tracing::warn!(code, %message, "command failed");
     CommandError {
+        connection_id: None,
         code: code.to_owned(),
         message,
     }
@@ -59,6 +60,7 @@ pub async fn set_preferences(
 ) -> Result<(), CommandError> {
     if !(1..=10_000).contains(&preferences.default_row_limit) {
         return Err(CommandError {
+            connection_id: None,
             code: "invalid_input".into(),
             message: "default row limit must be between 1 and 10000".into(),
         });

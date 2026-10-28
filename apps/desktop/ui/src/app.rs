@@ -109,7 +109,89 @@ pub fn App() -> impl IntoView {
             <Show when=move || palette_open.get()>
                 <CommandPalette open=palette_open />
             </Show>
+            <PasswordDialog />
         </div>
+    }
+}
+
+#[derive(serde::Serialize)]
+struct UnlockWrap<'a> {
+    args: &'a gazabridge_ipc::UnlockArgs,
+}
+
+/// Asks for a connection's password when a command needs it, then lets the
+/// waiting commands retry.
+#[component]
+fn PasswordDialog() -> impl IntoView {
+    let ui = use_ui();
+    let ask = RwSignal::new(None::<(String, String)>);
+    let waiters = StoredValue::new(Vec::<futures_channel::oneshot::Sender<bool>>::new());
+    let password = RwSignal::new(String::new());
+    let remember = RwSignal::new(true);
+    let error = RwSignal::new(None::<String>);
+    let busy = RwSignal::new(false);
+    crate::ipc::set_password_prompt(Box::new(move |id, message, tx| {
+        waiters.update_value(|w| w.push(tx));
+        if ask.get_untracked().is_none() {
+            password.set(String::new());
+            error.set(None);
+            ask.set(Some((id, message)));
+        }
+    }));
+    let finish = move |ok: bool| {
+        waiters.update_value(|w| {
+            for tx in w.drain(..) {
+                let _ = tx.send(ok);
+            }
+        });
+        password.set(String::new());
+        ask.set(None);
+    };
+    let unlock = move || {
+        let Some((id, _)) = ask.get_untracked() else {
+            return;
+        };
+        let args = gazabridge_ipc::UnlockArgs {
+            connection_id: id,
+            password: password.get_untracked(),
+            remember: remember.get_untracked(),
+        };
+        busy.set(true);
+        spawn_local(async move {
+            match call::<_, bool>(commands::UNLOCK_CONNECTION, &UnlockWrap { args: &args }).await {
+                Ok(_) => finish(true),
+                Err(e) => error.set(Some(e.message)),
+            }
+            busy.set(false);
+        });
+    };
+    move || {
+        ask.get().map(|(_, message)| {
+            view! {
+                <div class="modal-backdrop">
+                    <div class="modal pw-dialog" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+                        <h3 id="pw-title">{ui.tr("pw.title")}</h3>
+                        <p class="small">{message}</p>
+                        <form on:submit=move |e| { e.prevent_default(); unlock(); }>
+                            <label class="field">
+                                <span>{ui.tr("pw.password")}</span>
+                                <input class="input" type="password" autocomplete="current-password" autofocus
+                                    prop:value=move || password.get() on:input=move |e| password.set(event_target_value(&e)) />
+                            </label>
+                            <label class="field-check">
+                                <input type="checkbox" prop:checked=move || remember.get() on:change=move |e| remember.set(event_target_checked(&e)) />
+                                <span>{ui.tr("pw.remember")}</span>
+                            </label>
+                            {move || error.get().map(|e| view! { <p class="error-detail">{e}</p> })}
+                            <div class="toolbar modal-footer">
+                                <button type="submit" class="btn" disabled=move || busy.get() || password.get().is_empty()>{ui.tr("pw.unlock")}</button>
+                                <button type="button" class="btn btn-secondary" on:click=move |_| finish(false)>{ui.tr("common.cancel")}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            }
+        })
     }
 }
 

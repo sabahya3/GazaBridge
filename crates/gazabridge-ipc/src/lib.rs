@@ -67,6 +67,7 @@ pub mod commands {
     pub const MIGRATION_RECENT: &str = "migration_recent";
     pub const MIGRATION_DRY_RUN: &str = "migration_dry_run";
     pub const MIGRATION_VALIDATE: &str = "migration_validate";
+    pub const UNLOCK_CONNECTION: &str = "unlock_connection";
     pub const BACKUP_TOOLS: &str = "backup_tools";
     pub const BACKUP_LIST: &str = "backup_list";
     pub const BACKUP_START: &str = "backup_start";
@@ -204,11 +205,33 @@ pub struct LogLine {
     pub job_id: Option<String>,
 }
 
+/// The password of a connection, entered when it is needed.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnlockArgs {
+    pub connection_id: String,
+    pub password: String,
+    /// Save it in the OS keychain again.
+    pub remember: bool,
+}
+
+impl std::fmt::Debug for UnlockArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnlockArgs")
+            .field("connection_id", &self.connection_id)
+            .field("password", &"<redacted>")
+            .field("remember", &self.remember)
+            .finish()
+    }
+}
+
 /// Errors returned by commands: a stable code plus a redacted message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandError {
     pub code: String,
     pub message: String,
+    /// `password_required`: the connection whose password is needed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
 }
 
 impl std::fmt::Display for CommandError {

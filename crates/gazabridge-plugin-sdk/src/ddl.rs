@@ -62,6 +62,17 @@ pub enum SchemaOperation {
     CreateCollection {
         object: ObjectRef,
         if_not_exists: bool,
+        /// Engine options as Extended JSON (MongoDB: `create` options such
+        /// as `capped`, `collation`, `timeseries`, or `viewOn` + `pipeline`
+        /// for a view).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<serde_json::Value>,
+    },
+    /// Changes options of an existing collection (MongoDB `collMod`), e.g.
+    /// a validator added once the data is in place.
+    AlterCollection {
+        object: ObjectRef,
+        options: serde_json::Value,
     },
     CreateIndex {
         object: ObjectRef,

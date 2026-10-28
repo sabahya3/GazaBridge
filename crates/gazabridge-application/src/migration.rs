@@ -31,7 +31,7 @@ use gazabridge_migration::{
 use gazabridge_plugin_sdk::connector::{Connection, InspectOptions};
 use gazabridge_plugin_sdk::ddl::{IndexDefinition, SchemaOperation};
 use gazabridge_plugin_sdk::read::ReadPosition;
-use gazabridge_plugin_sdk::schema::{ObjectKind, ObjectRef};
+use gazabridge_plugin_sdk::schema::ObjectRef;
 use gazabridge_storage::MetadataStore;
 use gazabridge_storage::audit::NewAuditEvent;
 use gazabridge_storage::jobs::{Checkpoint, EventLevel, NewJob, NewRun, RunRecord};
@@ -430,7 +430,7 @@ impl MigrationService {
             ItemMapping::DocToTable { mapping, .. } => {
                 mapping.tables.iter().map(|t| t.target.clone()).collect()
             }
-            ItemMapping::Embedded { .. } => Vec::new(),
+            ItemMapping::Embedded { .. } | ItemMapping::View { .. } => Vec::new(),
             _ => vec![item.target.clone()],
         };
         let mut existing = convert::Existing::default();
@@ -557,11 +557,7 @@ impl MigrationService {
                     item.source
                 ));
             }
-            if item.source.kind == ObjectKind::View {
-                p.warnings.push(
-                    "a view is copied as a regular collection holding its current results".into(),
-                );
-            }
+            let spec = convert::collection_spec(source.as_ref(), &item.source).await;
             p.source_count = source
                 .count(&item.source, None, false)
                 .await
@@ -586,7 +582,6 @@ impl MigrationService {
                     .map(|c| c.count);
             }
             let has_data = p.target_count.unwrap_or(0) > 0;
-            let mut ops = Vec::new();
             match req.existing {
                 ExistingData::Replace if p.target_exists => {
                     plan.destructive = true;
@@ -594,10 +589,6 @@ impl MigrationService {
                         "the target collection and its {} document(s) will be dropped first",
                         p.target_count.map_or("~?".into(), |c| c.to_string())
                     ));
-                    ops.push(SchemaOperation::DropObject {
-                        object: item.target.clone(),
-                        if_exists: true,
-                    });
                 }
                 ExistingData::Fail if has_data => p.warnings.push(
                     "the target already has documents; the copy stops at the first _id that exists"
@@ -612,11 +603,56 @@ impl MigrationService {
                 ),
                 _ => {}
             }
-            ops.push(SchemaOperation::CreateCollection {
-                object: item.target.clone(),
-                if_not_exists: true,
-            });
-            if req.copy_indexes {
+            let mapping = convert::copy_mapping(
+                spec,
+                p.target_exists && req.existing != ExistingData::Replace,
+            );
+            match &mapping {
+                ItemMapping::View { options } => {
+                    p.kind = "view".into();
+                    p.warnings.push(format!(
+                        "recreated as a view on `{}` (no data is copied)",
+                        options
+                            .get("viewOn")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                    ));
+                }
+                ItemMapping::Collection {
+                    options, validator, ..
+                } => {
+                    if options.is_some() {
+                        p.warnings.push(
+                            "collection options (capped, collation, time series…) are copied"
+                                .into(),
+                        );
+                    }
+                    if options
+                        .as_ref()
+                        .is_some_and(|o| o.get("timeseries").is_some())
+                    {
+                        p.warnings.push(
+                            "time series have no unique _id: if this copy is interrupted and resumed, the last batch may be written twice"
+                                .into(),
+                        );
+                    }
+                    if validator.is_some()
+                        && p.target_exists
+                        && req.existing != ExistingData::Replace
+                    {
+                        p.warnings.push(
+                            "the source has validation rules; the existing target keeps its own"
+                                .into(),
+                        );
+                    } else if validator.is_some() {
+                        p.warnings
+                            .push("validation rules are applied after the data is copied".into());
+                    }
+                }
+                _ => {}
+            }
+            let mut ops = mapping.prepare_ops(item, req.existing);
+            if req.copy_indexes && !matches!(mapping, ItemMapping::View { .. }) {
                 for ix in self
                     .indexes_to_copy(
                         source.as_ref(),
@@ -635,12 +671,13 @@ impl MigrationService {
                     });
                 }
             }
+            ops.extend(mapping.finish_ops(item));
             match target.plan_ddl(&ops) {
                 Ok(d) => p.statements = d.statements,
                 Err(e) => plan.blockers.push(format!("{}: {e}", item.target)),
             }
             plan.items.push(p);
-            mappings.push(ItemMapping::Copy);
+            mappings.push(mapping);
         }
         Ok((plan, mappings))
     }
@@ -1113,9 +1150,37 @@ impl MigrationService {
             }
         }
         // Indexes are read before copying so a later failure still reports them.
+        if let ItemMapping::View { .. } = mapping {
+            set_stream(streams, i, |v| v.phase = StreamPhase::Done);
+            if !run.dry_run {
+                let _ = checkpoint(
+                    &self.store,
+                    run.id,
+                    &run.config_fingerprint,
+                    &key,
+                    &Saved {
+                        position: None,
+                        stats: StreamStats::default(),
+                        indexes_created: 0,
+                        quarantine: None,
+                    },
+                    true,
+                )
+                .await;
+            }
+            self.event(
+                run.id,
+                EventLevel::Info,
+                "view",
+                Some(&key),
+                &format!("{} recreated as a view", item.target),
+            )
+            .await;
+            return StreamEnd::Done { warnings: false };
+        }
         let indexes = if run.dry_run {
             Vec::new()
-        } else if *mapping != ItemMapping::Copy {
+        } else if !matches!(mapping, ItemMapping::Copy | ItemMapping::Collection { .. }) {
             if req.copy_indexes {
                 mapping.index_ops(item)
             } else {
@@ -1281,6 +1346,28 @@ impl MigrationService {
                         .scrub(&format!("index `{name}` was not created: {e}"));
                     self.event(run.id, EventLevel::Warning, "index_failed", Some(&key), &m)
                         .await;
+                }
+            }
+        }
+        // Validation rules last, so documents already copied are accepted.
+        if !run.dry_run {
+            for op in mapping.finish_ops(item) {
+                if let Err(e) = target
+                    .apply_ddl(std::slice::from_ref(&op), CancellationToken::new())
+                    .await
+                {
+                    warnings = true;
+                    let m = self
+                        .redactor
+                        .scrub(&format!("the validation rules were not applied: {e}"));
+                    self.event(
+                        run.id,
+                        EventLevel::Warning,
+                        "validator_failed",
+                        Some(&key),
+                        &m,
+                    )
+                    .await;
                 }
             }
         }
@@ -1512,7 +1599,10 @@ impl MigrationService {
         let mut out = Vec::new();
         for (i, item) in req.items.iter().enumerate() {
             let mapping = def.mappings.get(i).cloned().unwrap_or(ItemMapping::Copy);
-            if matches!(mapping, ItemMapping::Embedded { .. }) {
+            if matches!(
+                mapping,
+                ItemMapping::Embedded { .. } | ItemMapping::View { .. }
+            ) {
                 continue;
             }
             let (transform, how): (Arc<dyn Transform>, Comparison) =
@@ -1525,7 +1615,13 @@ impl MigrationService {
                             owner: None,
                             replace: false,
                         })),
-                        Comparison::Exact,
+                        // Time series documents come back in no fixed field order.
+                        match &mapping {
+                            ItemMapping::Collection {
+                                options: Some(o), ..
+                            } if o.get("timeseries").is_some() => Comparison::ExactUnordered,
+                            _ => Comparison::Exact,
+                        },
                     ),
                 };
             let live = self.validations.clone();

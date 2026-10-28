@@ -20,6 +20,7 @@ use crate::state::AppState;
 
 fn invalid(message: impl Into<String>) -> CommandError {
     CommandError {
+        connection_id: None,
         code: "invalid_input".into(),
         message: message.into(),
     }
@@ -197,6 +198,7 @@ pub async fn backup_status(
         .status(&args.op_id)
         .map(status_dto)
         .ok_or_else(|| CommandError {
+            connection_id: None,
             code: "not_found".into(),
             message: format!("no operation `{}`", args.op_id),
         })

@@ -16,6 +16,7 @@ use crate::state::AppState;
 
 pub(crate) fn app_error(state: &AppState, e: AppError) -> CommandError {
     CommandError {
+        connection_id: e.connection_id(),
         code: e.code().to_owned(),
         message: state.secrets.redactor().scrub(&e.to_string()),
     }
@@ -23,6 +24,7 @@ pub(crate) fn app_error(state: &AppState, e: AppError) -> CommandError {
 
 fn form_error(e: FormError) -> CommandError {
     CommandError {
+        connection_id: None,
         code: "invalid_input".into(),
         message: e.0,
     }
@@ -30,6 +32,7 @@ fn form_error(e: FormError) -> CommandError {
 
 pub(crate) fn parse_id(id: &str) -> Result<ConnectionId, CommandError> {
     id.parse().map_err(|_| CommandError {
+        connection_id: None,
         code: "invalid_input".into(),
         message: "invalid connection id".into(),
     })
@@ -108,6 +111,7 @@ pub async fn create_from_string_impl(
 pub fn parse_string_impl(text: &str) -> Result<ParsedStringDto, CommandError> {
     let parsed =
         gazabridge_domain::connection_string::parse(text.trim()).map_err(|e| CommandError {
+            connection_id: None,
             code: "invalid_input".into(),
             message: e.to_string(),
         })?;
@@ -384,4 +388,19 @@ mod tests {
         .unwrap_err();
         assert!(!err.message.contains("topsecret"), "{}", err.message);
     }
+}
+
+/// Uses a password for a connection this session; `remember` saves it in
+/// the keychain again. Returns whether it was saved.
+#[tauri::command]
+pub async fn unlock_connection(
+    state: tauri::State<'_, AppState>,
+    args: gazabridge_ipc::UnlockArgs,
+) -> Result<bool, CommandError> {
+    let id = parse_id(&args.connection_id)?;
+    state
+        .connections
+        .unlock(id, zeroize::Zeroizing::new(args.password), args.remember)
+        .await
+        .map_err(|e| app_error(&state, e))
 }

@@ -619,5 +619,9 @@
   "bk.type_to_confirm": "للتأكيد اكتب اسم الهدف:",
   "bk.restore_start": "استرجع",
   "mig.backup_first": "خد نسخة احتياطية من الهدف قبل حذفه",
-  "mig.backup_at": "نسخة الهدف قبل حذفه:"
+  "mig.backup_at": "نسخة الهدف قبل حذفه:",
+  "pw.title": "مطلوب كلمة السر",
+  "pw.password": "كلمة السر",
+  "pw.remember": "احفظها في سلسلة مفاتيح macOS تاني",
+  "pw.unlock": "كمّل"
 }

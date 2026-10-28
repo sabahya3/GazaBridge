@@ -619,5 +619,9 @@
   "bk.type_to_confirm": "To confirm, type the target name:",
   "bk.restore_start": "Restore",
   "mig.backup_first": "Back up the target before deleting it",
-  "mig.backup_at": "Backup of the target before it was deleted:"
+  "mig.backup_at": "Backup of the target before it was deleted:",
+  "pw.title": "Password needed",
+  "pw.password": "Password",
+  "pw.remember": "Save it in the macOS keychain again",
+  "pw.unlock": "Continue"
 }

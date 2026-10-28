@@ -928,6 +928,7 @@ impl BackupService {
                 None => ops.push(SchemaOperation::CreateCollection {
                     object: to,
                     if_not_exists: true,
+                    options: None,
                 }),
             }
         }

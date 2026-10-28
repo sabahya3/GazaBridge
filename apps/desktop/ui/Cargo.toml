@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
+futures-channel = "0.3.31"
 gazabridge-ipc.workspace = true
 gazabridge-query.workspace = true
 js-sys = "0.3.82"
