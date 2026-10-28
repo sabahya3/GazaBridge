@@ -32,6 +32,8 @@ pub enum FileFormat {
     Jsonl,
     Bson,
     Csv,
+    /// Excel workbook; one sheet, same column options as CSV. Write-only.
+    Xlsx,
 }
 
 impl FileFormat {
@@ -41,11 +43,12 @@ impl FileFormat {
             Self::Jsonl => "jsonl",
             Self::Bson => "bson",
             Self::Csv => "csv",
+            Self::Xlsx => "xlsx",
         }
     }
 
     pub fn readable(self) -> bool {
-        !matches!(self, Self::Csv)
+        !matches!(self, Self::Csv | Self::Xlsx)
     }
 }
 
@@ -134,6 +137,7 @@ pub fn detect(path: &Path) -> Option<(FileFormat, Compression)> {
         "jsonl" | "ndjson" => FileFormat::Jsonl,
         "bson" => FileFormat::Bson,
         "csv" => FileFormat::Csv,
+        "xlsx" => FileFormat::Xlsx,
         _ => return None,
     };
     Some((format, compression))

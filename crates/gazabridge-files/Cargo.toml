@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 base64.workspace = true
 csv = "1.3"
+rust_xlsxwriter = { version = "0.101", default-features = false, features = ["constant_memory"] }
 flate2 = "1.1"
 gazabridge-bson.workspace = true
 gazabridge-domain.workspace = true
@@ -18,12 +19,14 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }
 thiserror.workspace = true
 
 [dev-dependencies]
 bigdecimal.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

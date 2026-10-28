@@ -109,7 +109,7 @@ impl FileReader {
             FileFormat::Json => Source::Json(ArrayScanner::new(reader)),
             FileFormat::Jsonl => Source::Jsonl(reader),
             FileFormat::Bson => Source::Bson(reader),
-            FileFormat::Csv => unreachable!("checked above"),
+            FileFormat::Csv | FileFormat::Xlsx => unreachable!("checked above"),
         };
         let quarantine_path = match &options.malformed {
             MalformedPolicy::Quarantine { path } => Some(path.clone()),

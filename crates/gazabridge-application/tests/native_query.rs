@@ -256,6 +256,9 @@ async fn query_bar_filters_project_sort_count_and_export() {
                 filter: Some(native("{age: {$lt: 40}}")),
                 projection: vec!["name".into()],
                 exclude: vec![],
+                order_by: vec![],
+                skip: 0,
+                limit: None,
                 path: path.clone(),
                 options: WriteOptions::new(FileFormat::Jsonl),
             },
@@ -270,6 +273,45 @@ async fn query_bar_filters_project_sort_count_and_export() {
         text.contains("Sara") && !text.contains("phoneNumber") && !text.contains("ahmad"),
         "{text}"
     );
+
+    // ...and its Sort, Skip and Limit: Limit 1 after Skip 1, oldest first,
+    // is exactly the second-oldest user, in Excel too.
+    for (name, format) in [
+        ("page.json", FileFormat::Json),
+        ("page.xlsx", FileFormat::Xlsx),
+    ] {
+        let path = dir.path().join(name);
+        let out = transfers
+            .export(
+                id,
+                ExportRequest {
+                    object: users.clone(),
+                    filter: None,
+                    projection: vec!["name".into(), "age".into()],
+                    exclude: vec!["_id".into()],
+                    order_by: vec![SortKey {
+                        field: FieldPath::new("age"),
+                        direction: SortDirection::Desc,
+                    }],
+                    skip: 1,
+                    limit: Some(1),
+                    path: path.clone(),
+                    options: WriteOptions::new(format),
+                },
+                CancellationToken::new(),
+                |_| {},
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.file.unwrap().records, 1, "{name}");
+        if format == FileFormat::Json {
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                text.contains("Ahmed") && !text.contains("Sara") && !text.contains("ahmad"),
+                "{text}"
+            );
+        }
+    }
 
     // Native filters are refused where they cannot apply (destructive guard).
     assert!(!native("{}").is_restrictive());

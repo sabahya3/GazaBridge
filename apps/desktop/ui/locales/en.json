@@ -272,7 +272,7 @@
   "transfer.choose": "Choose…",
   "transfer.close": "Close",
   "transfer.csv_columns": "Columns (comma separated)",
-  "transfer.csv_columns_help": "Leave empty to use the table's columns, or the top-level fields found in a sample of the collection.",
+  "transfer.csv_columns_help": "Leave empty to use the query's Project, else the table's columns or the top-level fields found in a sample of the collection.",
   "transfer.csv_delimiter": "Delimiter",
   "transfer.csv_ignore": "Leave out fields that are not columns (they are listed afterwards)",
   "transfer.csv_loss": "CSV is text: nested values are written as JSON, and empty cells cannot tell a missing field from an empty string. Use JSON or BSON to keep types.",
@@ -351,7 +351,7 @@
   "transfer.current_query": "Only the results of the current query",
   "transfer.no_query": "No filter or query is applied in the viewer.",
   "transfer.records": "records",
-  "transfer.sort_note": "Sort and paging are not applied to exports; the query's filter and Project are.",
+  "transfer.sort_note": "The export holds exactly what the query shows: its filter, Project, Sort, Skip and Limit.",
   "agg.add_stage": "Add stage",
   "agg.after_stage": "After stage",
   "agg.enabled": "On",
@@ -447,5 +447,9 @@
   "qb.done": "Done",
   "connections.open": "Open",
   "connections.state_ready": "Ready",
-  "explorer.open_connection": "Open a connection on the left to browse its databases."
+  "explorer.open_connection": "Open a connection on the left to browse its databases.",
+  "transfer.jsonl": "JSON Lines (one per line)",
+  "transfer.xlsx": "Excel (.xlsx)",
+  "transfer.columns_title": "Columns",
+  "transfer.xlsx_loss": "Excel keeps numbers and text; nested values are written as JSON and dates as text. A sheet holds up to 1,048,576 rows. Use JSON or BSON to keep types."
 }

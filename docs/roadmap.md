@@ -165,7 +165,7 @@ data on every supported engine; no view ever issues an unbounded query.
 | 4.1 | `gazabridge-files` crate implementing the connector traits for files | S |
 | 4.2 | CSV/TSV: delimiter/header detection, quoting, encodings (`encoding_rs`), NULL markers, type inference, malformed-row policies, exact line numbers | M |
 | 4.3 | JSON (streaming arrays, JSON path selection), JSONL/NDJSON with stop/skip/quarantine/repair policies | M |
-| 4.4 | Excel: read with `calamine` (sheet, range, header row, formula vs value), write with `rust_xlsxwriter` | M |
+| 4.4 | Excel: read with `calamine` (sheet, range, header row, formula vs value), write with `rust_xlsxwriter` (writing done: one sheet, frozen header, exact numbers, CSV column rules; reading still to do) | M |
 | 4.5 | Parquet and Arrow IPC via `arrow`/`parquet`: schema inspection, projection, predicate pushdown, batched reads, type mapping | M |
 | 4.6 | SQLite files as sources/targets (reuse the SQLite connector); BSON exports | S |
 | 4.7 | Compression: gzip (`flate2`), zstd, ZIP with entry selection, ratio and size limits, path-traversal checks | M |

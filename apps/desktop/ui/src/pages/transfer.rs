@@ -65,8 +65,11 @@ pub fn TransferPanel(
     direction: Direction,
     /// The filter applied in the viewer (exports can use it).
     filter: Signal<Option<FilterDto>>,
-    /// The query bar's applied query (filter and projection).
+    /// The query bar's applied query (filter, projection and sort).
     query: Signal<Option<NativeQueryDto>>,
+    /// The query bar's Skip and Limit.
+    skip: Signal<u64>,
+    limit: Signal<Option<u64>>,
     /// How many records the viewer's current filter or query matches.
     matching: Signal<Option<CountDto>>,
     key_fields: Vec<String>,
@@ -76,7 +79,7 @@ pub fn TransferPanel(
 ) -> impl IntoView {
     let ui = use_ui();
     let is_collection = object.kind == "collection";
-    let format = RwSignal::new("jsonl".to_owned());
+    let format = RwSignal::new("json".to_owned());
     let flavor = RwSignal::new(
         if is_collection {
             "mongo_relaxed"
@@ -87,9 +90,10 @@ pub fn TransferPanel(
     );
     let gzip = RwSignal::new(false);
     let pretty = RwSignal::new(false);
-    let has_query = move || filter.get().is_some() || query.get().is_some();
-    let use_filter =
-        RwSignal::new(filter.get_untracked().is_some() || query.get_untracked().is_some());
+    let has_query = move || {
+        filter.get().is_some() || query.get().is_some() || skip.get() > 0 || limit.get().is_some()
+    };
+    let use_filter = RwSignal::new(has_query());
     // Size of the whole object, for the "everything" choice.
     let total = RwSignal::new(None::<CountDto>);
     let path = RwSignal::new(String::new());
@@ -141,13 +145,21 @@ pub fn TransferPanel(
                     q.filter.trim()
                 ));
             }
-            if !q.project.trim().is_empty() {
-                parts.push(format!(
-                    "{}: {}",
-                    ui.text("explorer.q_project"),
-                    q.project.trim()
-                ));
+            for (key, text) in [
+                ("explorer.q_project", &q.project),
+                ("explorer.q_sort", &q.sort),
+            ] {
+                let t = text.trim();
+                if !t.is_empty() && t != "{}" {
+                    parts.push(format!("{}: {t}", ui.text(key)));
+                }
             }
+        }
+        if skip.get() > 0 {
+            parts.push(format!("{}: {}", ui.text("explorer.q_skip"), skip.get()));
+        }
+        if let Some(l) = limit.get() {
+            parts.push(format!("{}: {l}", ui.text("explorer.q_limit"),));
         }
         if let Some(f) = filter.get() {
             let joiner = if f.any { " OR " } else { " AND " };
@@ -164,6 +176,20 @@ pub fn TransferPanel(
             );
         }
         parts.join("  ·  ")
+    };
+    // What the query exports: its matches, after Skip, at most Limit.
+    let query_count = move || {
+        let (skip, limit) = (skip.get(), limit.get());
+        match matching.get() {
+            Some(mut c) => {
+                c.count = c.count.saturating_sub(skip).min(limit.unwrap_or(u64::MAX));
+                Some(c)
+            }
+            None => limit.map(|l| CountDto {
+                count: l,
+                exact: false,
+            }),
+        }
     };
 
     let poll = move |op: String| {
@@ -274,6 +300,16 @@ pub fn TransferPanel(
                         } else {
                             None
                         },
+                        skip: if use_filter.get_untracked() {
+                            skip.get_untracked()
+                        } else {
+                            0
+                        },
+                        limit: if use_filter.get_untracked() {
+                            limit.get_untracked()
+                        } else {
+                            None
+                        },
                         path: path.get_untracked(),
                         format: format.get_untracked(),
                         json_flavor: flavor.get_untracked(),
@@ -370,7 +406,7 @@ pub fn TransferPanel(
                             {move || if has_query() {
                                 view! {
                                     <code class="mono small scope-query"><bdi>{query_text()}</bdi></code>
-                                    <span class="muted small">{count_text(matching.get())}</span>
+                                    <span class="muted small">{count_text(query_count())}</span>
                                 }.into_any()
                             } else {
                                 view! { <span class="muted small">{ui.tr("transfer.no_query")}</span> }.into_any()
@@ -384,11 +420,20 @@ pub fn TransferPanel(
             <div class="toolbar">
                 <label class="field-inline">
                     <span>{ui.tr("transfer.format")}</span>
-                    <select class="input" on:change=move |e| format.set(event_target_value(&e))>
-                        <option value="jsonl" selected=move || format.get() == "jsonl">"JSONL / NDJSON"</option>
+                    <select class="input" on:change=move |e| {
+                        let f = event_target_value(&e);
+                        if f == "xlsx" {
+                            gzip.set(false);
+                        }
+                        format.set(f);
+                    }>
                         <option value="json" selected=move || format.get() == "json">"JSON"</option>
+                        <option value="jsonl" selected=move || format.get() == "jsonl">{ui.tr("transfer.jsonl")}</option>
+                        {(direction == Direction::Export).then(|| view! {
+                            <option value="csv" selected=move || format.get() == "csv">"CSV"</option>
+                            <option value="xlsx" selected=move || format.get() == "xlsx">{ui.tr("transfer.xlsx")}</option>
+                        })}
                         <option value="bson" selected=move || format.get() == "bson">{ui.tr("transfer.bson")}</option>
-                        {(direction == Direction::Export).then(|| view! { <option value="csv" selected=move || format.get() == "csv">"CSV"</option> })}
                     </select>
                 </label>
                 <Show when=is_json>
@@ -401,10 +446,12 @@ pub fn TransferPanel(
                         </select>
                     </label>
                 </Show>
-                <label class="field-check">
-                    <input type="checkbox" prop:checked=move || gzip.get() on:change=move |e| gzip.set(event_target_checked(&e)) />
-                    <span>"gzip"</span>
-                </label>
+                <Show when=move || format.get() != "xlsx">
+                    <label class="field-check">
+                        <input type="checkbox" prop:checked=move || gzip.get() on:change=move |e| gzip.set(event_target_checked(&e)) />
+                        <span>"gzip"</span>
+                    </label>
+                </Show>
             </div>
             <Show when=is_json>
                 <p class="muted small">{ui.tr("transfer.flavor_help")}</p>
@@ -433,15 +480,16 @@ pub fn TransferPanel(
                             </label>
                         </Show>
                     </div>
-                    <Show when=move || format.get() == "csv">
+                    <Show when=move || matches!(format.get().as_str(), "csv" | "xlsx")>
                         <fieldset class="field-group">
-                            <legend>"CSV"</legend>
+                            <legend>{ui.tr("transfer.columns_title")}</legend>
                             <label class="field">
                                 <span>{ui.tr("transfer.csv_columns")}</span>
                                 <input class="input mono" type="text" prop:value=move || csv_columns.get() on:input=move |e| csv_columns.set(event_target_value(&e)) />
                                 <span class="muted small">{ui.tr("transfer.csv_columns_help")}</span>
                             </label>
                             <div class="toolbar">
+                                <Show when=move || format.get() == "csv">
                                 <label class="field-inline">
                                     <span>{ui.tr("transfer.csv_delimiter")}</span>
                                     <select class="input" on:change=move |e| csv_delimiter.set(event_target_value(&e))>
@@ -451,6 +499,7 @@ pub fn TransferPanel(
                                         <option value="|">"|"</option>
                                     </select>
                                 </label>
+                                </Show>
                                 <label class="field-inline">
                                     <span>{ui.tr("transfer.csv_null")}</span>
                                     <input class="input mono" type="text" size="6" prop:value=move || csv_null.get() on:input=move |e| csv_null.set(event_target_value(&e)) />
@@ -460,7 +509,7 @@ pub fn TransferPanel(
                                 <input type="checkbox" prop:checked=move || csv_ignore.get() on:change=move |e| csv_ignore.set(event_target_checked(&e)) />
                                 <span>{ui.tr("transfer.csv_ignore")}</span>
                             </label>
-                            <p class="muted small">{ui.tr("transfer.csv_loss")}</p>
+                            <p class="muted small">{move || if format.get() == "xlsx" { ui.tr("transfer.xlsx_loss") } else { ui.tr("transfer.csv_loss") }}</p>
                         </fieldset>
                     </Show>
                 }.into_any(),

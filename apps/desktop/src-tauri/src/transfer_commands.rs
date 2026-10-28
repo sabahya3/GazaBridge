@@ -65,6 +65,9 @@ pub fn export_request(args: &ExportArgs) -> Result<ExportRequest, CommandError> 
         filter: combine(filter(args.filter.as_ref())?, q.filter),
         projection: q.include,
         exclude: q.exclude,
+        order_by: q.sort,
+        skip: args.skip,
+        limit: args.limit,
         path: PathBuf::from(&args.path),
         options: WriteOptions {
             format,
@@ -356,6 +359,8 @@ mod tests {
             object: table("a"),
             filter: None,
             query: None,
+            skip: 0,
+            limit: None,
             path: out.display().to_string(),
             format: "jsonl".into(),
             json_flavor: String::new(),
@@ -383,7 +388,7 @@ mod tests {
         );
 
         // CSV with automatic columns.
-        let mut csv = export;
+        let mut csv = export.clone();
         csv.op_id = "e3".into();
         csv.format = "csv".into();
         csv.gzip = false;
@@ -393,6 +398,19 @@ mod tests {
         assert_eq!(wait(&state, "e3").await.phase, "done");
         let text = std::fs::read_to_string(dir.path().join("a.csv")).unwrap();
         assert!(text.starts_with("id,name,doc\n1,x,NULL\n"), "{text}");
+
+        // Excel holding only the query's page: Skip 1, Limit 1.
+        let mut xlsx = export.clone();
+        xlsx.op_id = "e4".into();
+        xlsx.format = "xlsx".into();
+        xlsx.gzip = false;
+        xlsx.skip = 1;
+        xlsx.limit = Some(1);
+        xlsx.path = dir.path().join("a.xlsx").display().to_string();
+        export_impl(&state, xlsx).await.unwrap();
+        let done = wait(&state, "e4").await;
+        assert_eq!(done.phase, "done", "{done:?}");
+        assert_eq!(done.summary.file.unwrap().records, 1);
 
         // Import into the second table.
         let import = ImportArgs {
@@ -474,7 +492,7 @@ mod tests {
             import_request(&args).is_ok(),
             "parsed here, refused by the service"
         );
-        args.format = "xlsx".into();
+        args.format = "docx".into();
         assert!(import_request(&args).is_err());
     }
 }

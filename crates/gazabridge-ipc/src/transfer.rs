@@ -12,11 +12,16 @@ pub struct ExportArgs {
     pub object: ObjectAddr,
     #[serde(default)]
     pub filter: Option<FilterDto>,
-    /// The query bar's filter and projection (sort does not apply).
+    /// The query bar's filter, projection and sort.
     #[serde(default)]
     pub query: Option<crate::explorer::NativeQueryDto>,
+    /// The query bar's Skip and Limit: the export holds what the query shows.
+    #[serde(default)]
+    pub skip: u64,
+    #[serde(default)]
+    pub limit: Option<u64>,
     pub path: String,
-    /// `json`, `jsonl`, `bson` or `csv`.
+    /// `json`, `jsonl`, `bson`, `csv` or `xlsx`.
     pub format: String,
     /// `typed`, `mongo_relaxed` or `mongo_canonical`.
     #[serde(default)]
@@ -28,7 +33,8 @@ pub struct ExportArgs {
     /// The user confirmed replacing an existing file.
     #[serde(default)]
     pub overwrite: bool,
-    /// Empty: the object's columns or sampled top-level fields.
+    /// CSV and Excel columns. Empty: the projection, else the object's
+    /// columns or sampled top-level fields.
     #[serde(default)]
     pub csv_columns: Vec<String>,
     #[serde(default)]

@@ -116,7 +116,7 @@ impl Write for Hashing {
 #[derive(Debug)]
 enum Sink {
     Plain(Hashing),
-    Gzip(GzEncoder<Hashing>),
+    Gzip(Box<GzEncoder<Hashing>>),
 }
 
 impl Write for Sink {
@@ -139,16 +139,25 @@ impl Sink {
     fn finish(self) -> std::io::Result<Hashing> {
         match self {
             Self::Plain(w) => Ok(w),
-            Self::Gzip(w) => w.finish(),
+            Self::Gzip(w) => (*w).finish(),
         }
     }
 }
 
 enum Encoder {
-    Json { sink: Sink, first: bool },
+    Json {
+        sink: Sink,
+        first: bool,
+    },
     Jsonl(Sink),
     Bson(Sink),
     Csv(Box<csv::Writer<Sink>>),
+    /// Rows go to a constant-memory sheet; the workbook is zipped at the end.
+    Xlsx {
+        sink: Sink,
+        workbook: Box<rust_xlsxwriter::Workbook>,
+        row: u32,
+    },
 }
 
 impl std::fmt::Debug for Encoder {
@@ -158,6 +167,7 @@ impl std::fmt::Debug for Encoder {
             Self::Jsonl(_) => "Jsonl",
             Self::Bson(_) => "Bson",
             Self::Csv(_) => "Csv",
+            Self::Xlsx { .. } => "Xlsx",
         })
     }
 }
@@ -212,6 +222,47 @@ fn csv_cell(v: &Value, null_text: &str) -> String {
     }
 }
 
+/// Excel's limits: rows per sheet (header included) and characters per cell.
+const XLSX_MAX_ROWS: u32 = 1_048_576;
+const XLSX_MAX_TEXT: usize = 32_767;
+
+fn xlsx_error(e: rust_xlsxwriter::XlsxError) -> FileError {
+    FileError::Conversion(format!("Excel: {e}"))
+}
+
+/// Numbers stay numbers when Excel can hold them exactly (doubles: 2^53);
+/// everything else is written as text, like a CSV cell.
+fn xlsx_cell(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    row: u32,
+    col: u16,
+    v: &Value,
+    null_text: &str,
+) -> FileResult<()> {
+    const EXACT: i64 = 1 << 53;
+    let r = match v {
+        Value::Missing => return Ok(()),
+        Value::Null if null_text.is_empty() => return Ok(()),
+        Value::Bool(b) => sheet.write_boolean(row, col, *b),
+        Value::Int(i) if (-EXACT..=EXACT).contains(i) => sheet.write_number(row, col, *i as f64),
+        Value::UInt(u) if *u <= EXACT as u64 => sheet.write_number(row, col, *u as f64),
+        Value::Float(f) if f.is_finite() => sheet.write_number(row, col, *f),
+        other => {
+            let text = match other {
+                Value::String(s) => s.clone(),
+                _ => csv_cell(other, null_text),
+            };
+            if text.chars().count() > XLSX_MAX_TEXT {
+                return Err(FileError::Conversion(format!(
+                    "row {row}: a value is longer than Excel's {XLSX_MAX_TEXT} characters per cell; export as CSV or JSON instead"
+                )));
+            }
+            sheet.write_string(row, col, text)
+        }
+    };
+    r.map(|_| ()).map_err(xlsx_error)
+}
+
 impl FileWriter {
     /// Starts writing `path`. Fails with [`FileError::Exists`] when the
     /// file exists and `overwrite` is false.
@@ -219,10 +270,23 @@ impl FileWriter {
         if path.exists() && !options.overwrite {
             return Err(FileError::Exists(path.to_path_buf()));
         }
-        if options.format == FileFormat::Csv && options.csv.columns.is_empty() {
+        let tabular = matches!(options.format, FileFormat::Csv | FileFormat::Xlsx);
+        if tabular && options.csv.columns.is_empty() {
             return Err(FileError::Invalid(
-                "a CSV export needs a list of columns".into(),
+                "a CSV or Excel export needs a list of columns".into(),
             ));
+        }
+        if options.format == FileFormat::Xlsx {
+            if options.compression != Compression::None {
+                return Err(FileError::Invalid(
+                    "Excel files are already compressed; turn gzip off".into(),
+                ));
+            }
+            if options.csv.columns.len() > 16_384 {
+                return Err(FileError::Invalid(
+                    "Excel sheets hold at most 16,384 columns".into(),
+                ));
+            }
         }
         let dir = match path.parent() {
             Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
@@ -240,9 +304,10 @@ impl FileWriter {
         };
         let mut sink = match options.compression {
             Compression::None => Sink::Plain(hashing),
-            Compression::Gzip => {
-                Sink::Gzip(GzEncoder::new(hashing, flate2::Compression::default()))
-            }
+            Compression::Gzip => Sink::Gzip(Box::new(GzEncoder::new(
+                hashing,
+                flate2::Compression::default(),
+            ))),
         };
         let encoder = match options.format {
             FileFormat::Json => {
@@ -260,6 +325,25 @@ impl FileWriter {
                         .map_err(|e| FileError::Conversion(e.to_string()))?;
                 }
                 Encoder::Csv(Box::new(w))
+            }
+            FileFormat::Xlsx => {
+                let mut workbook = Box::new(rust_xlsxwriter::Workbook::new());
+                let sheet = workbook
+                    .add_worksheet_with_constant_memory()
+                    .map_err(xlsx_error)?;
+                let bold = rust_xlsxwriter::Format::new().set_bold();
+                for (i, c) in options.csv.columns.iter().enumerate() {
+                    #[allow(clippy::cast_possible_truncation)] // checked above
+                    sheet
+                        .write_string_with_format(0, i as u16, c, &bold)
+                        .map_err(xlsx_error)?;
+                }
+                sheet.set_freeze_panes(1, 0).map_err(xlsx_error)?;
+                Encoder::Xlsx {
+                    sink,
+                    workbook,
+                    row: 1,
+                }
             }
         };
         Ok(Self {
@@ -329,6 +413,31 @@ impl FileWriter {
                     w.write_record(&row)
                         .map_err(|e| FileError::Conversion(e.to_string()))?;
                 }
+                Encoder::Xlsx { workbook, row, .. } => {
+                    let csv = &self.options.csv;
+                    for k in record.fields.keys() {
+                        if !csv.columns.iter().any(|c| c == k) {
+                            match csv.extra_fields {
+                                ExtraFields::Fail => return Err(FileError::ExtraField(k.clone())),
+                                ExtraFields::Ignore => {
+                                    self.ignored.insert(k.clone());
+                                }
+                            }
+                        }
+                    }
+                    if *row >= XLSX_MAX_ROWS {
+                        return Err(FileError::Invalid(format!(
+                            "Excel sheets hold at most {} records; export as CSV or JSON, or narrow the query",
+                            XLSX_MAX_ROWS - 1
+                        )));
+                    }
+                    let sheet = workbook.worksheet_from_index(0).map_err(xlsx_error)?;
+                    for (i, c) in csv.columns.iter().enumerate() {
+                        #[allow(clippy::cast_possible_truncation)] // checked in create
+                        xlsx_cell(sheet, *row, i as u16, record.get(c), &csv.null_text)?;
+                    }
+                    *row += 1;
+                }
             }
             self.records += 1;
         }
@@ -351,6 +460,15 @@ impl FileWriter {
             Encoder::Csv(w) => w
                 .into_inner()
                 .map_err(|e| FileError::io(&path, e.into_error()))?,
+            Encoder::Xlsx {
+                mut sink,
+                mut workbook,
+                ..
+            } => {
+                let bytes = workbook.save_to_buffer().map_err(xlsx_error)?;
+                sink.write_all(&bytes).map_err(io(&path))?;
+                sink
+            }
         };
         let hashing = sink.finish().map_err(io(&path))?;
         let Hashing {

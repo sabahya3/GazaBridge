@@ -272,7 +272,7 @@
   "transfer.choose": "اختيار…",
   "transfer.close": "إغلاق",
   "transfer.csv_columns": "الأعمدة (مفصولة بفواصل)",
-  "transfer.csv_columns_help": "اتركه فارغًا لاستخدام أعمدة الجدول، أو الحقول الرئيسية الموجودة في عينة من المجموعة.",
+  "transfer.csv_columns_help": "اتركه فارغًا لاستخدام حقول الاستعلام (Project)، وإلا فأعمدة الجدول أو الحقول الرئيسية الموجودة في عينة من المجموعة.",
   "transfer.csv_delimiter": "الفاصل",
   "transfer.csv_ignore": "استبعاد الحقول التي ليست أعمدة (تُعرض قائمتها بعد التصدير)",
   "transfer.csv_loss": "CSV نص فقط: القيم المتداخلة تُكتب كـ JSON، والخلية الفارغة لا تفرّق بين حقل غير موجود ونص فارغ. استخدم JSON أو BSON للحفاظ على الأنواع.",
@@ -351,7 +351,7 @@
   "transfer.current_query": "نتائج الاستعلام الحالي فقط",
   "transfer.no_query": "لا توجد تصفية أو استعلام مطبّق في العارض.",
   "transfer.records": "سجل",
-  "transfer.sort_note": "الترتيب والصفحات لا يُطبّقان على التصدير؛ تُطبّق التصفية والحقول فقط.",
+  "transfer.sort_note": "التصدير يحتوي بالضبط ما يعرضه الاستعلام: التصفية والحقول والترتيب والتخطي والحد.",
   "agg.add_stage": "إضافة مرحلة",
   "agg.after_stage": "بعد المرحلة",
   "agg.enabled": "مفعّلة",
@@ -447,5 +447,9 @@
   "qb.done": "تم",
   "connections.open": "فتح",
   "connections.state_ready": "جاهز",
-  "explorer.open_connection": "افتح اتصالًا من القائمة لتصفح قواعد بياناته."
+  "explorer.open_connection": "افتح اتصالًا من القائمة لتصفح قواعد بياناته.",
+  "transfer.jsonl": "JSON Lines (مستند في كل سطر)",
+  "transfer.xlsx": "Excel ‏(.xlsx)",
+  "transfer.columns_title": "الأعمدة",
+  "transfer.xlsx_loss": "Excel يحفظ الأرقام والنصوص؛ القيم المتداخلة تُكتب كـ JSON والتواريخ كنص. الورقة تتسع حتى 1,048,576 صفًا. استخدم JSON أو BSON للحفاظ على الأنواع."
 }

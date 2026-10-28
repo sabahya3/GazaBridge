@@ -246,6 +246,63 @@ fn csv_is_written_with_explicit_columns_and_never_drops_fields_silently() {
 }
 
 #[test]
+fn xlsx_is_a_workbook_with_a_header_typed_numbers_and_the_csv_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x.xlsx");
+    let mut opts = WriteOptions::new(FileFormat::Xlsx);
+    opts.csv.columns = vec!["_id".into(), "name".into(), "n".into(), "big".into()];
+    let records = vec![
+        Record::from_pairs([
+            ("_id", Value::Int(1)),
+            ("name", Value::String("غزة".into())),
+            ("n", Value::Float(2.5)),
+            ("big", Value::Int(i64::MAX)),
+        ]),
+        Record::from_pairs([("_id", Value::Int(2)), ("name", Value::Null)]),
+    ];
+    let mut w = FileWriter::create(&path, opts.clone()).unwrap();
+    w.write(&records).unwrap();
+    let s = w.finish().unwrap();
+    assert_eq!(s.records, 2);
+
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let mut read = |name: &str| {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name(name).unwrap(), &mut text).unwrap();
+        text
+    };
+    // Constant-memory sheets keep text inline.
+    let sheet = read("xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains("<t>_id</t>") && sheet.contains("<t>غزة</t>"),
+        "{sheet}"
+    );
+    // Numbers Excel can hold exactly are numbers; a 64-bit id beyond 2^53 stays text.
+    assert!(sheet.contains("<v>2.5</v>"), "{sheet}");
+    assert!(sheet.contains(&format!("<t>{}</t>", i64::MAX)), "{sheet}");
+    assert!(
+        sheet.contains(r#"<pane ySplit="1""#),
+        "header row is frozen"
+    );
+
+    // Same rules as CSV: no silent drops, no gzip, never overwrite.
+    opts.csv.columns = vec!["_id".into()];
+    let mut w = FileWriter::create(&dir.path().join("y.xlsx"), opts.clone()).unwrap();
+    assert!(matches!(w.write(&records).unwrap_err(), FileError::ExtraField(f) if f == "name"));
+    opts.compression = Compression::Gzip;
+    assert!(FileWriter::create(&dir.path().join("z.xlsx"), opts.clone()).is_err());
+    opts.compression = Compression::None;
+    assert!(matches!(
+        FileWriter::create(&path, opts).unwrap_err(),
+        FileError::Exists(_)
+    ));
+    assert_eq!(
+        gazabridge_files::detect(Path::new("a/B.XLSX")),
+        Some((FileFormat::Xlsx, Compression::None))
+    );
+}
+
+#[test]
 fn malformed_jsonl_lines_fail_skip_or_quarantine_with_line_numbers() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("in.jsonl");

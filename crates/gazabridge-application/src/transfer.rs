@@ -16,7 +16,7 @@ use gazabridge_files::{
     FileFormat, FileReader, FileWriter, ReadOptions, WriteOptions, WriteSummary,
 };
 use gazabridge_plugin_sdk::connector::{Connection, InspectOptions, ensure_writable};
-use gazabridge_plugin_sdk::filter::Filter;
+use gazabridge_plugin_sdk::filter::{Filter, SortKey};
 use gazabridge_plugin_sdk::read::ReadRequest;
 use gazabridge_plugin_sdk::schema::{ObjectRef, SamplingMethod};
 use gazabridge_plugin_sdk::write::WriteBatch;
@@ -42,6 +42,12 @@ pub struct ExportRequest {
     pub projection: Vec<String>,
     /// Fields to leave out (documents), when `projection` is empty.
     pub exclude: Vec<String>,
+    /// The query's sort; empty means the connector's stable order.
+    pub order_by: Vec<SortKey>,
+    /// Records to pass over first, then at most `limit` are written: the
+    /// export holds exactly what the query shows.
+    pub skip: u64,
+    pub limit: Option<u64>,
     pub path: PathBuf,
     /// For CSV, empty columns mean "the object's columns" (tables) or the
     /// top-level fields found by sampling (collections).
@@ -222,8 +228,24 @@ impl TransferService {
     ) -> AppResult<TransferSummary> {
         check_path(&req.path)?;
         let conn = self.explorer.session(id).await?;
-        if req.options.format == FileFormat::Csv && req.options.csv.columns.is_empty() {
-            req.options.csv.columns = self.csv_columns(conn.as_ref(), &req.object).await?;
+        let tabular = matches!(req.options.format, FileFormat::Csv | FileFormat::Xlsx);
+        if tabular && req.options.csv.columns.is_empty() {
+            // Columns follow the query's Project when it has one.
+            req.options.csv.columns = if req.projection.is_empty() {
+                let mut all = self.csv_columns(conn.as_ref(), &req.object).await?;
+                all.retain(|c| !req.exclude.contains(c));
+                all
+            } else {
+                // `address.city` comes back inside `address`.
+                let mut cols: Vec<String> = Vec::new();
+                for p in &req.projection {
+                    let top = p.split('.').next().unwrap_or(p).to_owned();
+                    if !cols.contains(&top) {
+                        cols.push(top);
+                    }
+                }
+                cols
+            };
         }
         let (path, options) = (req.path.clone(), req.options.clone());
         let mut writer = blocking(move || FileWriter::create(&path, options)).await??;
@@ -231,6 +253,11 @@ impl TransferService {
         read.filter = req.filter.clone();
         read.projection = req.projection.clone();
         read.exclude = req.exclude.clone();
+        read.order_by = req.order_by.clone();
+        // Reads have no offset (they resume by key), so skipped records are
+        // read and dropped; the query bar keeps skips page-sized.
+        read.limit = req.limit.map(|l| l.saturating_add(req.skip));
+        let mut to_skip = req.skip;
         let r = conn.read(read, cancel.clone()).await;
         let mut stream = self.explorer.checked(id, r).await?;
         let mut progress = Progress::running();
@@ -239,8 +266,18 @@ impl TransferService {
                 return Err(cancelled());
             }
             let batch = self.explorer.checked(id, batch).await?;
-            let n = batch.records.len() as u64;
-            let records = batch.records;
+            let mut records = batch.records;
+            if to_skip > 0 {
+                let k = usize::try_from(to_skip)
+                    .unwrap_or(usize::MAX)
+                    .min(records.len());
+                records.drain(..k);
+                to_skip -= k as u64;
+            }
+            if records.is_empty() {
+                continue;
+            }
+            let n = records.len() as u64;
             writer = blocking(move || writer.write(&records).map(|()| writer)).await??;
             progress.records += n;
             progress.summary.records_read += n;
@@ -264,6 +301,7 @@ impl TransferService {
             serde_json::json!({
                 "file": file.path, "format": req.options.format, "records": file.records,
                 "bytes": file.bytes, "sha256": file.sha256, "filtered": req.filter.is_some(),
+                "skip": req.skip, "limit": req.limit,
             }),
         )
         .await?;

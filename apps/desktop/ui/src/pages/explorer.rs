@@ -834,6 +834,8 @@ fn Viewer(connection_id: String, object: ObjectAddr) -> impl IntoView {
                     direction=direction
                     filter=Signal::derive(move || applied.get())
                     query=Signal::derive(move || query.get())
+                    skip=Signal::derive(move || skip.get())
+                    limit=Signal::derive(move || cap.get())
                     matching=Signal::derive(move || count.get())
                     key_fields=key_fields()
                     on_close=Callback::new(move |_| transfer.set(None))
