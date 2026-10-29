@@ -43,6 +43,21 @@ pub struct MigrationArgs {
     /// Back up targets before dropping them; default yes.
     #[serde(default)]
     pub backup_before_replace: Option<bool>,
+    /// Keep following changes after the copy.
+    #[serde(default)]
+    pub sync: Option<SyncArgs>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncArgs {
+    /// `change_stream` or `polling`.
+    pub method: String,
+    #[serde(default)]
+    pub cursor_field: Option<String>,
+    #[serde(default)]
+    pub interval_secs: u64,
+    #[serde(default)]
+    pub initial_copy: bool,
 }
 
 /// A planned table with the rows the first documents become.
@@ -112,6 +127,14 @@ pub struct StreamDto {
     /// Folder of the backup taken before the target was dropped.
     #[serde(default)]
     pub backup: Option<String>,
+    /// Sync: changes applied after the copy, deletes among them.
+    #[serde(default)]
+    pub changes: u64,
+    #[serde(default)]
+    pub deletes: u64,
+    /// RFC 3339.
+    #[serde(default)]
+    pub last_change: Option<String>,
 }
 
 impl StreamDto {

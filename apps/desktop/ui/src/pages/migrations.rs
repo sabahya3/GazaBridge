@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gazabridge_ipc::{
     ConnectionSummary, CopyItemDto, ExplorerListArgs, MigrationArgs, MigrationPlanDto, NodeDto,
-    ObjectAddr, RunArgs, RunDto, StreamDto, ValidateArgs, ValidationDto, commands,
+    ObjectAddr, RunArgs, RunDto, StreamDto, SyncArgs, ValidateArgs, ValidationDto, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -71,6 +71,7 @@ fn phase_key(phase: &str) -> &'static str {
         "copying" => "mig.ph_copying",
         "indexing" => "mig.ph_indexing",
         "done" => "mig.ph_done",
+        "following" => "mig.ph_following",
         "stopped" => "mig.ph_stopped",
         _ => "mig.ph_failed",
     }
@@ -102,6 +103,11 @@ pub fn MigrationsPage() -> impl IntoView {
     let search = RwSignal::new(String::new());
     let existing = RwSignal::new("skip".to_owned());
     let backup_first = RwSignal::new(true);
+    let keep_sync = RwSignal::new(false);
+    let sync_method = RwSignal::new("change_stream".to_owned());
+    let cursor_field = RwSignal::new("updatedAt".to_owned());
+    let interval = RwSignal::new(5u64);
+    let initial_copy = RwSignal::new(true);
     let copy_indexes = RwSignal::new(true);
     let on_error = RwSignal::new("stop".to_owned());
     let batch = RwSignal::new(1_000u32);
@@ -324,6 +330,12 @@ pub fn MigrationsPage() -> impl IntoView {
             doc_mode: doc_mode.get_untracked(),
             table_mode: table_mode.get_untracked(),
             backup_before_replace: Some(backup_first.get_untracked()),
+            sync: keep_sync.get_untracked().then(|| SyncArgs {
+                method: sync_method.get_untracked(),
+                cursor_field: Some(cursor_field.get_untracked()),
+                interval_secs: interval.get_untracked(),
+                initial_copy: initial_copy.get_untracked(),
+            }),
         }
     };
 
@@ -336,6 +348,13 @@ pub fn MigrationsPage() -> impl IntoView {
             existing.get(),
             copy_indexes.get(),
             (doc_mode.get(), table_mode.get(), target_schema.get()),
+            (
+                keep_sync.get(),
+                sync_method.get(),
+                cursor_field.get(),
+                interval.get(),
+                initial_copy.get(),
+            ),
         );
         plan.set(None);
         confirm_text.set(String::new());
@@ -655,6 +674,14 @@ pub fn MigrationsPage() -> impl IntoView {
                     {(s.retries > 0).then(|| view! { <span>{format!("{} {}", s.retries, ui.text("mig.n_retries"))}</span> })}
                 </div>
                 {s.error.clone().map(|e| view! { <p class="error-detail small">{e}</p> })}
+                {(s.phase == "following" || s.changes > 0).then(|| view! {
+                    <p class="small mig-changes">
+                        {if s.phase == "following" { view! { <span class="status status-info">{ui.tr("mig.ph_following")}</span> }.into_any() } else { ().into_any() }}
+                        " "{format!("{} {}", num(s.changes), ui.text("mig.n_changes"))}
+                        {(s.deletes > 0).then(|| format!(" · {} {}", num(s.deletes), ui.text("mig.n_deleted")))}
+                        {s.last_change.clone().map(|t| format!(" · {} {}", ui.text("mig.last_change"), t.get(11..19).unwrap_or("").to_owned()))}
+                    </p>
+                })}
                 {s.backup.clone().map(|b| view! { <p class="small">{ui.tr("mig.backup_at")}" "<code class="mono"><bdi>{b}</bdi></code></p> })}
                 {s.quarantine.clone().map(|q| view! { <p class="small">{ui.tr("mig.quarantine_at")}" "<code class="mono"><bdi>{q}</bdi></code></p> })}
                 {(!s.rejections.is_empty()).then(|| view! {
@@ -825,6 +852,40 @@ pub fn MigrationsPage() -> impl IntoView {
                             <span>{ui.tr("mig.backup_first")}</span>
                         </label>
                     </Show>
+                    <fieldset class="field-group scope mig-sync">
+                        <legend>{ui.tr("mig.sync_title")}</legend>
+                        <label class="field-check">
+                            <input type="checkbox" prop:checked=move || keep_sync.get() on:change=move |e| keep_sync.set(event_target_checked(&e)) />
+                            <span>{ui.tr("mig.sync_keep")}</span>
+                        </label>
+                        <Show when=move || keep_sync.get()>
+                            <label class="scope-option">
+                                <input type="radio" name="mig-sync" prop:checked=move || sync_method.get() == "change_stream" on:change=move |_| sync_method.set("change_stream".into()) />
+                                <span class="scope-text"><strong>{ui.tr("mig.sync_stream")}</strong><span class="muted small">{ui.tr("mig.sync_stream_help")}</span></span>
+                            </label>
+                            <label class="scope-option">
+                                <input type="radio" name="mig-sync" prop:checked=move || sync_method.get() == "polling" on:change=move |_| sync_method.set("polling".into()) />
+                                <span class="scope-text"><strong>{ui.tr("mig.sync_poll")}</strong><span class="muted small">{ui.tr("mig.sync_poll_help")}</span></span>
+                            </label>
+                            <Show when=move || sync_method.get() == "polling">
+                                <div class="toolbar">
+                                    <label class="field-inline">
+                                        <span>{ui.tr("mig.sync_field")}</span>
+                                        <input class="input mono" type="text" size="14" prop:value=move || cursor_field.get() on:input=move |e| cursor_field.set(event_target_value(&e)) />
+                                    </label>
+                                    <label class="field-inline">
+                                        <span>{ui.tr("mig.sync_every")}</span>
+                                        <input class="input" type="number" min="1" max="3600" size="5" prop:value=move || interval.get().to_string()
+                                            on:input=move |e| if let Ok(v) = event_target_value(&e).parse() { interval.set(v) } />
+                                    </label>
+                                </div>
+                            </Show>
+                            <label class="field-check">
+                                <input type="checkbox" prop:checked=move || initial_copy.get() on:change=move |e| initial_copy.set(event_target_checked(&e)) />
+                                <span>{ui.tr("mig.sync_initial")}</span>
+                            </label>
+                        </Show>
+                    </fieldset>
                     <label class="field-check">
                         <input type="checkbox" prop:checked=move || copy_indexes.get() on:change=move |e| copy_indexes.set(event_target_checked(&e)) />
                         <span>{ui.tr("mig.copy_indexes")}</span>
@@ -959,6 +1020,7 @@ pub fn MigrationsPage() -> impl IntoView {
                 let (id1, id2, id3) = (r.run_id.clone(), r.run_id.clone(), r.run_id.clone());
                 let active = r.is_active();
                 let resumable = r.can_resume() && !r.dry_run;
+                let syncing = r.streams.iter().any(|s| s.phase == "following");
                 let finished = matches!(r.status.as_str(), "completed" | "completed_with_warnings");
                 let checkable = finished && !r.dry_run;
                 let checking = r.validation.as_ref().is_some_and(|v| v.running);
@@ -983,7 +1045,7 @@ pub fn MigrationsPage() -> impl IntoView {
                                 <button type="button" class="btn" on:click=move |_| act(commands::MIGRATION_RESUME, id2.clone())>{icon(Icon::Play)}" "{ui.tr("mig.resume")}</button>
                             })}
                             {(active || paused).then(|| view! {
-                                <button type="button" class="btn btn-danger" on:click=move |_| act(commands::MIGRATION_CANCEL, id3.clone())>{ui.tr("mig.cancel")}</button>
+                                <button type="button" class="btn btn-danger" on:click=move |_| act(commands::MIGRATION_CANCEL, id3.clone())>{if syncing { ui.tr("mig.stop_sync") } else { ui.tr("mig.cancel") }}</button>
                             })}
                             {(!active).then(|| view! {
                                 <button type="button" class="btn btn-secondary" on:click=move |_| run.set(None)>{ui.tr("transfer.close")}</button>

@@ -172,6 +172,7 @@ fn request(source: ConnectionId, target: ConnectionId, items: Vec<CopyItem>) -> 
         doc_mode: Default::default(),
         table_mode: Default::default(),
         backup_before_replace: true,
+        sync: None,
     }
 }
 

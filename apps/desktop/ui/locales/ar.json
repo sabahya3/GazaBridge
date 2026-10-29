@@ -625,5 +625,19 @@
   "pw.remember": "احفظها في سلسلة مفاتيح macOS تاني",
   "pw.unlock": "كمّل",
   "transfer.done_export": "تم التصدير بنجاح",
-  "transfer.done_import": "تم الاستيراد بنجاح"
+  "transfer.done_import": "تم الاستيراد بنجاح",
+  "mig.sync_title": "المزامنة المستمرة",
+  "mig.sync_keep": "خلّي الهدف متزامن بعد النسخ (لحد ما توقفه مؤقتًا أو نهائيًا)",
+  "mig.sync_stream": "تيارات تغييرات MongoDB",
+  "mig.sync_stream_help": "الإضافة والتعديل والحذف لحظة حدوثها. محتاجة replica set أو Atlas.",
+  "mig.sync_poll": "متابعة بحقل الوقت",
+  "mig.sync_poll_help": "تشتغل مع أي سيرفر: تعيد قراءة السجلات اللي حقل وقتها اتغير. الحذف مش بيتتبع.",
+  "mig.sync_field": "حقل الوقت",
+  "mig.sync_every": "كل (ثانية)",
+  "mig.sync_initial": "انسخ البيانات الموجودة الأول",
+  "mig.ph_following": "بيتابع التغييرات",
+  "mig.n_changes": "تغيير اتطبّق",
+  "mig.n_deleted": "اتحذف",
+  "mig.last_change": "آخر تغيير",
+  "mig.stop_sync": "أوقف المزامنة"
 }

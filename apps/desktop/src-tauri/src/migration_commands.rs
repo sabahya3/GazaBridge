@@ -3,6 +3,7 @@
 use gazabridge_application::ValidationReport;
 use gazabridge_application::{
     CopyItem, ExistingData, MigrationPlan, MigrationRequest, OnRecordError, RunView, StreamView,
+    SyncKind, SyncSettings,
 };
 use gazabridge_domain::ids::RunId;
 use gazabridge_ipc::{
@@ -108,6 +109,23 @@ pub fn request(args: &MigrationArgs) -> Result<MigrationRequest, CommandError> {
         doc_mode,
         table_mode,
         backup_before_replace: args.backup_before_replace.unwrap_or(true),
+        sync: match &args.sync {
+            None => None,
+            Some(s) => Some(SyncSettings {
+                method: match s.method.as_str() {
+                    "" | "change_stream" => SyncKind::ChangeStream,
+                    "polling" => SyncKind::Polling,
+                    other => return Err(invalid(format!("unknown sync method `{other}`"))),
+                },
+                cursor_field: s
+                    .cursor_field
+                    .clone()
+                    .map(|f| f.trim().to_owned())
+                    .filter(|f| !f.is_empty()),
+                interval_secs: s.interval_secs.clamp(1, 3_600),
+                initial_copy: s.initial_copy,
+            }),
+        },
     })
 }
 
@@ -165,6 +183,9 @@ fn stream_dto(s: StreamView) -> StreamDto {
         rejections: s.rejections,
         error: s.error,
         backup: s.backup.map(|p| p.display().to_string()),
+        changes: s.changes,
+        deletes: s.deletes,
+        last_change: s.last_change.map(|t| t.to_rfc3339()),
     }
 }
 
@@ -409,6 +430,7 @@ mod tests {
             doc_mode: String::new(),
             table_mode: String::new(),
             backup_before_replace: None,
+            sync: None,
         }
     }
 

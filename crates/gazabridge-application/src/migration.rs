@@ -39,6 +39,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+mod sync;
+
 use crate::backup::{BackupMethod, BackupRequest, BackupService};
 use crate::convert::{self, Direction, ItemMapping};
 use crate::explorer::ExplorerService;
@@ -116,6 +118,42 @@ pub struct MigrationRequest {
     /// Before dropping existing targets (replace), back them up.
     #[serde(default = "yes")]
     pub backup_before_replace: bool,
+    /// Keep following changes after the copy.
+    #[serde(default)]
+    pub sync: Option<SyncSettings>,
+}
+
+/// How changes are followed after the initial copy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncKind {
+    /// MongoDB change streams (replica sets): inserts, updates and deletes,
+    /// resumed from a stored token.
+    #[default]
+    ChangeStream,
+    /// Re-read records whose timestamp field moved on (any source):
+    /// inserts and updates; deletes are not seen.
+    Polling,
+}
+
+/// Keep the target in sync after the copy, until paused or stopped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncSettings {
+    #[serde(default)]
+    pub method: SyncKind,
+    /// Polling: the field that records when a record last changed.
+    #[serde(default)]
+    pub cursor_field: Option<String>,
+    /// Polling: seconds between rounds.
+    #[serde(default = "five")]
+    pub interval_secs: u64,
+    /// Copy everything first (default), or follow only new changes.
+    #[serde(default = "yes")]
+    pub initial_copy: bool,
+}
+
+fn five() -> u64 {
+    5
 }
 
 /// What a run stores: the request and the mapping decided for each item.
@@ -192,6 +230,8 @@ pub enum StreamPhase {
     Copying,
     Indexing,
     Done,
+    /// Copied; now applying source changes as they happen.
+    Following,
     Stopped,
     Failed,
 }
@@ -210,6 +250,13 @@ pub struct StreamView {
     /// Backup of the target taken before it was dropped.
     #[serde(default)]
     pub backup: Option<PathBuf>,
+    /// Sync: changes applied after the copy (deletes included).
+    #[serde(default)]
+    pub changes: u64,
+    #[serde(default)]
+    pub deletes: u64,
+    #[serde(default)]
+    pub last_change: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -373,6 +420,9 @@ fn view_for(item: &CopyItem) -> StreamView {
         rejections: Vec::new(),
         error: None,
         backup: None,
+        changes: 0,
+        deletes: 0,
+        last_change: None,
     }
 }
 
@@ -486,6 +536,17 @@ impl MigrationService {
 
     /// The plan and, for each item, the mapping a run will use.
     async fn prepare(
+        &self,
+        req: &MigrationRequest,
+    ) -> AppResult<(MigrationPlan, Vec<ItemMapping>)> {
+        let (mut plan, mappings) = self.prepare_items(req).await?;
+        if req.sync.is_some() && !req.items.is_empty() {
+            self.check_sync(req, &mappings, &mut plan).await?;
+        }
+        Ok((plan, mappings))
+    }
+
+    async fn prepare_items(
         &self,
         req: &MigrationRequest,
     ) -> AppResult<(MigrationPlan, Vec<ItemMapping>)> {
@@ -971,11 +1032,23 @@ impl MigrationService {
         mappings: Vec<ItemMapping>,
         saved: HashMap<String, (Saved, bool)>,
     ) {
+        // A sync's change counters, as recorded when it was paused.
+        let recorded: Vec<StreamView> = run
+            .stats
+            .get("streams")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
         let streams = Arc::new(Mutex::new(
             req.items
                 .iter()
-                .map(|item| {
+                .enumerate()
+                .map(|(i, item)| {
                     let mut v = view_for(item);
+                    if let Some(r) = recorded.get(i).filter(|r| r.target == item.target) {
+                        v.changes = r.changes;
+                        v.deletes = r.deletes;
+                        v.last_change = r.last_change;
+                    }
                     if let Some((s, done)) = saved.get(&stream_key(item)) {
                         v.stats = s.stats.clone();
                         v.indexes_created = s.indexes_created;
@@ -1002,9 +1075,22 @@ impl MigrationService {
         }
         let svc = self.clone();
         tokio::spawn(async move {
-            let ends = svc
-                .run_streams(&run, &req, &mappings, &saved, &streams, &stop)
-                .await;
+            let following = req.sync.is_some() && !run.dry_run;
+            let ends = match svc.before_copy(&run, &req, &mappings, &saved).await {
+                Err(m) => vec![StreamEnd::Failed(m)],
+                Ok(()) => {
+                    let mut ends = svc
+                        .run_streams(&run, &req, &mappings, &saved, &streams, &stop)
+                        .await;
+                    if following
+                        && !stop.is_cancelled()
+                        && ends.iter().all(|e| matches!(e, StreamEnd::Done { .. }))
+                    {
+                        ends.push(svc.follow(&run, &req, &mappings, &streams, &stop).await);
+                    }
+                    ends
+                }
+            };
             svc.finish(&run, &req, ends, &streams, &reason).await;
             if let Ok(mut a) = svc.active.lock() {
                 a.remove(&run.id);
@@ -1176,6 +1262,25 @@ impl MigrationService {
                 &format!("{} recreated as a view", item.target),
             )
             .await;
+            return StreamEnd::Done { warnings: false };
+        }
+        // Following only new changes: the target is prepared, nothing copied.
+        if req.sync.as_ref().is_some_and(|s| !s.initial_copy) && !run.dry_run {
+            let _ = checkpoint(
+                &self.store,
+                run.id,
+                &run.config_fingerprint,
+                &key,
+                &Saved {
+                    position: None,
+                    stats: StreamStats::default(),
+                    indexes_created: 0,
+                    quarantine: None,
+                },
+                true,
+            )
+            .await;
+            set_stream(streams, i, |v| v.phase = StreamPhase::Done);
             return StreamEnd::Done { warnings: false };
         }
         let indexes = if run.dry_run {

@@ -1075,3 +1075,4 @@ button.module:disabled { cursor: default; color: var(--muted); background: var(-
 .transfer-status { max-block-size: 38vh; overflow: auto; }
 .transfer-status:empty { display: none; }
 .transfer-footer .test-result { margin: 0; }
+.mig-changes { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 0; }

@@ -71,8 +71,20 @@ pub fn manifest(transactions: bool) -> CapabilityManifest {
         ReadOnlySessions,
         HealthMonitoring,
     ]);
+    // Replica sets (and sharded clusters) have transactions and an oplog,
+    // which change streams read.
     if transactions {
         capabilities.insert(Transactions);
+        capabilities.insert(ChangeDataCapture);
+        capabilities.insert(ResumeTokens);
+    }
+    let mut sync_methods = BTreeSet::from([
+        SyncMethod::Polling,
+        SyncMethod::TimestampIncremental,
+        SyncMethod::KeyIncremental,
+    ]);
+    if transactions {
+        sync_methods.insert(SyncMethod::ChangeStream);
     }
     CapabilityManifest {
         connector_id: CONNECTOR_ID.into(),
@@ -80,12 +92,7 @@ pub fn manifest(transactions: bool) -> CapabilityManifest {
         api_version: API_VERSION,
         capabilities,
         write_modes: connection::direct_modes().into_iter().collect(),
-        // Change streams arrive with the priority track's sync task (P12).
-        sync_methods: BTreeSet::from([
-            SyncMethod::Polling,
-            SyncMethod::TimestampIncremental,
-            SyncMethod::KeyIncremental,
-        ]),
+        sync_methods,
         query_languages: BTreeSet::from([
             QueryLanguage::MongoFilter,
             QueryLanguage::MongoAggregation,

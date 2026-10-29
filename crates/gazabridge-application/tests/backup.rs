@@ -423,6 +423,7 @@ async fn mongodb_backups_restore_exactly_and_guard_their_files() {
         doc_mode: Default::default(),
         table_mode: Default::default(),
         backup_before_replace: true,
+        sync: None,
     };
     assert!(
         migrations

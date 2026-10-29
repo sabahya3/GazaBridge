@@ -625,5 +625,19 @@
   "pw.remember": "Save it in the macOS keychain again",
   "pw.unlock": "Continue",
   "transfer.done_export": "Exported successfully",
-  "transfer.done_import": "Imported successfully"
+  "transfer.done_import": "Imported successfully",
+  "mig.sync_title": "Keep in sync",
+  "mig.sync_keep": "Keep the target in sync after the copy (until you pause or stop)",
+  "mig.sync_stream": "MongoDB change streams",
+  "mig.sync_stream_help": "Inserts, updates and deletes, the moment they happen. Needs a replica set or Atlas.",
+  "mig.sync_poll": "Timestamp polling",
+  "mig.sync_poll_help": "Works with any server: re-reads records whose time field moved on. Deletes are not followed.",
+  "mig.sync_field": "Time field",
+  "mig.sync_every": "Every (s)",
+  "mig.sync_initial": "Copy the existing data first",
+  "mig.ph_following": "Following changes",
+  "mig.n_changes": "changes applied",
+  "mig.n_deleted": "deleted",
+  "mig.last_change": "last at",
+  "mig.stop_sync": "Stop sync"
 }

@@ -769,6 +769,19 @@ impl Builder<'_> {
     }
 }
 
+/// The root table's key for a document `_id` (e.g. an ObjectId as its
+/// hexadecimal text), as rows store it; `None` when it cannot be stored.
+pub fn key_value(m: &DocMapping, id: &Value) -> Option<Value> {
+    let col = &m.tables.first()?.columns[0];
+    if col.source == ColumnSource::Json {
+        Some(json_value(id))
+    } else if fits(id, &col.canonical_type) {
+        Some(column_value(id))
+    } else {
+        None
+    }
+}
+
 /// Converts one document into rows for every table of the mapping.
 pub fn rows(m: &DocMapping, doc: &Record) -> Result<Rows, String> {
     let mut b = Builder {

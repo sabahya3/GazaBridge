@@ -307,6 +307,7 @@ async fn the_app_copies_converts_checks_and_restores_a_whole_database() {
         doc_mode: DocMode::Flatten,
         table_mode: Default::default(),
         backup_before_replace: true,
+        sync: None,
     };
     let plan = state.migrations.plan(&req).await.unwrap();
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);

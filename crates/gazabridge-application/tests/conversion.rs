@@ -150,6 +150,7 @@ fn request(source: ConnectionId, target: ConnectionId, items: Vec<CopyItem>) -> 
         doc_mode: DocMode::Flatten,
         table_mode: TableMode::Reference,
         backup_before_replace: true,
+        sync: None,
     }
 }
 

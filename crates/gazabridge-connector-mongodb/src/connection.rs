@@ -7,10 +7,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::{TryStreamExt, stream};
+use gazabridge_domain::compatibility::SyncMethod;
 use gazabridge_domain::connection::EngineFamily;
 use gazabridge_domain::job::WriteMode;
 use gazabridge_domain::{CanonicalType, Record, Value};
 use gazabridge_plugin_sdk::capability::QueryLanguage;
+use gazabridge_plugin_sdk::cdc::{ChangeEvent, ChangeFeedRequest, ChangeOperation, ChangeStream};
 use gazabridge_plugin_sdk::connector::{CountResult, HealthReport, InspectOptions, Transaction};
 use gazabridge_plugin_sdk::ddl::{DdlPlan, SchemaOperation};
 use gazabridge_plugin_sdk::filter::{Filter, SortDirection, SortKey};
@@ -655,6 +657,66 @@ async fn bulk_upsert(
         bytes = 0;
     }
     Ok(())
+}
+
+/// A change stream resume token as a position.
+fn token_position(t: &mongodb::change_stream::event::ResumeToken) -> ConnectorResult<ReadPosition> {
+    let b = mongodb::bson::to_bson(t).map_err(|e| ConnectorError::internal(e.to_string()))?;
+    Ok(ReadPosition {
+        connector_id: CONNECTOR_ID.into(),
+        token: serde_json::json!({ "resume": b.into_canonical_extjson() }),
+    })
+}
+
+fn parse_token(p: &ReadPosition) -> ConnectorResult<mongodb::change_stream::event::ResumeToken> {
+    if p.connector_id != CONNECTOR_ID {
+        return Err(ConnectorError::invalid_input(
+            "position belongs to a different connector",
+        ));
+    }
+    let raw = p
+        .token
+        .get("resume")
+        .cloned()
+        .ok_or_else(|| ConnectorError::invalid_input("not a change stream position"))?;
+    let b = Bson::try_from(raw)
+        .map_err(|e| ConnectorError::invalid_input(format!("invalid resume token: {e}")))?;
+    mongodb::bson::from_bson(b)
+        .map_err(|e| ConnectorError::invalid_input(format!("invalid resume token: {e}")))
+}
+
+/// Change streams need a replica set or a sharded cluster.
+fn map_watch(e: mongodb::error::Error) -> ConnectorError {
+    match e.kind.as_ref() {
+        mongodb::error::ErrorKind::Command(c) if c.code == 40573 => ConnectorError::new(
+            ErrorKind::Unsupported,
+            "change streams need a replica set (a standalone server has no change log). Use timestamp polling, or run the server as a single-node replica set (`--replSet rs0`, then `rs.initiate()`).",
+        ),
+        _ => map_mongo(e),
+    }
+}
+
+/// The database and collection names a change feed watches (one database).
+fn watched(objects: &[ObjectRef], inner: &Inner) -> ConnectorResult<(String, Vec<String>)> {
+    let first = objects
+        .first()
+        .ok_or_else(|| ConnectorError::invalid_input("choose at least one collection to follow"))?;
+    let db = inner.database_name(&first.namespace)?;
+    for o in objects {
+        if inner.database_name(&o.namespace)? != db {
+            return Err(ConnectorError::invalid_input(
+                "a change feed follows collections of one database",
+            ));
+        }
+    }
+    Ok((db, objects.iter().map(|o| o.name.clone()).collect()))
+}
+
+fn watch_pipeline(collections: &[String]) -> Vec<Document> {
+    vec![doc! { "$match": {
+        "ns.coll": { "$in": collections },
+        "operationType": { "$in": ["insert", "update", "replace", "delete", "drop", "rename", "dropDatabase", "invalidate"] },
+    } }]
 }
 
 /// `create` options from Extended JSON (`None` when there are none).
@@ -1305,6 +1367,126 @@ impl Connection for MongoConnection {
             .await
             .map_err(map_mongo)?;
         Ok(CountResult { count, exact: true })
+    }
+
+    async fn current_position(&self, objects: &[ObjectRef]) -> ConnectorResult<ReadPosition> {
+        let (db, collections) = watched(objects, &self.inner)?;
+        let mut cs = self
+            .inner
+            .client
+            .database(&db)
+            .watch()
+            .pipeline(watch_pipeline(&collections))
+            .max_await_time(Duration::from_millis(1))
+            .await
+            .map_err(map_watch)?;
+        // The first round trip returns the server's current resume token.
+        let _ = cs.next_if_any().await.map_err(map_watch)?;
+        let token = cs
+            .resume_token()
+            .ok_or_else(|| ConnectorError::internal("the server returned no resume token"))?;
+        token_position(&token)
+    }
+
+    async fn change_feed(
+        &self,
+        request: ChangeFeedRequest,
+        cancel: CancellationToken,
+    ) -> ConnectorResult<ChangeStream> {
+        if request.method != SyncMethod::ChangeStream {
+            return Err(ConnectorError::unsupported(Capability::ChangeDataCapture));
+        }
+        let (db, collections) = watched(&request.objects, &self.inner)?;
+        let database = self.inner.client.database(&db);
+        let mut watch = database
+            .watch()
+            .pipeline(watch_pipeline(&collections))
+            .full_document(mongodb::options::FullDocumentType::UpdateLookup)
+            .max_await_time(Duration::from_millis(500));
+        if let Some(p) = &request.resume_after {
+            watch = watch.resume_after(parse_token(p)?);
+        }
+        let cs = watch.await.map_err(map_watch)?;
+        struct State {
+            cs: mongodb::change_stream::ChangeStream<
+                mongodb::change_stream::event::ChangeStreamEvent<Document>,
+            >,
+            cancel: CancellationToken,
+            db: String,
+            done: bool,
+        }
+        let state = State {
+            cs,
+            cancel,
+            db,
+            done: false,
+        };
+        Ok(Box::pin(stream::unfold(state, |mut st| async move {
+            if st.done {
+                return None;
+            }
+            let next = tokio::select! {
+                () = st.cancel.cancelled() => {
+                    st.done = true;
+                    return Some((Err(ConnectorError::Cancelled), st));
+                }
+                n = st.cs.try_next() => n,
+            };
+            let ev = match next {
+                Ok(Some(ev)) => ev,
+                Ok(None) => return None,
+                Err(e) => {
+                    st.done = true;
+                    return Some((Err(map_watch(e)), st));
+                }
+            };
+            use mongodb::change_stream::event::OperationType as Op;
+            let operation = match ev.operation_type {
+                Op::Insert => ChangeOperation::Insert,
+                Op::Update => ChangeOperation::Update,
+                Op::Replace => ChangeOperation::Replace,
+                Op::Delete => ChangeOperation::Delete,
+                other => {
+                    st.done = true;
+                    let what = ev
+                        .ns
+                        .as_ref()
+                        .and_then(|n| n.coll.clone())
+                        .unwrap_or_default();
+                    return Some((
+                        Err(ConnectorError::new(
+                            ErrorKind::NotFound,
+                            format!(
+                                "the sync stopped: `{what}` was dropped, renamed or invalidated ({other:?})"
+                            ),
+                        )),
+                        st,
+                    ));
+                }
+            };
+            let coll = ev
+                .ns
+                .as_ref()
+                .and_then(|n| n.coll.clone())
+                .unwrap_or_default();
+            let event = token_position(&ev.id).map(|position| ChangeEvent {
+                object: ObjectRef::collection(st.db.clone(), coll),
+                operation,
+                key: ev
+                    .document_key
+                    .as_ref()
+                    .map(document_to_record)
+                    .unwrap_or_default(),
+                after: ev.full_document.as_ref().map(document_to_record),
+                before: None,
+                position,
+                source_time: ev
+                    .wall_time
+                    .and_then(|t| chrono::DateTime::from_timestamp_millis(t.timestamp_millis())),
+                transaction_id: ev.txn_number.map(|n| n.to_string()),
+            });
+            Some((event, st))
+        })))
     }
 
     async fn write_batch(
