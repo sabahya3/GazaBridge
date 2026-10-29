@@ -1,0 +1,154 @@
+# GazaBridge — project status and handoff
+
+**Updated:** 2026-10-29 · **Branch:** `milestone-2` · **Last feature commit:** `f00bb6f` (P12)
+
+This file is the single place to learn where the project stands: what is
+done, what is partial, what has not started, and how to keep working. The
+detailed plan (task numbers, sizes, decisions) is [roadmap.md](roadmap.md);
+keep both in sync when you finish something.
+
+> **ملخص سريع:** GazaBridge تطبيق سطح مكتب (Rust + Tauri 2 + Leptos) لنقل
+> وتحويل ومزامنة البيانات بين MongoDB وPostgreSQL والملفات. المسار ذو
+> الأولوية (P1–P12) خلص بالكامل: الاتصالات، المستكشف والمحرر، Query Studio،
+> التصدير والاستيراد (JSON/JSONL/BSON/CSV/Excel)، نسخ MongoDB ⇄ MongoDB
+> كامل، التحويل MongoDB ⇄ PostgreSQL، التجربة بدون كتابة والتحقق، النسخ
+> الاحتياطي والاسترجاع، والمزامنة المستمرة. اللي لسه: MySQL، صفحة المراقبة
+> والتقارير، الجدولة، المزامنة في الاتجاهين، CLI، التغليف والتوقيع للتوزيع.
+
+---
+
+## 1. Summary
+
+GazaBridge is a desktop data tool (Rust workspace, Tauri 2 backend, Leptos
+WASM UI, local SQLite metadata store). The **priority track P1–P12**
+(MongoDB and MongoDB ⇄ PostgreSQL) is **complete and tested against real
+servers** (MongoDB 6.0–8.0, PostgreSQL 13–17 in Docker via Testcontainers).
+
+- **278 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
+  clean, `cargo audit` clean (7 allowed warnings only).
+- The macOS app builds as `target/release/bundle/macos/GazaBridge.app`,
+  signed with the owner's Apple Development certificate (not notarized).
+- UI languages: English and Arabic (RTL).
+
+## 2. Build, run and test
+
+| What | How |
+|---|---|
+| Toolchain | `export PATH=/opt/homebrew/opt/rustup/bin:$PATH` (rustup has the `wasm32-unknown-unknown` target; Homebrew Rust does not) |
+| Docker | Colima. After a reboot: `colima start` |
+| Integration tests | `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock cargo test --workspace -- --include-ignored` (Docker tests are `#[ignore]`d by default) |
+| Lint | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets`, and for the UI `cd apps/desktop/ui && cargo clippy --target wasm32-unknown-unknown` |
+| Audit | `cargo audit` |
+| UI only | `cd apps/desktop/ui && trunk build --release` |
+| macOS app | `scripts/build-mac-app.sh` (low priority, half the cores; `dmg` argument adds a DMG) |
+| Signing | The script reads `.signing-identity` (repository root, **git-ignored**; the SHA-1 of your own code-signing certificate from `security find-identity -v -p codesigning`) or `GAZABRIDGE_SIGNING_IDENTITY`. Without it the app is signed ad hoc and macOS stops releasing saved keychain passwords after every rebuild. |
+| UI checks without the backend | Copy `apps/desktop/ui/dist` to a scratch folder, inject a `mock.js` that defines `window.__TAURI__.core.invoke` returning stub data per command, serve it with `python3 -m http.server`, and drive it in a browser |
+| End-to-end through the app's wiring | `apps/desktop/src-tauri/tests/e2e.rs` uses `AppState::initialize` against real MongoDB and PostgreSQL containers |
+
+## 3. Done
+
+### Foundations (Milestone 1) ✅
+Workspace and lints, domain model, loss-aware canonical value model,
+connector SDK v1.0 with capability manifests, 18 compatibility profiles,
+secrets by reference (keychain / session / environment) with a redactor,
+SQLite metadata store (connections, jobs, runs, events, checkpoints, audit,
+query history), redacted JSON logs, contract test suite, desktop shell
+(navigation, palette, themes, en/ar), CI config, ADRs 0001–0010, threat
+model.
+
+### Connectors
+| Connector | State |
+|---|---|
+| SQLite | Beta; contract suite passes |
+| PostgreSQL | Beta; contract suite passes on 13–17 |
+| MongoDB | Beta; contract suite passes on 6.0, 7.0, 8.0. Change streams (P12), exact Decimal128 (non-canonical bytes kept), exotic BSON preserved, bulk upserts, order-preserving skip-existing, full index and collection specifications |
+| MySQL / MariaDB | **Paused draft** (`crates/gazabridge-connector-mysql`, commit `df098f1`); not registered in the app |
+
+### Priority track (all ✅, details per row in [roadmap.md](roadmap.md#priority-track--mongodb-and-mongodb--postgresql-decided-2026-10-25))
+| # | Feature | Where |
+|---|---|---|
+| P1–P2 | MongoDB connector and contract runs | `crates/gazabridge-connector-mongodb` |
+| P3 | Schema inference, snapshots, drift | MongoDB `infer.rs`, `SchemaService` |
+| P4 | Connection editor, connection strings, tests, saved connections | `pages/connections.rs`, `connection_editor.rs` |
+| P5 | Explorer: tree with counts, table/JSON/tree viewer, editor with preview and audit, query bar (builder + mongosh text, sort/project/skip/limit, validation), aggregations | `pages/explorer.rs`, `query_bar.rs`, `aggregation.rs`, `crates/gazabridge-query` |
+| P6 | Query Studio (MongoDB and SQL): history, saved queries, params, cancel, explain | `pages/query_studio.rs`, `QueryService` |
+| P7 | Files: JSON, JSONL, BSON, CSV, **Excel export**, gzip; export follows the query (filter, project, sort, skip, limit) | `crates/gazabridge-files`, `TransferService`, `pages/transfer.rs` |
+| P8 | Migration engine: bounded pipeline, checkpoints, pause/resume/cancel, retries, quarantine; whole-database MongoDB copy with indexes, views, collection options and validators | `crates/gazabridge-migration`, `MigrationService`, `pages/migrations.rs` |
+| P9 | MongoDB ⇄ PostgreSQL: flatten / normalize / JSONB / hybrid; reference / embed; ObjectId identity; mapping preview | `crates/gazabridge-mapping`, `convert.rs` |
+| P10 | Dry run (zero writes, proven) and validation: counts, keys, deep checksums with named differences | `migration::validate`, run panel |
+| P11 | Backups and restores: GazaBridge format with manifest and SHA-256, `mongodump`/`pg_dump` with passwords only in private temp files, backup before replace | `backup.rs`, `tools.rs`, `pages/backups.rs` |
+| P12 | Continuous sync after a copy: MongoDB change streams (resume tokens) or timestamp polling for any source; pause/resume/stop | `migration/sync.rs`, MongoDB `change_feed` |
+
+### Also done along the way
+- Password dialog: when the keychain refuses (or a password is asked each
+  time) the app asks, keeps it for the session, can save it again, and
+  retries the waiting command.
+- Export dialog: result shown next to the buttons; JSON by default.
+- Every copy gets an automatic count check; the history keeps every run.
+
+## 4. Partial or known gaps
+
+| Area | Gap |
+|---|---|
+| PostgreSQL native tools | `pg_dump`/`pg_restore` are **not installed** on the build Mac; their command building and password file are unit-tested only. `pg_restore` cannot rename schemas or keep existing rows |
+| Sync | PostgreSQL logical replication not implemented (polling instead); polling does not see deletes; embedded child tables are not kept in sync; time series resumed batches may repeat (no unique `_id`) |
+| Conversions | JSONB does not keep key order; missing vs null both become NULL in typed columns; embedding is one level; PostgreSQL → PostgreSQL and anything MySQL are not offered |
+| Backups | PostgreSQL sequences are not backed up (values restored as stored); no scheduled backups |
+| Validation | Key and deep checks read both sides fully (no sampling for huge objects); target-only extras are reported from counts |
+| Files | Excel **reading**, CSV import, Parquet/Arrow, zstd/ZIP, split output, fuzzing (roadmap 4.2–4.9) |
+| UI | Data grid is paged, not virtualized; Query Studio editor is plain text (no highlighting/autocomplete, question 4); no Monitor page; no Schema Studio page; no UI smoke tests (3.6) |
+| Docs | `requirements-traceability.md` and `connector-guide.md` were not refreshed during the priority track — verify before relying on them |
+| macOS app | Signed for local use only; not notarized; no updater |
+
+## 5. Not started
+
+- **Milestone 2 remainder:** MySQL/MariaDB connector (2.3, draft paused) and its contract runs (2.4), SSH tunnels (2.7), connector docs (2.9).
+- **Milestone 3:** Schema Studio (3.5), virtualized grid (3.2), UI smoke tests (3.6).
+- **Milestone 5:** general transformation pipelines and sandboxed expressions (5.2–5.3), drag-and-drop mapping UI (5.6).
+- **Milestone 6:** Merge/truncate write modes (6.5), job runner and Monitor UI (6.6–6.7), failure-injection suite on real servers (6.8), all 16 directions in CI (6.9).
+- **Milestone 7:** reports in JSON/HTML/Markdown/CSV (7.3).
+- **Milestone 8:** scheduler (8.1), PostgreSQL logical replication (8.4), MySQL binlog (8.5), SQLite change log (8.6).
+- **Milestone 9:** bidirectional sync (all).
+- **Milestone 10:** CLI, benchmarks, hardening pass, installers for all platforms, notarization and signed updates, SBOM, user documentation.
+
+**Suggested next:** the Monitor page and exportable reports (6.7, 7.3), or
+resume MySQL (2.3). The owner chooses.
+
+## 6. Open questions for the owner
+
+1. Which hosted services get real-account testing (Atlas, Neon, Supabase, DocumentDB…), and who provides accounts?
+2. Monaco (JavaScript) for the Query Studio editor: acceptable?
+3. Distribution: Developer ID certificate and notarization for other users (Milestone 10)?
+
+## 7. Rules for whoever continues
+
+- **Safety (from the specification):** never use real credentials in code,
+  tests, fixtures, screenshots, docs or logs; never connect to or modify the
+  owner's databases unless they configure it and start the operation; never
+  store plaintext passwords; never put passwords in process arguments; never
+  overwrite files without confirmation; telemetry off by default; a
+  connector is "Production Ready" only after its contract suite passes.
+- **Definition of done:** fmt, clippy (workspace and UI wasm), all tests
+  including Docker ones, `cargo audit`; update the roadmap row and this
+  file; rebuild the app with the script.
+- **Style:** match the surrounding code; tests run against real servers in
+  containers, not mocks, whenever a server is involved.
+
+## 8. Map of the code
+
+| Path | What |
+|---|---|
+| `crates/gazabridge-domain` | Values, types, connection profiles, job states |
+| `crates/gazabridge-plugin-sdk` | Connector traits, read/write/DDL/CDC contracts |
+| `crates/gazabridge-connector-*` | SQLite, PostgreSQL, MongoDB (MySQL draft) |
+| `crates/gazabridge-bson` | BSON ⇄ canonical values |
+| `crates/gazabridge-files` | File readers and writers (incl. Excel) |
+| `crates/gazabridge-query` | mongosh-syntax parser and query builder (shared with the UI) |
+| `crates/gazabridge-mapping` | Document ⇄ relational mappings |
+| `crates/gazabridge-migration` | Engine, transforms, validation |
+| `crates/gazabridge-application` | Services: connections, explorer, query, transfer, migration (+ `migration/sync.rs`), convert, backup, tools |
+| `crates/gazabridge-storage` | SQLite metadata store |
+| `crates/gazabridge-ipc` | Types shared by the backend and the UI |
+| `apps/desktop/src-tauri` | Tauri commands and `AppState` |
+| `apps/desktop/ui` | Leptos pages (`src/pages`), styles, `locales/en.json` + `ar.json` |
+| `docs/` | Roadmap, backlog, architecture, ADRs, threat model |

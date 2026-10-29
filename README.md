@@ -8,18 +8,14 @@ PostgreSQL-, MySQL- and MongoDB-family databases, SQLite and common file
 formats. It runs entirely on your machine: there is no account and no hosted
 service.
 
-> **Project status: early development (Milestone 1 of 10 complete,
-> Milestone 2 in progress).**
-> The foundation is in place: domain model, loss-aware canonical value model,
-> connector SDK, compatibility-profile catalogue, secret storage, metadata
-> store, logging and the desktop shell. The **SQLite connector** passes the
-> connector contract suite. The **PostgreSQL connector** passes the contract
-> suite on PostgreSQL 13–17.
-> The **MongoDB connector** passes it on MongoDB 6.0–8.0. Current priority:
-> everything MongoDB and MongoDB ⇄ PostgreSQL (see the roadmap). See
-> [docs/backlog.md](docs/backlog.md) for what is done and what is next, and
-> [docs/requirements-traceability.md](docs/requirements-traceability.md) for
-> the status of every requirement.
+> **Project status (2026-10-29):** the priority track (P1–P12: MongoDB and
+> MongoDB ⇄ PostgreSQL) is complete and tested against real servers —
+> connections, explorer and editor, Query Studio, file export/import,
+> whole-database copies, conversions, dry runs and validation, backups and
+> continuous sync. MySQL, monitoring/reports, scheduling, bidirectional sync,
+> the CLI and installers are still ahead. **See
+> [docs/STATUS.md](docs/STATUS.md)** for what is done, partial and not
+> started, and [docs/roadmap.md](docs/roadmap.md) for the detailed plan.
 
 ## What works today
 
@@ -36,7 +32,9 @@ service.
 | Desktop shell (Tauri 2 + Leptos): navigation, command palette, light/dark/high-contrast themes, English and Arabic (RTL), connector catalogue, log viewer, settings | Implemented; modules not yet built are shown disabled |
 | PostgreSQL connector (TLS modes, server-side cancel, exact NUMERIC decoding, keyset streaming, savepoint-isolated batches) | Implemented, *Beta* (contract suite passed on 13–17) |
 | MongoDB connector (exact Decimal128, byte-identical copies of exotic BSON types, type-safe resumable reads, schema inference, snapshots and drift) | Implemented, *Beta* (contract suite passed on 6.0–8.0) |
-| MySQL connector; connection editor; explorer, query studio, migrations, sync, CLI, installers | Not yet implemented |
+| Connection editor, explorer and document editor, Query Studio, exports (JSON/JSONL/BSON/CSV/Excel) and imports | Implemented |
+| Copies and conversions (MongoDB ⇄ MongoDB, MongoDB ⇄ PostgreSQL), dry runs, validation, backups, continuous sync | Implemented (priority track P8–P12) |
+| MySQL connector, monitoring and reports, scheduling, bidirectional sync, CLI, installers | Not yet implemented |
 
 ## Repository layout
 

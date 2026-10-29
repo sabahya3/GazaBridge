@@ -5,8 +5,10 @@ updated docs and ADRs. The detailed plan (order of work, open decisions,
 definitions of done, dependencies, risks, sizes) is in
 [roadmap.md](roadmap.md).
 
-> **Current priority (2026-10-25):** the MongoDB and MongoDB ⇄ PostgreSQL
-> track (tasks P1–P12 in the roadmap) comes before the remaining items below.
+> **Status (2026-10-29):** the MongoDB and MongoDB ⇄ PostgreSQL priority
+> track (P1–P12) is complete; see [STATUS.md](STATUS.md) for the current
+> state of everything, including gaps. Items below were written before that
+> track and are not all ticked.
 
 ## Milestone 1 — Foundations ✅
 
