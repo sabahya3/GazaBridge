@@ -623,5 +623,7 @@
   "pw.title": "Password needed",
   "pw.password": "Password",
   "pw.remember": "Save it in the macOS keychain again",
-  "pw.unlock": "Continue"
+  "pw.unlock": "Continue",
+  "transfer.done_export": "Exported successfully",
+  "transfer.done_import": "Imported successfully"
 }

@@ -546,7 +546,10 @@ pub fn TransferPanel(
                 }.into_any(),
             }}
 
-            <div role="status" aria-live="polite">
+            // Result, replace prompt and buttons stay together at the bottom
+            // of the dialog, visible without scrolling.
+            <div class="modal-footer transfer-footer">
+            <div role="status" aria-live="polite" class="transfer-status">
                 {move || message.get().map(|m| view! { <p class="error-detail">{m}</p> })}
                 {move || status.get().map(|s| {
                     let sum = s.summary.clone();
@@ -554,7 +557,7 @@ pub fn TransferPanel(
                         "running" => view! { <p aria-busy="true">{format!("{} {}", ui.text("transfer.progress"), s.records)}</p> }.into_any(),
                         "done" => view! {
                             <div class="test-result ok">
-                                <strong>{ui.tr("transfer.done")}</strong>
+                                <strong>{if direction == Direction::Export { ui.tr("transfer.done_export") } else { ui.tr("transfer.done_import") }}</strong>
                                 <ul>
                                     {match &sum.file {
                                         Some(f) => view! {
@@ -604,7 +607,7 @@ pub fn TransferPanel(
                 </div>
             </Show>
 
-            <div class="toolbar modal-footer">
+            <div class="toolbar">
                 <button type="button" class="btn" disabled=move || running() || path.get().trim().is_empty() on:click=move |_| start(false)>
                     {if direction == Direction::Export { ui.tr("transfer.start_export") } else { ui.tr("transfer.start_import") }}
                 </button>
@@ -612,6 +615,7 @@ pub fn TransferPanel(
                     <button type="button" class="btn btn-danger" on:click=cancel>{ui.tr("query.cancel")}</button>
                 </Show>
                 <button type="button" class="btn btn-secondary" disabled=running on:click=move |_| on_close.run(())>{ui.tr("transfer.close")}</button>
+            </div>
             </div>
         </section>
     }

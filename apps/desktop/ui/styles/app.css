@@ -1070,3 +1070,8 @@ button.module:disabled { cursor: default; color: var(--muted); background: var(-
 }
 .pw-dialog { max-inline-size: 440px; padding: 18px 20px 0; display: grid; gap: 8px; }
 .pw-dialog h3 { margin: 0; font-size: 16px; }
+.transfer-footer { display: grid; gap: 8px; }
+.transfer-footer > .toolbar { justify-content: flex-end; margin: 0; }
+.transfer-status { max-block-size: 38vh; overflow: auto; }
+.transfer-status:empty { display: none; }
+.transfer-footer .test-result { margin: 0; }

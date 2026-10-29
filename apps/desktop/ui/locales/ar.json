@@ -623,5 +623,7 @@
   "pw.title": "مطلوب كلمة السر",
   "pw.password": "كلمة السر",
   "pw.remember": "احفظها في سلسلة مفاتيح macOS تاني",
-  "pw.unlock": "كمّل"
+  "pw.unlock": "كمّل",
+  "transfer.done_export": "تم التصدير بنجاح",
+  "transfer.done_import": "تم الاستيراد بنجاح"
 }
