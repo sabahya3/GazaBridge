@@ -301,6 +301,11 @@ mod tests {
         ClientOptions::parse(&uri).await.unwrap();
         let opts = parse(&format!("mongodb+srv://{host}/")).await.unwrap();
         assert!(!opts.hosts.is_empty());
+        let named = parse(&format!("mongodb+srv://u@{host}/app")).await.unwrap();
+        eprintln!(
+            "authentication database with a user: {:?}",
+            named.credential.and_then(|c| c.source)
+        );
         if let Err(e) = ClientOptions::parse(format!("mongodb+srv://{host}/")).await {
             eprintln!("the driver alone fails here: {e}");
         }

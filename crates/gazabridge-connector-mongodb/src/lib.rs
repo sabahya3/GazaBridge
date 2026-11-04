@@ -119,13 +119,39 @@ fn read_preference(rp: ReadPreference) -> MongoReadPreference {
     }
 }
 
+/// Saved connection strings keep the user name in its own field. Put it
+/// back before parsing: the driver applies an `authSource` from a
+/// `mongodb+srv` TXT record (Atlas: `admin`) only when the string names a
+/// user, as Compass and mongosh see it.
+fn with_username(uri: &str, username: Option<&str>) -> String {
+    let Some(user) = username else {
+        return uri.to_string();
+    };
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return uri.to_string();
+    };
+    let authority = &rest[..rest.find(['/', '?']).unwrap_or(rest.len())];
+    if authority.contains('@') {
+        return uri.to_string();
+    }
+    let mut encoded = String::new();
+    for b in user.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            encoded.push(b as char);
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    format!("{scheme}://{encoded}@{rest}")
+}
+
 async fn client_options(
     profile: &ConnectionProfile,
     s: &MongoSettings,
     secrets: &ResolvedSecrets,
 ) -> ConnectorResult<ClientOptions> {
     let mut opts = match &s.uri {
-        Some(uri) => srv::parse(uri)
+        Some(uri) => srv::parse(&with_username(uri, s.username.as_deref()))
             .await
             .map_err(|e| ConnectorError::from_driver(ErrorKind::InvalidInput, e, None))?,
         None => {
@@ -298,6 +324,62 @@ mod tests {
                 .capabilities
                 .iter()
                 .all(|c| !c.is_mutating())
+        );
+    }
+
+    #[test]
+    fn username_goes_back_into_the_connection_string() {
+        let uri = "mongodb+srv://cluster0.abc.net/app?appName=C0";
+        assert_eq!(with_username(uri, None), uri);
+        assert_eq!(
+            with_username(uri, Some("db user@x")),
+            "mongodb+srv://db%20user%40x@cluster0.abc.net/app?appName=C0"
+        );
+        let named = "mongodb://other@h:1/";
+        assert_eq!(with_username(named, Some("u")), named);
+    }
+
+    #[tokio::test]
+    async fn auth_source_follows_the_connection_string_rules() {
+        let settings = |uri: &str, user: Option<&str>| MongoSettings {
+            uri: Some(uri.into()),
+            hosts: vec![],
+            replica_set: None,
+            auth_source: None,
+            username: user.map(Into::into),
+            password: SecretRef::None,
+            default_database: None,
+            tls: false,
+            read_preference: ReadPreference::Primary,
+            direct_connection: false,
+            server_selection_timeout_ms: 500,
+            connect_timeout_ms: 500,
+        };
+        let source = |s: MongoSettings| async move {
+            let profile = ConnectionProfile::new(
+                "m",
+                "mongodb.community",
+                ConnectionSettings::MongoDb(s.clone()),
+            );
+            client_options(&profile, &s, &ResolvedSecrets::default())
+                .await
+                .unwrap()
+                .credential
+                .unwrap()
+                .source
+        };
+        // Without authSource the path database is used, as in mongosh.
+        assert_eq!(
+            source(settings("mongodb://h:1/app", Some("u")))
+                .await
+                .as_deref(),
+            Some("app")
+        );
+        assert_eq!(
+            source(settings("mongodb://h:1/app?authSource=admin", Some("u")))
+                .await
+                .as_deref(),
+            Some("admin")
         );
     }
 
