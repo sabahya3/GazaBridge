@@ -9,6 +9,7 @@ mod connection;
 mod error;
 mod filter;
 mod infer;
+mod srv;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -124,9 +125,9 @@ async fn client_options(
     secrets: &ResolvedSecrets,
 ) -> ConnectorResult<ClientOptions> {
     let mut opts = match &s.uri {
-        Some(uri) => ClientOptions::parse(uri).await.map_err(|e| {
-            ConnectorError::from_driver(ErrorKind::InvalidInput, e.to_string(), None)
-        })?,
+        Some(uri) => srv::parse(uri)
+            .await
+            .map_err(|e| ConnectorError::from_driver(ErrorKind::InvalidInput, e, None))?,
         None => {
             if s.hosts.is_empty() {
                 return Err(ConnectorError::invalid_input(

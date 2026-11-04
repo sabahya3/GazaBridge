@@ -2130,6 +2130,7 @@ dependencies = [
  "gazabridge-domain",
  "gazabridge-plugin-sdk",
  "gazabridge-testkit",
+ "hickory-resolver",
  "indexmap 2.14.2",
  "mongodb",
  "proptest",

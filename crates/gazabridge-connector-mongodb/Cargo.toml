@@ -12,6 +12,7 @@ async-trait.workspace = true
 bigdecimal.workspace = true
 chrono.workspace = true
 futures.workspace = true
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio"] }
 gazabridge-bson.workspace = true
 gazabridge-domain.workspace = true
 gazabridge-plugin-sdk.workspace = true
