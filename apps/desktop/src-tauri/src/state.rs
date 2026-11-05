@@ -48,6 +48,9 @@ impl AppState {
             gazabridge_observability::init(&LogConfig::new(log_dir.clone()), redactor.clone()).ok();
         let store = MetadataStore::open(&data_dir.join(METADATA_FILE)).await?;
         store.check_integrity().await?;
+        // SSH host keys accepted on first use go here, never into
+        // ~/.ssh/known_hosts.
+        gazabridge_ssh::set_known_hosts_file(data_dir.join("known_hosts"));
         let mut registry = ConnectorRegistry::new(ProfileCatalog::builtin()?);
         registry.register(Arc::new(
             gazabridge_connector_sqlite::SqliteConnectorFactory,

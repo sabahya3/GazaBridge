@@ -47,6 +47,8 @@ pub struct Inner {
     pub manifest: CapabilityManifest,
     pub read_only: bool,
     meta: Mutex<HashMap<MetaKey, Arc<TableMeta>>>,
+    /// Kept open as long as the connection (pool connections dial it).
+    _tunnel: Option<gazabridge_ssh::Tunnel>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -144,6 +146,7 @@ impl PostgresConnection {
         tls: MakeRustlsConnect,
         manifest: CapabilityManifest,
         read_only: bool,
+        tunnel: Option<gazabridge_ssh::Tunnel>,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -151,6 +154,7 @@ impl PostgresConnection {
                 tls,
                 manifest,
                 read_only,
+                _tunnel: tunnel,
                 meta: Mutex::new(HashMap::new()),
             }),
         }

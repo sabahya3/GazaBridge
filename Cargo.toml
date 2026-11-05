@@ -19,6 +19,7 @@ members = [
     "crates/gazabridge-query",
     "crates/gazabridge-migration",
     "crates/gazabridge-mapping",
+    "crates/gazabridge-ssh",
     "apps/desktop/src-tauri",
     "apps/desktop/ui",
 ]
@@ -36,6 +37,7 @@ publish = false
 # Internal crates
 gazabridge-domain = { path = "crates/gazabridge-domain" }
 gazabridge-plugin-sdk = { path = "crates/gazabridge-plugin-sdk" }
+gazabridge-ssh = { path = "crates/gazabridge-ssh" }
 gazabridge-connectors = { path = "crates/gazabridge-connectors" }
 gazabridge-secrets = { path = "crates/gazabridge-secrets" }
 gazabridge-storage = { path = "crates/gazabridge-storage" }
@@ -63,6 +65,8 @@ futures = "0.3.31"
 hex = "0.4.3"
 indexmap = { version = "2.12", features = ["serde"] }
 keyring = { version = "3.6.3" }
+# SSH tunnels (decision D3): ring crypto like rustls; no `rsa` crate (RUSTSEC-2023-0071).
+russh = { version = "0.65.1", default-features = false, features = ["ring", "flate2"] }
 proptest = "1.9"
 regex = "1.12"
 secrecy = "0.10.3"

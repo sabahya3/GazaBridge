@@ -258,18 +258,98 @@ impl ConnectionService {
                 .get_secret(profile.tls.client_key_passphrase.clone())
                 .await?;
         }
-        if let Some(ssh) = &profile.ssh_tunnel {
-            match &ssh.auth {
-                SshAuth::Password { password } => {
-                    out.ssh_password = self.get_secret(password.clone()).await?
-                }
-                SshAuth::PrivateKey { passphrase, .. } if !passphrase.is_none() => {
-                    out.ssh_key_passphrase = self.get_secret(passphrase.clone()).await?;
-                }
-                _ => {}
-            }
-        }
+        self.resolve_ssh(profile, None, &mut out).await?;
         Ok(out)
+    }
+
+    /// Fills in the SSH tunnel's password or key passphrase; `typed`
+    /// overrides the stored one.
+    async fn resolve_ssh(
+        &self,
+        profile: &ConnectionProfile,
+        typed: Option<SecretString>,
+        out: &mut ResolvedSecrets,
+    ) -> AppResult<()> {
+        let Some(ssh) = &profile.ssh_tunnel else {
+            return Ok(());
+        };
+        let (r, target) = match &ssh.auth {
+            SshAuth::Password { password } => (password, &mut out.ssh_password),
+            SshAuth::PrivateKey { passphrase, .. } => (passphrase, &mut out.ssh_key_passphrase),
+            SshAuth::Agent => return Ok(()),
+        };
+        *target = match typed {
+            Some(v) => Some(v),
+            None if r.is_none() => None,
+            None => self.get_secret(r.clone()).await?,
+        };
+        Ok(())
+    }
+
+    /// The SSH tunnel's secret slot and its keychain field name.
+    fn ssh_slot(profile: &mut ConnectionProfile) -> Option<(&mut SecretRef, &'static str)> {
+        match &mut profile.ssh_tunnel.as_mut()?.auth {
+            SshAuth::Password { password } => Some((password, "ssh.password")),
+            SshAuth::PrivateKey { passphrase, .. } => Some((passphrase, "ssh.key_passphrase")),
+            SshAuth::Agent => None,
+        }
+    }
+
+    fn ssh_ref(profile: &ConnectionProfile) -> SecretRef {
+        let mut p = profile.clone();
+        Self::ssh_slot(&mut p)
+            .map(|(r, _)| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Applies the SSH secret choice (the tunnel password, or the key's
+    /// passphrase) and returns the secret to store, if any.
+    fn apply_ssh_secret(
+        profile: &mut ConnectionProfile,
+        input: PasswordInput,
+    ) -> AppResult<Option<(SecretRef, SecretString)>> {
+        let id = profile.id;
+        let Some((slot, field)) = Self::ssh_slot(profile) else {
+            return match input {
+                PasswordInput::Keep | PasswordInput::None => Ok(None),
+                _ => Err(AppError::Invalid(
+                    "this SSH sign-in method has no password or passphrase".into(),
+                )),
+            };
+        };
+        Ok(match input {
+            PasswordInput::Keep => None,
+            PasswordInput::None => {
+                *slot = SecretRef::None;
+                None
+            }
+            PasswordInput::AskEachTime => {
+                return Err(AppError::Invalid(
+                    "SSH passwords cannot be asked for each time yet; save it in the keychain or keep it for this session".into(),
+                ));
+            }
+            PasswordInput::FromEnv(var) => {
+                if var.trim().is_empty() {
+                    return Err(AppError::Invalid(
+                        "environment variable name must not be empty".into(),
+                    ));
+                }
+                *slot = SecretRef::Env { var };
+                None
+            }
+            PasswordInput::Remember(value) => {
+                let r = SecretRef::keychain_for(id, field);
+                *slot = r.clone();
+                Some((r, value))
+            }
+            PasswordInput::SessionOnly(value) => {
+                let r = SecretRef::Session {
+                    key: format!("{id}:{field}"),
+                };
+                *slot = r.clone();
+                Some((r, value))
+            }
+        })
     }
 
     /// Applies a password choice to the profile and returns the secret to
@@ -349,8 +429,20 @@ impl ConnectionService {
 
     pub async fn create(
         &self,
+        profile: ConnectionProfile,
+        password: PasswordInput,
+    ) -> AppResult<ConnectionProfile> {
+        self.create_with_ssh(profile, password, PasswordInput::Keep)
+            .await
+    }
+
+    /// Creates a connection; `ssh` is the SSH tunnel's password or key
+    /// passphrase choice (`Keep` leaves the profile's reference as given).
+    pub async fn create_with_ssh(
+        &self,
         mut profile: ConnectionProfile,
         password: PasswordInput,
+        ssh: PasswordInput,
     ) -> AppResult<ConnectionProfile> {
         if self.store.connections().get(profile.id).await?.is_some() {
             return Err(AppError::Invalid(
@@ -359,14 +451,16 @@ impl ConnectionService {
         }
         self.registry.profile(&profile.compatibility_profile)?;
         let secret = Self::apply_password(&mut profile, password)?;
+        let ssh_secret = Self::apply_ssh_secret(&mut profile, ssh)?;
         profile
             .validate()
             .map_err(|e| AppError::Invalid(e.to_string()))?;
-        if let Some((r, v)) = secret.clone() {
+        let secrets: Vec<_> = secret.into_iter().chain(ssh_secret).collect();
+        for (r, v) in secrets.clone() {
             self.put_secret(r, v).await?;
         }
         if let Err(e) = self.store.connections().save(&profile).await {
-            if let Some((r, _)) = secret {
+            for (r, _) in secrets {
                 let _ = self.drop_secret(r).await;
             }
             return Err(e.into());
@@ -402,8 +496,20 @@ impl ConnectionService {
 
     pub async fn update(
         &self,
+        profile: ConnectionProfile,
+        password: PasswordInput,
+    ) -> AppResult<ConnectionProfile> {
+        self.update_with_ssh(profile, password, PasswordInput::Keep)
+            .await
+    }
+
+    /// Updates a connection. With `ssh` = `Keep`, the tunnel keeps its
+    /// stored secret as long as its sign-in method is unchanged.
+    pub async fn update_with_ssh(
+        &self,
         mut profile: ConnectionProfile,
         password: PasswordInput,
+        ssh: PasswordInput,
     ) -> AppResult<ConnectionProfile> {
         let existing = self.store.connections().require(profile.id).await?;
         // A password entered for the session belongs to the old settings.
@@ -425,15 +531,39 @@ impl ConnectionService {
         {
             *slot = old_ref.clone();
         }
+        let old_ssh = Self::ssh_ref(&existing);
+        if matches!(ssh, PasswordInput::Keep) {
+            let same_method = match (&existing.ssh_tunnel, &profile.ssh_tunnel) {
+                (Some(a), Some(b)) => {
+                    std::mem::discriminant(&a.auth) == std::mem::discriminant(&b.auth)
+                }
+                _ => false,
+            };
+            if let Some((slot, _)) = Self::ssh_slot(&mut profile) {
+                *slot = if same_method {
+                    old_ssh.clone()
+                } else {
+                    SecretRef::None
+                };
+            }
+        }
         let secret = Self::apply_password(&mut profile, password)?;
+        let ssh_secret = Self::apply_ssh_secret(&mut profile, ssh)?;
         profile.created_at = existing.created_at;
         profile
             .validate()
             .map_err(|e| AppError::Invalid(e.to_string()))?;
-        if let Some((r, v)) = secret {
+        for (r, v) in secret.into_iter().chain(ssh_secret) {
             self.put_secret(r, v).await?;
         }
         self.store.connections().save(&profile).await?;
+        let new_ssh = Self::ssh_ref(&profile);
+        if new_ssh != old_ssh && !old_ssh.is_none() {
+            match self.drop_secret(old_ssh).await {
+                Ok(()) | Err(AppError::Secret(SecretError::NotFound)) => {}
+                Err(e) => return Err(e),
+            }
+        }
         let new_ref = profile
             .settings
             .secret_refs()
@@ -616,12 +746,31 @@ impl ConnectionService {
         profile: &ConnectionProfile,
         password: Option<SecretString>,
     ) -> TestOutcome {
+        self.test_draft_with_ssh(profile, password, None).await
+    }
+
+    /// Tests an unsaved profile; `ssh` overrides the SSH tunnel's stored
+    /// password or key passphrase when given.
+    pub async fn test_draft_with_ssh(
+        &self,
+        profile: &ConnectionProfile,
+        password: Option<SecretString>,
+        ssh: Option<SecretString>,
+    ) -> TestOutcome {
         let secrets = match password {
-            Some(pw) => Ok(ResolvedSecrets {
-                password: Some(pw),
-                ..Default::default()
-            }),
-            None => self.resolve_secrets(profile).await,
+            Some(pw) => {
+                let mut out = ResolvedSecrets {
+                    password: Some(pw),
+                    ..Default::default()
+                };
+                self.resolve_ssh(profile, ssh, &mut out).await.map(|()| out)
+            }
+            None => match self.resolve_secrets(profile).await {
+                Ok(mut out) if ssh.is_some() => {
+                    self.resolve_ssh(profile, ssh, &mut out).await.map(|()| out)
+                }
+                other => other,
+            },
         };
         self.probe(profile, secrets).await
     }

@@ -16,6 +16,7 @@ hickory-resolver = { version = "0.26", default-features = false, features = ["to
 gazabridge-bson.workspace = true
 gazabridge-domain.workspace = true
 gazabridge-plugin-sdk.workspace = true
+gazabridge-ssh.workspace = true
 indexmap.workspace = true
 mongodb = "3.9"
 serde_json.workspace = true

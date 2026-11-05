@@ -145,6 +145,47 @@ fn with_username(uri: &str, username: Option<&str>) -> String {
     format!("{scheme}://{encoded}@{rest}")
 }
 
+/// Points the client at a tunnel to the one MongoDB host the options name.
+/// The driver talks to that host only (direct connection): other replica
+/// set members are not reachable through the tunnel.
+async fn through_tunnel(
+    opts: &mut ClientOptions,
+    ssh: &gazabridge_domain::connection::SshTunnel,
+    secrets: &ResolvedSecrets,
+) -> ConnectorResult<gazabridge_ssh::Tunnel> {
+    if matches!(opts.tls, Some(Tls::Enabled(_))) {
+        return Err(ConnectorError::new(
+            ErrorKind::Unsupported,
+            "MongoDB with TLS cannot go through an SSH tunnel yet: the certificate's host name \
+             cannot be checked through it. Turn TLS off for a server reachable only through \
+             the tunnel, or connect without the tunnel",
+        ));
+    }
+    let (host, port) = match opts.hosts.as_slice() {
+        [ServerAddress::Tcp { host, port }] => (host.clone(), port.unwrap_or(27017)),
+        [] | [_] => {
+            return Err(ConnectorError::invalid_input(
+                "an SSH tunnel needs a MongoDB host name and port",
+            ));
+        }
+        _ => {
+            return Err(ConnectorError::invalid_input(
+                "through an SSH tunnel GazaBridge connects to one MongoDB server: give one host \
+                 (the primary or a mongos), not a list or a mongodb+srv address",
+            ));
+        }
+    };
+    let timeout = opts.connect_timeout.unwrap_or(Duration::from_secs(10));
+    let tunnel = gazabridge_ssh::open(ssh, secrets, &host, port, timeout).await?;
+    let local = tunnel.local_addr();
+    opts.hosts = vec![ServerAddress::Tcp {
+        host: local.ip().to_string(),
+        port: Some(local.port()),
+    }];
+    opts.direct_connection = Some(true);
+    Ok(tunnel)
+}
+
 async fn client_options(
     profile: &ConnectionProfile,
     s: &MongoSettings,
@@ -272,13 +313,11 @@ impl ConnectorFactory for MongoConnectorFactory {
                 "not a MongoDB connection profile",
             ));
         };
-        if profile.ssh_tunnel.is_some() {
-            return Err(ConnectorError::new(
-                ErrorKind::Unsupported,
-                "SSH tunnels are not available in this build yet",
-            ));
-        }
-        let opts = client_options(profile, s, &secrets).await?;
+        let mut opts = client_options(profile, s, &secrets).await?;
+        let tunnel = match &profile.ssh_tunnel {
+            Some(t) => Some(through_tunnel(&mut opts, t, &secrets).await?),
+            None => None,
+        };
         let login = opts.credential.as_ref().and_then(|c| {
             c.username
                 .clone()
@@ -304,6 +343,7 @@ impl ConnectorFactory for MongoConnectorFactory {
             read_only: profile.read_only,
             default_db: s.default_database.clone(),
             transactions,
+            _tunnel: tunnel,
         })))
     }
 }

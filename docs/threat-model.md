@@ -33,7 +33,7 @@ residual risk.
 | Threat | Mitigation | Status |
 |---|---|---|
 | Man-in-the-middle on database connections | TLS verification on by default (`verify-full`, `VERIFY_IDENTITY`, MongoDB TLS); weaker modes must be chosen explicitly and are flagged in the UI | M (defaults tested), P (UI flagging, M2) |
-| SSH host impersonation | `HostKeyPolicy::Strict` default; `AcceptNew` records first key and rejects changes | M (default), P (tunnel, M2) |
+| SSH host impersonation | `HostKeyPolicy::Strict` default (unknown hosts refused, fingerprint shown); `AcceptNew` records the first key in the app's own `known_hosts` (never the user's) and rejects changed keys in either file; MongoDB TLS through a tunnel refused rather than weakening host-name checks; tunnels listen on 127.0.0.1 only | M (tested on a real OpenSSH server) |
 | Malicious update server | Signed updates only; signature verified before install; never install unsigned | P (M10) |
 
 ### Tampering

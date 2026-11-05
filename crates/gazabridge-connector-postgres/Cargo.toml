@@ -16,6 +16,7 @@ deadpool-postgres = "0.14.1"
 futures.workspace = true
 gazabridge-domain.workspace = true
 gazabridge-plugin-sdk.workspace = true
+gazabridge-ssh.workspace = true
 hex.workspace = true
 rustls = { version = "0.23.31", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8.1"

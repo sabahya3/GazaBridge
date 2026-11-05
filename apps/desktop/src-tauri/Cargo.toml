@@ -35,6 +35,7 @@ gazabridge-query.workspace = true
 gazabridge-observability.workspace = true
 gazabridge-plugin-sdk.workspace = true
 gazabridge-secrets.workspace = true
+gazabridge-ssh.workspace = true
 gazabridge-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true

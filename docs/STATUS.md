@@ -14,8 +14,8 @@ keep both in sync when you finish something.
 > كامل، التحويل MongoDB ⇄ PostgreSQL، التجربة بدون كتابة والتحقق، النسخ
 > الاحتياطي والاسترجاع، والمزامنة المستمرة. بعدها اتضاف MySQL/MariaDB
 > (موصل كامل + تحويل MongoDB ⇄ MySQL + نسخ جداول بين PostgreSQL وMySQL).
-> ونسخ احتياطي واسترجاع لـ MySQL. واتضافت صفحات المراقبة (بتتحدث بالأحداث من المحرك)، والاستيراد والتصدير، والتقارير، والمزامنات. الصفحات اللي لسه "قريبًا": Schema Studio والتحويلات والجدولة. اللي لسه: الجدولة، المزامنة
-> في الاتجاهين، أنفاق SSH، قراءة Excel، CLI، التغليف والتوقيع للتوزيع.
+> ونسخ احتياطي واسترجاع لـ MySQL. واتضافت صفحات المراقبة (بتتحدث بالأحداث من المحرك)، والاستيراد والتصدير، والتقارير، والمزامنات. واتضافت أنفاق SSH لـ PostgreSQL وMySQL وMongoDB (كلمة مرور أو مفتاح أو agent، والتحقق من مفتاح الخادم). الصفحات اللي لسه "قريبًا": Schema Studio والتحويلات والجدولة. اللي لسه: الجدولة، المزامنة
+> في الاتجاهين، قراءة Excel، CLI، التغليف والتوقيع للتوزيع.
 > واتضاف استيراد CSV واختبار شامل بيعدّي البيانات على كل المحركات ويرجعها زي ما هي.
 
 ---
@@ -27,8 +27,8 @@ WASM UI, local SQLite metadata store). The **priority track P1–P12**
 (MongoDB and MongoDB ⇄ PostgreSQL) is **complete and tested against real
 servers** (MongoDB 6.0–8.0, PostgreSQL 13–17 in Docker via Testcontainers).
 
-- **323 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
-  clean, `cargo audit` clean (8 allowed warnings only). MongoDB 6.0–8.0, PostgreSQL 13–17, MySQL 8.0/8.4 and MariaDB 10.11/11.4 in Docker.
+- **327 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
+  clean, `cargo audit` clean (8 allowed warnings only). MongoDB 6.0–8.0, PostgreSQL 13–17, MySQL 8.0/8.4, MariaDB 10.11/11.4 and OpenSSH (Alpine) in Docker.
 - The macOS app builds as `target/release/bundle/macos/GazaBridge.app`,
   signed with the owner's Apple Development certificate (not notarized).
 - UI languages: English and Arabic (RTL).
@@ -65,7 +65,7 @@ model.
 | SQLite | Beta; contract suite passes |
 | PostgreSQL | Beta; contract suite passes on 13–17 |
 | MongoDB | Beta; contract suite passes on 6.0, 7.0, 8.0. Change streams (P12), exact Decimal128 (non-canonical bytes kept), exotic BSON preserved, bulk upserts, order-preserving skip-existing, full index and collection specifications |
-| MySQL / MariaDB | Beta; contract suite and behaviour tests pass on MySQL 8.0, 8.4 and MariaDB 10.11, 11.4. Registered in the app (explorer, editor, Query Studio, export/import, conversions, table copies, GazaBridge-format backups and restores). No SSH tunnels, no binlog CDC, no `mysqldump` |
+| MySQL / MariaDB | Beta; contract suite and behaviour tests pass on MySQL 8.0, 8.4 and MariaDB 10.11, 11.4. Registered in the app (explorer, editor, Query Studio, export/import, conversions, table copies, GazaBridge-format backups and restores, SSH tunnels). No binlog CDC, no `mysqldump` |
 
 ### Priority track (all ✅, details per row in [roadmap.md](roadmap.md#priority-track--mongodb-and-mongodb--postgresql-decided-2026-10-25))
 | # | Feature | Where |
@@ -96,6 +96,7 @@ model.
 | Imports and Exports pages: pick connection → database → schema → collection/table (views for exports; a new MongoDB collection for imports; read-only connections hidden for imports) and use the Explorer's transfer panel, without opening the Explorer | `pages/files.rs` |
 | Reports page: the last 200 copies, conversions and syncs with status, start, duration, records, rejects and validation result; filter and search; save any run's report (HTML, Markdown, JSON, CSV) | `pages/reports.rs` |
 | Sync Jobs page: every sync with its method (change streams or polling field and interval), objects, changes, deletes, last change and rejects; pause, resume, stop; refreshed when the backend announces applied changes (no polling). Tested on a live MongoDB replica-set sync | `pages/sync_jobs.rs`, `tests/sync.rs` |
+| SSH tunnels (2.7): PostgreSQL, MySQL/MariaDB and MongoDB through an SSH server; password, Ed25519/ECDSA key file (passphrase optional) or SSH agent; Strict host keys by default (unknown server refused with its SHA256 fingerprint), or trust on first use recorded in the app's own `known_hosts` (the user's `~/.ssh/known_hosts` is never written) and changed keys refused; SSH secret stored like the database password; editor section. Tested on a real OpenSSH server with the databases reachable only from its private network, including copies PostgreSQL → MySQL → MongoDB | `crates/gazabridge-ssh` (`tests/tunnel.rs`), connectors, `connections.rs`, `tests/ssh_tunnel.rs`, `forms.rs`, `pages/connection_editor.rs` |
 | Fixes the real tests found: concurrent `CREATE SCHEMA IF NOT EXISTS` in PostgreSQL (retried); validation of composite keys without an owner column (and siblings split across batches); "Validate" right after a copy finished was refused, and a finished validation briefly showed the previous result (two races); `char(n)` columns became `varchar(n)` in table copies (ObjectId identity lost); MySQL's JSON parser rounds doubles with 16–17 digits (now stored as `{"$numberDouble": …}` in MongoDB conversions); Int64 values that fit in 32 bits came back as Int32 from JSON-mode tables (now `{"$numberLong": …}`); MySQL literal column defaults were unquoted | `connector-postgres`, `migration/validate.rs`, `migration.rs`, `table_copy.rs`, `gazabridge-mapping`, `connector-mysql/meta.rs` |
 
 ### Also done along the way
@@ -112,7 +113,8 @@ model.
 | PostgreSQL native tools | `pg_dump`/`pg_restore` are **not installed** on the build Mac; their command building and password file are unit-tested only. `pg_restore` cannot rename schemas or keep existing rows |
 | Sync | PostgreSQL logical replication not implemented (polling instead); polling does not see deletes; embedded child tables are not kept in sync; time series resumed batches may repeat (no unique `_id`) |
 | Conversions | JSONB does not keep key order; missing vs null both become NULL in typed columns; embedding is one level; MySQL unconstrained decimals become `decimal(65,30)`; MySQL `ON DUPLICATE KEY` reacts to any unique key; table copies of JSON columns into MySQL may round 16–17-digit doubles (warned in the plan); SQLite is not offered as a copy source or target |
-| MySQL | JSON `null` and SQL NULL look the same in exported files; backups use the GazaBridge format only (`mysqldump` not supported); AUTO_INCREMENT is not recreated by a restore; SSH tunnels missing |
+| MySQL | JSON `null` and SQL NULL look the same in exported files; backups use the GazaBridge format only (`mysqldump` not supported); AUTO_INCREMENT is not recreated by a restore |
+| SSH tunnels | RSA key **files** are not read (no `rsa` crate, RUSTSEC-2023-0071) — RSA keys work through the SSH agent; MongoDB through a tunnel needs one host without TLS (no `mongodb+srv`, no replica-set discovery); SSH passwords cannot be "asked each time"; no jump hosts (ProxyJump) |
 | Backups | PostgreSQL sequences and MySQL AUTO_INCREMENT are not backed up (values restored as stored); no scheduled backups; no `mysqldump` |
 | Validation | Key and deep checks read both sides fully (no sampling for huge objects); target-only extras are reported from counts |
 | Files | Excel **reading**, CSV in encodings other than UTF-8, Parquet/Arrow, zstd/ZIP, split output, fuzzing (roadmap 4.2–4.9) |
@@ -122,7 +124,7 @@ model.
 
 ## 5. Not started
 
-- **Milestone 2 remainder:** SSH tunnels (2.7), connector docs (2.9).
+- **Milestone 2 remainder:** connector docs (2.9).
 - **Milestone 3:** Schema Studio (3.5), virtualized grid (3.2), UI smoke tests (3.6).
 - **Milestone 5:** general transformation pipelines and sandboxed expressions (5.2–5.3), drag-and-drop mapping UI (5.6).
 - **Milestone 6:** Merge/truncate write modes (6.5), job runner (6.6), failure-injection suite on real servers (6.8), all 16 directions in CI (6.9).
@@ -130,7 +132,7 @@ model.
 - **Milestone 9:** bidirectional sync (all).
 - **Milestone 10:** CLI, benchmarks, hardening pass, installers for all platforms, notarization and signed updates, SBOM, user documentation.
 
-**Suggested next:** Schedules (8.1, scheduler plus page), SSH tunnels (2.7), Excel reading (4.4). The owner chooses.
+**Suggested next:** Schedules (8.1, scheduler plus page), Excel reading (4.4). The owner chooses.
 
 ## 6. Open questions for the owner
 

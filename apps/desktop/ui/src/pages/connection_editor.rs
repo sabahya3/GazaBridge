@@ -3,8 +3,8 @@
 
 use gazabridge_ipc::{
     ConnectionDetails, ConnectionForm, EngineForm, MongoForm, MySqlForm, ParseStringArgs,
-    ParsedStringDto, PasswordChoice, PasswordMode, PostgresForm, ProfileSummary,
-    SaveConnectionArgs, SqliteForm, TestResultDto, TlsForm, commands,
+    ParsedStringDto, PasswordChoice, PasswordMode, PickPathArgs, PostgresForm, ProfileSummary,
+    SaveConnectionArgs, SqliteForm, SshForm, TestResultDto, TlsForm, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -255,6 +255,111 @@ fn sqlite_fields(form: RwSignal<ConnectionForm>) -> impl IntoView {
     }
 }
 
+fn get_ssh<T: Default>(form: RwSignal<ConnectionForm>, f: impl Fn(&SshForm) -> T) -> T {
+    form.with(|c| c.ssh.as_ref().map(f).unwrap_or_default())
+}
+
+fn set_ssh(form: RwSignal<ConnectionForm>, f: impl FnOnce(&mut SshForm)) {
+    form.update(|c| {
+        if let Some(s) = c.ssh.as_mut() {
+            f(s);
+        }
+    });
+}
+
+/// The SSH tunnel's secret choice. An empty password or passphrase means
+/// there is none (a key without a passphrase).
+fn ssh_choice(kind: &str, value: String, env: String) -> PasswordChoice {
+    match kind {
+        "remember" | "session" if value.is_empty() => PasswordChoice::None,
+        "remember" => PasswordChoice::Remember { password: value },
+        "session" => PasswordChoice::SessionOnly { password: value },
+        "env" => PasswordChoice::FromEnv { var: env },
+        "none" => PasswordChoice::None,
+        _ => PasswordChoice::Keep,
+    }
+}
+
+/// SSH tunnel settings: server, user, sign-in method and host key policy.
+fn ssh_fields(
+    form: RwSignal<ConnectionForm>,
+    kind: RwSignal<String>,
+    value: RwSignal<String>,
+    env: RwSignal<String>,
+    existing: Option<PasswordMode>,
+) -> impl IntoView {
+    let ui = use_ui();
+    let has_existing = existing.is_some();
+    let browse = move |_| {
+        let pick = PickPathArgs {
+            save: false,
+            default_name: None,
+            extensions: Vec::new(),
+        };
+        spawn_local(async move {
+            if let Ok(Some(path)) =
+                call::<_, Option<String>>(commands::PICK_FILE_PATH, &Wrap { args: &pick }).await
+            {
+                set_ssh(form, |s| s.key_path = Some(path));
+            }
+        });
+    };
+    view! {
+        {text_field(ui.tr("editor.ssh_host"), move || get_ssh(form, |s| s.host.clone()), move |v| set_ssh(form, |s| s.host = v), "text")}
+        {number_field(ui.tr("editor.port"), move || get_ssh(form, |s| u64::from(s.port)), move |v| set_ssh(form, |s| s.port = u16::try_from(v).unwrap_or(22)))}
+        {text_field(ui.tr("editor.ssh_user"), move || get_ssh(form, |s| s.username.clone()), move |v| set_ssh(form, |s| s.username = v), "text")}
+        <label class="field">
+            <span>{ui.tr("editor.ssh_auth")}</span>
+            <select class="input" prop:value=move || get_ssh(form, |s| s.auth.clone()) on:change=move |e| set_ssh(form, |s| s.auth = event_target_value(&e))>
+                <option value="key">{ui.tr("editor.ssh_auth_key")}</option>
+                <option value="agent">{ui.tr("editor.ssh_auth_agent")}</option>
+                <option value="password">{ui.tr("editor.ssh_auth_password")}</option>
+            </select>
+        </label>
+        <Show when=move || get_ssh(form, |s| s.auth == "key")>
+            <div class="field-row">
+                {text_field(ui.tr("editor.ssh_key_path"), move || get_ssh(form, |s| s.key_path.clone().unwrap_or_default()), move |v| set_ssh(form, |s| s.key_path = opt_string(v)), "text")}
+                <button type="button" class="btn btn-secondary" on:click=browse>{ui.tr("editor.choose_file")}</button>
+            </div>
+            <p class="muted small">{ui.tr("editor.ssh_key_note")}</p>
+        </Show>
+        <Show when=move || get_ssh(form, |s| s.auth != "agent")>
+            {existing.clone().map(|m| view! {
+                <p class="muted small">{ui.tr("editor.current_storage")}": "{ui.text(mode_key(&m))}</p>
+            })}
+            <label class="field">
+                <span>{move || if get_ssh(form, |s| s.auth == "password") { ui.text("editor.ssh_password") } else { ui.text("editor.ssh_passphrase") }}</span>
+                <select class="input" prop:value=move || kind.get() on:change=move |e| kind.set(event_target_value(&e))>
+                    {has_existing.then(|| view! { <option value="keep">{ui.tr("editor.pw_keep")}</option> })}
+                    <option value="remember">{ui.tr("editor.pw_remember")}</option>
+                    <option value="session">{ui.tr("editor.pw_session")}</option>
+                    <option value="env">{ui.tr("editor.pw_env")}</option>
+                    <option value="none">{ui.tr("editor.pw_none")}</option>
+                </select>
+            </label>
+            <Show when=move || matches!(kind.get().as_str(), "remember" | "session")>
+                <label class="field">
+                    <span class="sr-only">{move || if get_ssh(form, |s| s.auth == "password") { ui.text("editor.ssh_password") } else { ui.text("editor.ssh_passphrase") }}</span>
+                    <input class="input" type="password" autocomplete="off"
+                        placeholder=move || if get_ssh(form, |s| s.auth == "key") { ui.text("editor.ssh_passphrase_empty") } else { String::new() }
+                        prop:value=move || value.get() on:input=move |e| value.set(event_target_value(&e)) />
+                </label>
+            </Show>
+            <Show when=move || kind.get() == "env">
+                {text_field(ui.tr("editor.env_var"), move || env.get(), move |v| env.set(v), "text")}
+            </Show>
+        </Show>
+        <label class="field">
+            <span>{ui.tr("editor.ssh_host_key")}</span>
+            <select class="input" prop:value=move || get_ssh(form, |s| s.host_key_policy.clone()) on:change=move |e| set_ssh(form, |s| s.host_key_policy = event_target_value(&e))>
+                <option value="strict">{ui.tr("editor.ssh_strict")}</option>
+                <option value="accept_new">{ui.tr("editor.ssh_accept_new")}</option>
+            </select>
+        </label>
+        <p class="muted small">{move || if get_ssh(form, |s| s.host_key_policy == "strict") { ui.text("editor.ssh_strict_note") } else { ui.text("editor.ssh_accept_new_note") }}</p>
+    }
+}
+
 fn mode_key(mode: &PasswordMode) -> &'static str {
     match mode {
         PasswordMode::None => "editor.pw_none",
@@ -307,6 +412,18 @@ pub fn ConnectionEditor(
     let ui = use_ui();
     let is_new = initial.is_none();
     let existing_mode = initial.as_ref().map(|d| d.password_mode.clone());
+    let existing_ssh_mode = initial.as_ref().and_then(|d| d.ssh_secret_mode.clone());
+    let ssh_kind = RwSignal::new(if existing_ssh_mode.is_some() {
+        "keep".to_owned()
+    } else {
+        "remember".to_owned()
+    });
+    let existing_ssh = StoredValue::new(existing_ssh_mode.clone());
+    let ssh_value = RwSignal::new(String::new());
+    let ssh_env = RwSignal::new(match &existing_ssh_mode {
+        Some(PasswordMode::Env { var }) => var.clone(),
+        _ => String::new(),
+    });
     let start = initial.map(|d| d.form).unwrap_or_else(|| ConnectionForm {
         id: None,
         name: String::new(),
@@ -320,6 +437,7 @@ pub fn ConnectionEditor(
             foreign_keys: true,
         })),
         tls: TlsForm::default(),
+        ssh: None,
         read_only: false,
         favorite: false,
         color: None,
@@ -371,6 +489,23 @@ pub fn ConnectionEditor(
         }
     };
 
+    let ssh_secret = move || {
+        ssh_choice(
+            &ssh_kind.get_untracked(),
+            ssh_value.get_untracked(),
+            ssh_env.get_untracked(),
+        )
+    };
+    // SQLite files are opened directly, so a tunnel left from another
+    // engine is not sent.
+    let form_to_send = move || {
+        let mut f = form.get_untracked();
+        if f.engine.family() == "sqlite" {
+            f.ssh = None;
+        }
+        f
+    };
+
     let connection_string = move || {
         let t = uri_text.get_untracked();
         (!t.trim().is_empty()).then_some(t)
@@ -412,9 +547,10 @@ pub fn ConnectionEditor(
         testing.set(true);
         test.set(None);
         let args = SaveConnectionArgs {
-            form: form.get_untracked(),
+            form: form_to_send(),
             password: choice(),
             connection_string: connection_string(),
+            ssh_secret: ssh_secret(),
         };
         spawn_local(async move {
             let r =
@@ -430,9 +566,10 @@ pub fn ConnectionEditor(
         busy.set(true);
         error.set(None);
         let args = SaveConnectionArgs {
-            form: form.get_untracked(),
+            form: form_to_send(),
             password: choice(),
             connection_string: connection_string(),
+            ssh_secret: ssh_secret(),
         };
         spawn_local(async move {
             match call::<_, ConnectionDetails>(commands::SAVE_CONNECTION, &Wrap { args: &args })
@@ -589,6 +726,19 @@ pub fn ConnectionEditor(
                     {text_field(ui.tr("editor.ca_certificate"), move || form.with(|f| f.tls.ca_certificate.clone().unwrap_or_default()), move |v| form.update(|f| f.tls.ca_certificate = opt_string(v)), "text")}
                     {text_field(ui.tr("editor.client_certificate"), move || form.with(|f| f.tls.client_certificate.clone().unwrap_or_default()), move |v| form.update(|f| f.tls.client_certificate = opt_string(v)), "text")}
                     {text_field(ui.tr("editor.client_key"), move || form.with(|f| f.tls.client_key.clone().unwrap_or_default()), move |v| form.update(|f| f.tls.client_key = opt_string(v)), "text")}
+                </details>
+
+                <details class="field-group ssh-group" open=form.with_untracked(|f| f.ssh.is_some())>
+                    <summary>{ui.tr("editor.ssh")}</summary>
+                    <p class="muted small">{ui.tr("editor.ssh_intro")}</p>
+                    {check_field(
+                        ui.tr("editor.ssh_use"),
+                        move || form.with(|f| f.ssh.is_some()),
+                        move |on| form.update(|f| f.ssh = on.then(|| f.ssh.clone().unwrap_or_default())),
+                    )}
+                    <Show when=move || form.with(|f| f.ssh.is_some())>
+                        {ssh_fields(form, ssh_kind, ssh_value, ssh_env, existing_ssh.get_value())}
+                    </Show>
                 </details>
             </Show>
 

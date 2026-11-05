@@ -201,19 +201,29 @@ impl ConnectorFactory for PostgresConnectorFactory {
                 "not a PostgreSQL connection profile",
             ));
         };
-        if profile.ssh_tunnel.is_some() {
-            return Err(ConnectorError::new(
-                ErrorKind::Unsupported,
-                "SSH tunnels are not available in this build yet",
-            ));
-        }
         let read_only = profile.read_only;
         let (tls, ssl_mode) = tls::connector(s.ssl_mode, &profile.tls)?;
 
         let timeout = Duration::from_secs(u64::from(s.connect_timeout_secs.max(1)));
+        // Through a tunnel the driver dials the local end; TLS still checks
+        // the database's own name.
+        let tunnel = match &profile.ssh_tunnel {
+            Some(_) if s.host.starts_with('/') => {
+                return Err(ConnectorError::invalid_input(
+                    "a Unix socket cannot be reached through an SSH tunnel",
+                ));
+            }
+            Some(t) => Some(gazabridge_ssh::open(t, &secrets, &s.host, s.port, timeout).await?),
+            None => None,
+        };
+        let port = tunnel.as_ref().map_or(s.port, |t| t.local_addr().port());
         // `Config::host` appends, so the TLS name and address are set once.
-        let (tls_name, address) = match &profile.tls.server_name {
-            Some(name) => (
+        let (tls_name, address) = match (&tunnel, &profile.tls.server_name) {
+            (Some(t), name) => (
+                name.clone().unwrap_or_else(|| s.host.clone()),
+                Some(t.local_addr().ip()),
+            ),
+            (None, Some(name)) => (
                 name.clone(),
                 Some(s.host.parse::<IpAddr>().map_err(|_| {
                     ConnectorError::invalid_input(
@@ -221,14 +231,14 @@ impl ConnectorFactory for PostgresConnectorFactory {
                     )
                 })?),
             ),
-            None => (
+            (None, None) => (
                 s.host.clone(),
                 pick_address(&s.host, s.port, timeout).await?,
             ),
         };
         let mut cfg = tokio_postgres::Config::new();
         cfg.host(&tls_name)
-            .port(s.port)
+            .port(port)
             .dbname(&s.database)
             .user(&s.username)
             .connect_timeout(timeout)
@@ -273,7 +283,7 @@ impl ConnectorFactory for PostgresConnectorFactory {
             base_manifest()
         };
         Ok(Arc::new(PostgresConnection::new(
-            pool, tls, manifest, read_only,
+            pool, tls, manifest, read_only, tunnel,
         )))
     }
 }

@@ -4,12 +4,12 @@ use std::path::PathBuf;
 
 use gazabridge_application::{PasswordInput, TestOutcome};
 use gazabridge_domain::connection::{
-    ConnectionProfile, ConnectionSettings, HostPort, MongoSettings, MySqlSettings,
-    PostgresSettings, SecretRef, SqliteSettings, TlsSettings,
+    ConnectionProfile, ConnectionSettings, HostKeyPolicy, HostPort, MongoSettings, MySqlSettings,
+    PostgresSettings, SecretRef, SqliteSettings, SshAuth, SshTunnel, TlsSettings,
 };
 use gazabridge_ipc::{
     ConnectionForm, EngineForm, FindingDto, MongoForm, MySqlForm, PasswordChoice, PasswordMode,
-    PostgresForm, SqliteForm, TestResultDto, TlsForm,
+    PostgresForm, SqliteForm, SshForm, TestResultDto, TlsForm,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -111,6 +111,63 @@ fn settings_from(
             foreign_keys: f.foreign_keys,
         }),
     })
+}
+
+/// The SSH tunnel of a form. The secret reference is kept from `existing`
+/// when the sign-in method is unchanged; the service applies a new choice.
+fn ssh_from(f: &SshForm, existing: Option<&SshTunnel>) -> Result<SshTunnel, FormError> {
+    let host = f.host.trim();
+    if host.is_empty() {
+        return Err(FormError("enter the SSH server's host name".into()));
+    }
+    let username = f.username.trim();
+    if username.is_empty() {
+        return Err(FormError("enter the SSH user name".into()));
+    }
+    if f.port == 0 {
+        return Err(FormError("the SSH port must be between 1 and 65535".into()));
+    }
+    let kept = |want_password: bool| match existing.map(|e| &e.auth) {
+        Some(SshAuth::Password { password }) if want_password => password.clone(),
+        Some(SshAuth::PrivateKey { passphrase, .. }) if !want_password => passphrase.clone(),
+        _ => SecretRef::None,
+    };
+    let auth = match f.auth.as_str() {
+        "password" => SshAuth::Password {
+            password: kept(true),
+        },
+        "key" => SshAuth::PrivateKey {
+            key_path: opt(&f.key_path)
+                .map(PathBuf::from)
+                .ok_or_else(|| FormError("choose the SSH private key file".into()))?,
+            passphrase: kept(false),
+        },
+        "agent" => SshAuth::Agent,
+        other => return Err(FormError(format!("`{other}` is not an SSH sign-in method"))),
+    };
+    Ok(SshTunnel {
+        host: host.to_owned(),
+        port: f.port,
+        username: username.to_owned(),
+        auth,
+        host_key_policy: parse_enum::<HostKeyPolicy>("host key policy", &f.host_key_policy)?,
+    })
+}
+
+fn ssh_form(t: &SshTunnel) -> SshForm {
+    let (auth, key_path) = match &t.auth {
+        SshAuth::Password { .. } => ("password", None),
+        SshAuth::PrivateKey { key_path, .. } => ("key", Some(key_path.display().to_string())),
+        SshAuth::Agent => ("agent", None),
+    };
+    SshForm {
+        host: t.host.clone(),
+        port: t.port,
+        username: t.username.clone(),
+        auth: auth.into(),
+        key_path,
+        host_key_policy: enum_name(&t.host_key_policy),
+    }
 }
 
 fn tls_from(t: &TlsForm) -> TlsSettings {
@@ -228,6 +285,15 @@ pub fn profile_from(
     let passphrase = p.tls.client_key_passphrase.clone();
     p.tls = tls_from(&form.tls);
     p.tls.client_key_passphrase = passphrase;
+    p.ssh_tunnel = match &form.ssh {
+        Some(_) if matches!(p.settings, ConnectionSettings::Sqlite(_)) => {
+            return Err(FormError(
+                "SQLite files are opened directly; an SSH tunnel does not apply".into(),
+            ));
+        }
+        Some(f) => Some(ssh_from(f, existing.and_then(|e| e.ssh_tunnel.as_ref()))?),
+        None => None,
+    };
     p.read_only = form.read_only;
     p.favorite = form.favorite;
     p.color = opt(&form.color);
@@ -310,6 +376,7 @@ pub fn form_from(p: &ConnectionProfile) -> ConnectionForm {
             client_key: path(&p.tls.client_key),
             server_name: p.tls.server_name.clone(),
         },
+        ssh: p.ssh_tunnel.as_ref().map(ssh_form),
         read_only: p.read_only,
         favorite: p.favorite,
         color: p.color.clone(),
@@ -318,13 +385,27 @@ pub fn form_from(p: &ConnectionProfile) -> ConnectionForm {
     }
 }
 
-pub fn password_mode(p: &ConnectionProfile) -> PasswordMode {
-    match p.settings.secret_refs().first() {
+fn mode_of(r: Option<&SecretRef>) -> PasswordMode {
+    match r {
         Some(SecretRef::Keychain { .. }) => PasswordMode::Keychain,
         Some(SecretRef::Session { .. }) => PasswordMode::Session,
         Some(SecretRef::Env { var }) => PasswordMode::Env { var: var.clone() },
         Some(SecretRef::Prompt) => PasswordMode::Prompt,
         _ => PasswordMode::None,
+    }
+}
+
+pub fn password_mode(p: &ConnectionProfile) -> PasswordMode {
+    mode_of(p.settings.secret_refs().first().copied())
+}
+
+/// How the SSH tunnel's password or key passphrase is stored; `None` without
+/// a tunnel or with the SSH agent.
+pub fn ssh_secret_mode(p: &ConnectionProfile) -> Option<PasswordMode> {
+    match &p.ssh_tunnel.as_ref()?.auth {
+        SshAuth::Password { password } => Some(mode_of(Some(password))),
+        SshAuth::PrivateKey { passphrase, .. } => Some(mode_of(Some(passphrase))),
+        SshAuth::Agent => None,
     }
 }
 
@@ -384,6 +465,7 @@ mod tests {
                 ca_certificate: Some("  ".into()),
                 ..Default::default()
             },
+            ssh: None,
             read_only: true,
             favorite: false,
             color: Some("#14532D".into()),
@@ -537,5 +619,121 @@ mod tests {
             gazabridge_domain::connection_string::parse("mongodb+srv://c0.abcd.mongodb.net/x")
                 .unwrap();
         assert_eq!(suggested_name(&parsed.settings), "c0.abcd.mongodb.net");
+    }
+
+    #[test]
+    fn ssh_tunnels_round_trip_and_keep_their_secret_while_the_method_stays() {
+        let engine = EngineForm::default_for("postgres").unwrap();
+        let mut f = form(engine, "postgres.postgresql");
+        f.ssh = Some(SshForm {
+            host: " bastion.example.test ".into(),
+            port: 2222,
+            username: "deploy".into(),
+            auth: "key".into(),
+            key_path: Some("/keys/id_ed25519".into()),
+            host_key_policy: "accept_new".into(),
+        });
+        let mut p = profile_from(&f, None).unwrap();
+        let t = p.ssh_tunnel.clone().unwrap();
+        assert_eq!(t.host, "bastion.example.test");
+        assert_eq!(t.host_key_policy, HostKeyPolicy::AcceptNew);
+        assert!(
+            matches!(&t.auth, SshAuth::PrivateKey { key_path, passphrase }
+            if key_path == &PathBuf::from("/keys/id_ed25519") && passphrase.is_none())
+        );
+        let back = form_from(&p).ssh.unwrap();
+        assert_eq!(back.host, "bastion.example.test");
+        assert_eq!(back.auth, "key");
+        assert_eq!(back.host_key_policy, "accept_new");
+        assert_eq!(ssh_secret_mode(&p), Some(PasswordMode::None));
+
+        // A stored passphrase survives an edit with the same method...
+        let stored = SecretRef::keychain_for(p.id, "ssh.key_passphrase");
+        if let Some(SshAuth::PrivateKey { passphrase, .. }) =
+            p.ssh_tunnel.as_mut().map(|t| &mut t.auth)
+        {
+            *passphrase = stored.clone();
+        }
+        assert_eq!(ssh_secret_mode(&p), Some(PasswordMode::Keychain));
+        let mut edit = form_from(&p);
+        edit.ssh.as_mut().unwrap().port = 22;
+        let edited = profile_from(&edit, Some(&p)).unwrap();
+        assert!(matches!(&edited.ssh_tunnel.as_ref().unwrap().auth,
+            SshAuth::PrivateKey { passphrase, .. } if passphrase == &stored));
+        // ...and is not carried over to a password.
+        edit.ssh.as_mut().unwrap().auth = "password".into();
+        let switched = profile_from(&edit, Some(&p)).unwrap();
+        assert!(matches!(&switched.ssh_tunnel.as_ref().unwrap().auth,
+            SshAuth::Password { password } if password.is_none()));
+        // The agent needs no secret; removing the tunnel removes it.
+        edit.ssh.as_mut().unwrap().auth = "agent".into();
+        assert_eq!(
+            ssh_secret_mode(&profile_from(&edit, Some(&p)).unwrap()),
+            None
+        );
+        edit.ssh = None;
+        assert!(profile_from(&edit, Some(&p)).unwrap().ssh_tunnel.is_none());
+    }
+
+    #[test]
+    fn incomplete_ssh_settings_are_reported() {
+        let engine = EngineForm::default_for("mysql").unwrap();
+        let mut f = form(engine, "mysql.mysql");
+        let base = SshForm {
+            host: "bastion".into(),
+            username: "deploy".into(),
+            key_path: Some("/keys/id".into()),
+            ..SshForm::new()
+        };
+        for (broken, needle) in [
+            (
+                SshForm {
+                    host: " ".into(),
+                    ..base.clone()
+                },
+                "host",
+            ),
+            (
+                SshForm {
+                    username: String::new(),
+                    ..base.clone()
+                },
+                "user",
+            ),
+            (
+                SshForm {
+                    key_path: None,
+                    ..base.clone()
+                },
+                "key file",
+            ),
+            (
+                SshForm {
+                    auth: "telnet".into(),
+                    ..base.clone()
+                },
+                "sign-in method",
+            ),
+            (
+                SshForm {
+                    host_key_policy: "yolo".into(),
+                    ..base.clone()
+                },
+                "host key policy",
+            ),
+        ] {
+            f.ssh = Some(broken);
+            let err = profile_from(&f, None).unwrap_err().to_string();
+            assert!(err.contains(needle), "{err}");
+        }
+        let sqlite = EngineForm::default_for("sqlite").unwrap();
+        let mut f = form(sqlite, "sqlite.sqlite");
+        f.ssh = Some(base);
+        assert!(
+            profile_from(&f, None)
+                .unwrap_err()
+                .to_string()
+                .contains("SQLite")
+        );
     }
 }

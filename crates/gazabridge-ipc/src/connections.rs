@@ -146,6 +146,41 @@ pub struct TlsForm {
     pub server_name: Option<String>,
 }
 
+/// An SSH tunnel the connection goes through. The password or key
+/// passphrase travels separately, as [`SaveConnectionArgs::ssh_secret`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshForm {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    /// `password`, `key` or `agent`.
+    pub auth: String,
+    /// Private key file, for `key`.
+    pub key_path: Option<String>,
+    /// `strict` (only hosts already known) or `accept_new` (record a host
+    /// on first use, refuse it if its key ever changes).
+    pub host_key_policy: String,
+}
+
+impl SshForm {
+    pub fn new() -> Self {
+        Self {
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth: "key".into(),
+            key_path: None,
+            host_key_policy: "strict".into(),
+        }
+    }
+}
+
+impl Default for SshForm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionForm {
     /// `None` for a new connection.
@@ -155,6 +190,8 @@ pub struct ConnectionForm {
     pub engine: EngineForm,
     #[serde(default)]
     pub tls: TlsForm,
+    #[serde(default)]
+    pub ssh: Option<SshForm>,
     pub read_only: bool,
     pub favorite: bool,
     pub color: Option<String>,
@@ -175,14 +212,21 @@ pub enum PasswordMode {
 
 /// The password choice sent when saving or testing. The value is wiped from
 /// memory when this is dropped and never printed by `Debug`.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "choice", rename_all = "snake_case")]
 pub enum PasswordChoice {
+    #[default]
     Keep,
     None,
-    Remember { password: String },
-    SessionOnly { password: String },
-    FromEnv { var: String },
+    Remember {
+        password: String,
+    },
+    SessionOnly {
+        password: String,
+    },
+    FromEnv {
+        var: String,
+    },
     AskEachTime,
 }
 
@@ -211,6 +255,9 @@ impl Drop for PasswordChoice {
 pub struct ConnectionDetails {
     pub form: ConnectionForm,
     pub password_mode: PasswordMode,
+    /// How the SSH tunnel's password or key passphrase is stored.
+    #[serde(default)]
+    pub ssh_secret_mode: Option<PasswordMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -221,6 +268,9 @@ pub struct SaveConnectionArgs {
     /// password is used (moved to secure storage); the form is authoritative.
     #[serde(default)]
     pub connection_string: Option<String>,
+    /// The SSH tunnel's password or key passphrase choice.
+    #[serde(default)]
+    pub ssh_secret: PasswordChoice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

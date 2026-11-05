@@ -152,6 +152,7 @@ fn ssl_opts(mode: MySqlTlsMode, tls: &TlsSettings) -> ConnectorResult<Option<Ssl
 
 fn builder(
     s: &MySqlSettings,
+    (host, port): &(String, u16),
     secrets: &ResolvedSecrets,
     read_only: bool,
     ssl: Option<SslOpts>,
@@ -160,8 +161,8 @@ fn builder(
     let constraints = PoolConstraints::new(0, max)
         .ok_or_else(|| ConnectorError::invalid_input("invalid pool size"))?;
     Ok(OptsBuilder::default()
-        .ip_or_hostname(s.host.clone())
-        .tcp_port(s.port)
+        .ip_or_hostname(host.clone())
+        .tcp_port(*port)
         .user(Some(s.username.clone()))
         .pass(secrets.password.as_ref().map(|p| p.as_str().to_owned()))
         .db_name(s.database.clone().filter(|d| !d.is_empty()))
@@ -225,16 +226,24 @@ impl ConnectorFactory for MySqlConnectorFactory {
                 "not a MySQL connection profile",
             ));
         };
-        if profile.ssh_tunnel.is_some() {
-            return Err(ConnectorError::new(
-                ErrorKind::Unsupported,
-                "SSH tunnels are not available in this build yet",
-            ));
-        }
         let read_only = profile.read_only;
         let timeout = Duration::from_secs(u64::from(s.connect_timeout_secs.max(1)));
-        let ssl = ssl_opts(s.tls_mode, &profile.tls)?;
-        let pool = match open(builder(s, &secrets, read_only, ssl)?, timeout).await {
+        let tunnel = match &profile.ssh_tunnel {
+            Some(t) => Some(gazabridge_ssh::open(t, &secrets, &s.host, s.port, timeout).await?),
+            None => None,
+        };
+        // Through a tunnel the driver dials the local end; TLS still checks
+        // the database's own name.
+        let endpoint = tunnel.as_ref().map_or_else(
+            || (s.host.clone(), s.port),
+            |t| (t.local_addr().ip().to_string(), t.local_addr().port()),
+        );
+        let mut tls = profile.tls.clone();
+        if tunnel.is_some() && tls.server_name.is_none() {
+            tls.server_name = Some(s.host.clone());
+        }
+        let ssl = ssl_opts(s.tls_mode, &tls)?;
+        let pool = match open(builder(s, &endpoint, &secrets, read_only, ssl)?, timeout).await {
             Ok(p) => p,
             // "Preferred" falls back to plain TCP when the server has no TLS.
             Err(e)
@@ -242,7 +251,7 @@ impl ConnectorFactory for MySqlConnectorFactory {
                     && matches!(e.kind(), ErrorKind::Connection | ErrorKind::Internal)
                     && e.to_string().to_ascii_lowercase().contains("tls") =>
             {
-                open(builder(s, &secrets, read_only, None)?, timeout).await?
+                open(builder(s, &endpoint, &secrets, read_only, None)?, timeout).await?
             }
             Err(e) => return Err(e),
         };
@@ -254,7 +263,7 @@ impl ConnectorFactory for MySqlConnectorFactory {
         let query_timeout =
             (s.query_timeout_ms > 0).then(|| Duration::from_millis(s.query_timeout_ms));
         Ok(Arc::new(
-            MySqlConnection::new(pool, manifest, read_only, query_timeout).await?,
+            MySqlConnection::new(pool, manifest, read_only, query_timeout, tunnel).await?,
         ))
     }
 }

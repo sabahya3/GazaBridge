@@ -42,6 +42,7 @@ gazabridge-connector-postgres.workspace = true
 gazabridge-connector-sqlite.workspace = true
 testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 tempfile.workspace = true
+gazabridge-ssh.workspace = true
 
 [lints]
 workspace = true

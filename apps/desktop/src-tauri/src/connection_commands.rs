@@ -52,6 +52,7 @@ pub async fn get_connection_impl(
     Ok(ConnectionDetails {
         form: forms::form_from(&profile),
         password_mode: forms::password_mode(&profile),
+        ssh_secret_mode: forms::ssh_secret_mode(&profile),
     })
 }
 
@@ -65,6 +66,7 @@ pub async fn save_connection_impl(
         args.connection_string.as_deref(),
     )
     .map_err(form_error)?;
+    let ssh = forms::password_input(&args.ssh_secret);
     let saved = match &form.id {
         Some(id) => {
             let existing = state
@@ -76,17 +78,24 @@ pub async fn save_connection_impl(
             let profile = forms::profile_from(&form, Some(&existing)).map_err(form_error)?;
             // Browsing sessions must not keep using the old settings.
             state.explorer.disconnect(existing.id).await;
-            state.connections.update(profile, password).await
+            state
+                .connections
+                .update_with_ssh(profile, password, ssh)
+                .await
         }
         None => {
             let profile = forms::profile_from(&form, None).map_err(form_error)?;
-            state.connections.create(profile, password).await
+            state
+                .connections
+                .create_with_ssh(profile, password, ssh)
+                .await
         }
     }
     .map_err(|e| app_error(state, e))?;
     Ok(ConnectionDetails {
         form: forms::form_from(&saved),
         password_mode: forms::password_mode(&saved),
+        ssh_secret_mode: forms::ssh_secret_mode(&saved),
     })
 }
 
@@ -102,6 +111,7 @@ pub async fn create_from_string_impl(
     Ok(ConnectionDetails {
         form: forms::form_from(&profile),
         password_mode: forms::password_mode(&profile),
+        ssh_secret_mode: forms::ssh_secret_mode(&profile),
     })
 }
 
@@ -152,6 +162,7 @@ pub async fn duplicate_connection_impl(
     Ok(ConnectionDetails {
         form: forms::form_from(&copy),
         password_mode: forms::password_mode(&copy),
+        ssh_secret_mode: forms::ssh_secret_mode(&copy),
     })
 }
 
@@ -195,7 +206,14 @@ pub async fn test_draft_impl(
         PasswordInput::Remember(p) | PasswordInput::SessionOnly(p) => Some(p),
         _ => None,
     };
-    let outcome = state.connections.test_draft(&profile, typed).await;
+    let typed_ssh = match forms::password_input(&args.ssh_secret) {
+        PasswordInput::Remember(p) | PasswordInput::SessionOnly(p) => Some(p),
+        _ => None,
+    };
+    let outcome = state
+        .connections
+        .test_draft_with_ssh(&profile, typed, typed_ssh)
+        .await;
     Ok(forms::test_result(&outcome))
 }
 
@@ -278,6 +296,7 @@ mod tests {
             profile_id: "sqlite.sqlite".into(),
             engine: EngineForm::Sqlite(s),
             tls: TlsForm::default(),
+            ssh: None,
             read_only: false,
             favorite: true,
             color: None,
@@ -301,6 +320,7 @@ mod tests {
                 form: form.clone(),
                 password: PasswordChoice::None,
                 connection_string: None,
+                ssh_secret: PasswordChoice::Keep,
             },
         )
         .await
@@ -315,6 +335,7 @@ mod tests {
                 form,
                 password: PasswordChoice::None,
                 connection_string: None,
+                ssh_secret: PasswordChoice::Keep,
             },
         )
         .await
@@ -328,6 +349,7 @@ mod tests {
                 form: edited,
                 password: PasswordChoice::Keep,
                 connection_string: None,
+                ssh_secret: PasswordChoice::Keep,
             },
         )
         .await
@@ -371,6 +393,7 @@ mod tests {
                 form,
                 password: PasswordChoice::None,
                 connection_string: None,
+                ssh_secret: PasswordChoice::Keep,
             },
         )
         .await

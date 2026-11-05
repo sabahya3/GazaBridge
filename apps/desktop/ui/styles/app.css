@@ -507,6 +507,7 @@ legend { font-weight: 600; padding-inline: 4px; }
 .uri-input { inline-size: 100%; box-sizing: border-box; resize: vertical; font-size: 13px; }
 .field-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .field-row .field { flex: 1 1 220px; }
+.field-row > .btn { align-self: flex-end; }
 .advanced { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; }
 .advanced > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .advanced[open] > summary { margin-block-end: 10px; }

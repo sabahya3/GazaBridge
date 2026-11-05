@@ -573,6 +573,7 @@ mod tests {
                     profile_id: "sqlite.sqlite".into(),
                     engine: EngineForm::Sqlite(sq),
                     tls: TlsForm::default(),
+                    ssh: None,
                     read_only: false,
                     favorite: false,
                     color: None,
@@ -581,6 +582,7 @@ mod tests {
                 },
                 password: PasswordChoice::None,
                 connection_string: None,
+                ssh_secret: PasswordChoice::Keep,
             },
         )
         .await

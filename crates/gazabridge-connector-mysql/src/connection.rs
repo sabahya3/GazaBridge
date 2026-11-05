@@ -51,6 +51,8 @@ pub struct Inner {
     pub flavor: Flavor,
     pub query_timeout: Option<Duration>,
     meta: Mutex<HashMap<MetaKey, Arc<TableMeta>>>,
+    /// Kept open as long as the connection (pool connections dial it).
+    _tunnel: Option<gazabridge_ssh::Tunnel>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -188,6 +190,7 @@ impl MySqlConnection {
         manifest: CapabilityManifest,
         read_only: bool,
         query_timeout: Option<Duration>,
+        tunnel: Option<gazabridge_ssh::Tunnel>,
     ) -> ConnectorResult<Self> {
         let mut c = pool.get_conn().await.map_err(map_mysql)?;
         let version: Option<String> = c.query_first("SELECT VERSION()").await.map_err(map_mysql)?;
@@ -209,6 +212,7 @@ impl MySqlConnection {
                 flavor,
                 query_timeout,
                 meta: Mutex::new(HashMap::new()),
+                _tunnel: tunnel,
             }),
         })
     }

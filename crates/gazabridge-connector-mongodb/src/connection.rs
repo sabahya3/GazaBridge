@@ -50,6 +50,8 @@ pub struct Inner {
     pub read_only: bool,
     pub default_db: Option<String>,
     pub transactions: bool,
+    /// Kept open as long as the connection (the driver dials it).
+    pub _tunnel: Option<gazabridge_ssh::Tunnel>,
 }
 
 impl Inner {
