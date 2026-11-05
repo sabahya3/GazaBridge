@@ -8,7 +8,9 @@ pub mod explorer;
 pub mod migration;
 pub mod profiled;
 pub mod query;
+pub mod report;
 pub mod schema;
+pub mod table_copy;
 pub mod tools;
 pub mod transfer;
 

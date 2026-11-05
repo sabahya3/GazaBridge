@@ -750,24 +750,21 @@ impl Connection for PostgresConnection {
     ) -> ConnectorResult<()> {
         self.inner.ensure_writable()?;
         let plan = sql::plan(ops)?;
-        let client = self.inner.client().await?;
-        let token = client.cancel_token();
-        client.batch_execute("BEGIN").await.map_err(map_pg)?;
-        let result = tokio::select! {
-            r = async {
-                for stmt in &plan.statements {
-                    client.batch_execute(stmt).await.map_err(map_pg)?;
+        // `IF NOT EXISTS` is not atomic: two sessions creating the same
+        // schema or table at once can both pass the check, and the later
+        // one fails on the catalog's unique index. Its transaction rolled
+        // back, so once more sees the object and does nothing.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match self.apply_statements(&plan.statements, &cancel).await {
+                Err(e) if attempt < 3 && e.kind() == ErrorKind::Conflict => continue,
+                r => {
+                    self.inner.invalidate();
+                    return r;
                 }
-                Ok(())
-            } => r,
-            _ = cancel.cancelled() => {
-                let _ = token.cancel_query(self.inner.tls.clone()).await;
-                Err(ConnectorError::Cancelled)
             }
-        };
-        let r = finish(client, result).await;
-        self.inner.invalidate();
-        r
+        }
     }
 
     fn native_type_for(&self, canonical: &CanonicalType) -> ConnectorResult<String> {
@@ -994,6 +991,31 @@ impl Transaction for PgTransaction {
 /// Default schema for scratch objects.
 pub fn public_schema() -> NamespacePath {
     NamespacePath::schema(None, "public")
+}
+
+impl PostgresConnection {
+    async fn apply_statements(
+        &self,
+        statements: &[String],
+        cancel: &CancellationToken,
+    ) -> ConnectorResult<()> {
+        let client = self.inner.client().await?;
+        let token = client.cancel_token();
+        client.batch_execute("BEGIN").await.map_err(map_pg)?;
+        let result = tokio::select! {
+            r = async {
+                for stmt in statements {
+                    client.batch_execute(stmt).await.map_err(map_pg)?;
+                }
+                Ok(())
+            } => r,
+            _ = cancel.cancelled() => {
+                let _ = token.cancel_query(self.inner.tls.clone()).await;
+                Err(ConnectorError::Cancelled)
+            }
+        };
+        finish(client, result).await
+    }
 }
 
 #[cfg(test)]

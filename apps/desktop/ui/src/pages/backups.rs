@@ -254,6 +254,10 @@ pub fn BackupsPage() -> impl IntoView {
         if id.is_empty() {
             return;
         }
+        // MySQL backups use the GazaBridge format only.
+        if family(&id) == "mysql" {
+            method.set("gazabridge".into());
+        }
         let is_pg = family(&id) == "postgres";
         list(
             ExplorerListArgs {
@@ -449,12 +453,16 @@ pub fn BackupsPage() -> impl IntoView {
             {move || match connections.get() {
                 Load::Ready(l) => l
                     .into_iter()
-                    .filter(|c| matches!(c.family.as_str(), "mongodb" | "postgres"))
+                    .filter(|c| matches!(c.family.as_str(), "mongodb" | "postgres" | "mysql"))
                     .filter(|c| only_family.as_ref().is_none_or(|f| *f == c.family))
                     .map(|c| {
                         let id = c.id.clone();
                         let sel = id.clone();
-                        let engine = if c.family == "postgres" { "PostgreSQL" } else { "MongoDB" };
+                        let engine = match c.family.as_str() {
+                            "postgres" => "PostgreSQL",
+                            "mysql" => "MySQL",
+                            _ => "MongoDB",
+                        };
                         view! { <option value=id selected=move || current.get() == sel>{format!("{} · {engine}", c.name)}</option> }
                     })
                     .collect_view()
@@ -474,256 +482,258 @@ pub fn BackupsPage() -> impl IntoView {
     };
 
     view! {
-        <section class="page page-wide backups" aria-labelledby="bk-title">
-            <h1 id="bk-title">{ui.tr("bk.title")}</h1>
-            <p class="muted">{ui.tr("bk.intro")}</p>
-            <div role="status" aria-live="polite">
-                {move || message.get().map(|m| view! { <p class="error-detail">{m}</p> })}
-            </div>
+            <section class="page page-wide backups" aria-labelledby="bk-title">
+                <h1 id="bk-title">{ui.tr("bk.title")}</h1>
+                <p class="muted">{ui.tr("bk.intro")}</p>
+                <div role="status" aria-live="polite">
+                    {move || message.get().map(|m| view! { <p class="error-detail">{m}</p> })}
+                </div>
 
-            <div class="mig-grid bk-grid">
-                <section class="card mig-side" aria-labelledby="bk-new">
-                    <h2 id="bk-new">{icon(Icon::Archive)}" "{ui.tr("bk.new")}</h2>
-                    <label class="field">
-                        <span>{ui.tr("mig.connection")}</span>
-                        <select class="input" on:change=move |e| pick_conn(event_target_value(&e))>{conn_options(conn_id, None)}</select>
-                    </label>
-                    <Show when=move || !pg()>
+                <div class="mig-grid bk-grid">
+                    <section class="card mig-side" aria-labelledby="bk-new">
+                        <h2 id="bk-new">{icon(Icon::Archive)}" "{ui.tr("bk.new")}</h2>
                         <label class="field">
-                            <span>{ui.tr("mig.database")}</span>
-                            <select class="input" disabled=move || conn_id.get().is_empty() on:change=move |e| { db.set(event_target_value(&e)); load_objects(); }>
-                                <option value="" selected=move || db.get().is_empty()>{ui.tr("mig.choose_database")}</option>
-                                {move || dbs.get().into_iter().map(|d| { let (s, v) = (d.clone(), d.clone()); view! { <option value=v selected=move || db.get() == s>{d}</option> } }).collect_view()}
-                            </select>
+                            <span>{ui.tr("mig.connection")}</span>
+                            <select class="input" on:change=move |e| pick_conn(event_target_value(&e))>{conn_options(conn_id, None)}</select>
                         </label>
-                    </Show>
-                    <Show when=pg>
-                        <label class="field">
-                            <span>{move || format!("{} · {}", ui.text("mig.schema"), db.get())}</span>
-                            <select class="input" on:change=move |e| { schema.set(event_target_value(&e)); load_objects(); }>
-                                <option value="" selected=move || schema.get().is_empty()>{ui.tr("mig.choose_schema")}</option>
-                                {move || schemas.get().into_iter().map(|d| { let (s, v) = (d.clone(), d.clone()); view! { <option value=v selected=move || schema.get() == s>{d}</option> } }).collect_view()}
-                            </select>
-                        </label>
-                    </Show>
-                    <div class="toolbar tight">
-                        <span class="muted small">{move || format!("{} {}", selected.get().len(), ui.text("mig.selected"))}</span>
-                        <button type="button" class="btn btn-secondary btn-sm" disabled=move || objects.get().is_empty()
-                            on:click=move |_| {
-                                let names: Vec<String> = objects.get().into_iter().map(|n| n.name).collect();
-                                selected.update(|s| if names.iter().all(|n| s.contains(n)) { s.clear() } else { s.extend(names) });
-                            }>{ui.tr("mig.select_all")}</button>
-                    </div>
-                    <ul class="mig-list">
-                        {move || objects.get().into_iter().map(|n| {
-                            let (a, b) = (n.name.clone(), n.name.clone());
-                            view! {
-                                <li><label class="field-check">
-                                    <input type="checkbox" prop:checked=move || selected.get().contains(&a)
-                                        on:change=move |e| { let on = event_target_checked(&e); selected.update(|s| { if on { s.insert(b.clone()); } else { s.remove(&b); } }); } />
-                                    <span class="mig-coll">{icon(Icon::for_kind(&n.kind))}<bdi>{n.name.clone()}</bdi></span>
-                                    {n.estimated_count.map(|c| view! { <span class="muted small">{format!("~{}", num(c))}</span> })}
-                                </label></li>
-                            }
-                        }).collect_view()}
-                    </ul>
-                    <fieldset class="field-group scope">
-                        <legend>{ui.tr("bk.method")}</legend>
-                        <label class="scope-option">
-                            <input type="radio" name="bk-method" prop:checked=move || method.get() == "gazabridge" on:change=move |_| method.set("gazabridge".into()) />
-                            <span class="scope-text"><strong>{ui.tr("bk.m_gazabridge")}</strong><span class="muted small">{ui.tr("bk.m_gazabridge_help")}</span></span>
-                        </label>
-                        <label class="scope-option" class:disabled=move || !tool_found(if pg() { "pg_dump" } else { "mongodump" })>
-                            <input type="radio" name="bk-method" disabled=move || !tool_found(if pg() { "pg_dump" } else { "mongodump" })
-                                prop:checked=move || method.get() == "native" on:change=move |_| method.set("native".into()) />
-                            <span class="scope-text">
-                                <strong>{move || if pg() { "pg_dump" } else { "mongodump" }}</strong>
-                                <span class="muted small">{ui.tr("bk.m_native_help")}</span>
-                            </span>
-                        </label>
-                    </fieldset>
-                    <label class="field">
-                        <span>{ui.tr("bk.label")}</span>
-                        <input class="input" type="text" prop:value=move || label.get() on:input=move |e| label.set(event_target_value(&e)) />
-                    </label>
-                    <div class="toolbar">
-                        <button type="button" class="btn" disabled=move || selected.get().is_empty() || backup_status.get().is_some_and(|s| s.phase == "running") on:click=start_backup>
-                            {icon(Icon::Download)}" "{ui.tr("bk.start")}
-                        </button>
-                        <Show when=move || backup_status.get().is_some_and(|s| s.phase == "running")>
-                            <button type="button" class="btn btn-danger" on:click=move |_| cancel(backup_op.get_value())>{ui.tr("query.cancel")}</button>
+                        <Show when=move || !pg()>
+                            <label class="field">
+                                <span>{ui.tr("mig.database")}</span>
+                                <select class="input" disabled=move || conn_id.get().is_empty() on:change=move |e| { db.set(event_target_value(&e)); load_objects(); }>
+                                    <option value="" selected=move || db.get().is_empty()>{ui.tr("mig.choose_database")}</option>
+                                    {move || dbs.get().into_iter().map(|d| { let (s, v) = (d.clone(), d.clone()); view! { <option value=v selected=move || db.get() == s>{d}</option> } }).collect_view()}
+                                </select>
+                            </label>
                         </Show>
-                    </div>
-                    <Progress status=backup_status />
-                </section>
-
-                <div class="mig-arrow" aria-hidden="true"></div>
-
-                <section class="card mig-side" aria-labelledby="bk-tools">
-                    <h2 id="bk-tools">{icon(Icon::Settings)}" "{ui.tr("bk.tools")}</h2>
-                    <p class="muted small">{ui.tr("bk.tools_help")}</p>
-                    <ul class="bk-tools">
-                        {move || tools.get().into_iter().map(|t| view! {
-                            <li>
-                                <span class=if t.found { "status status-ok" } else { "status status-muted" }>{if t.found { "✓" } else { "—" }}</span>
-                                " "<strong class="mono">{t.name.clone()}</strong>
-                                {if t.found {
-                                    view! { <span class="muted small">" "{t.version.clone().unwrap_or_default().trim_start_matches(t.name.as_str()).trim_start_matches(" version:").trim().to_owned()}</span> }.into_any()
-                                } else {
-                                    view! { <div class="muted small">{t.install_hint.clone()}</div> }.into_any()
-                                }}
-                            </li>
-                        }).collect_view()}
-                    </ul>
-                </section>
-            </div>
-
-            <section class="bk-list" aria-labelledby="bk-list-title">
-                <h2 id="bk-list-title">{ui.tr("bk.list")}</h2>
-                {move || match backups.get() {
-                    Load::Loading => view! { <p class="muted">{ui.tr("common.loading")}</p> }.into_any(),
-                    Load::Failed(e) => view! { <p class="error-detail">{e}</p> }.into_any(),
-                    Load::Ready(l) if l.is_empty() => view! { <p class="muted small">{ui.tr("bk.empty")}</p> }.into_any(),
-                    Load::Ready(l) => view! {
-                        <div class="grid-wrap">
-                            <table class="grid">
-                                <thead><tr>
-                                    <th>{ui.tr("bk.col_label")}</th>
-                                    <th>{ui.tr("bk.col_from")}</th>
-                                    <th>{ui.tr("bk.col_objects")}</th>
-                                    <th>{ui.tr("bk.col_size")}</th>
-                                    <th>{ui.tr("mig.col_started")}</th>
-                                    <th></th>
-                                </tr></thead>
-                                <tbody>
-                                    {l.into_iter().map(|b| {
-                                        let (b1, b2) = (b.clone(), b.clone());
-                                        view! {
-                                            <tr>
-                                                <td><bdi>{b.label.clone()}</bdi>
-                                                    <div class="muted small">{b.tool.clone().unwrap_or_else(|| "GazaBridge".into())}</div></td>
-                                                <td class="small"><bdi>{b.connection.clone()}</bdi><div class="muted mono"><bdi>{b.schema.clone().filter(|_| b.family == "postgres").or(b.database.clone()).unwrap_or_default()}</bdi></div></td>
-                                                <td class="small">{format!("{} · {} {}", b.objects.len(), num(b.records), ui.text("bk.records"))}</td>
-                                                <td class="small">{bytes(b.bytes)}</td>
-                                                <td class="small">{short_time(&b.created_at)}</td>
-                                                <td class="bk-actions">
-                                                    <button type="button" class="btn btn-secondary btn-sm" on:click=move |_| {
-                                                        r_only.set(b1.objects.iter().map(|o| o.object.display()).collect());
-                                                        r_rename.set(String::new());
-                                                        r_conn.set(String::new());
-                                                        r_status.set(None);
-                                                        restoring.set(Some(b1.clone()));
-                                                    }>{ui.tr("bk.restore")}</button>
-                                                    <button type="button" class="btn btn-secondary btn-sm" aria-label=ui.tr("bk.delete") title=ui.tr("bk.delete") on:click=move |_| confirm_delete.set(Some(b2.clone()))>{icon(Icon::Trash)}</button>
-                                                </td>
-                                            </tr>
-                                        }
-                                    }).collect_view()}
-                                </tbody>
-                            </table>
+                        <Show when=pg>
+                            <label class="field">
+                                <span>{move || format!("{} · {}", ui.text("mig.schema"), db.get())}</span>
+                                <select class="input" on:change=move |e| { schema.set(event_target_value(&e)); load_objects(); }>
+                                    <option value="" selected=move || schema.get().is_empty()>{ui.tr("mig.choose_schema")}</option>
+                                    {move || schemas.get().into_iter().map(|d| { let (s, v) = (d.clone(), d.clone()); view! { <option value=v selected=move || schema.get() == s>{d}</option> } }).collect_view()}
+                                </select>
+                            </label>
+                        </Show>
+                        <div class="toolbar tight">
+                            <span class="muted small">{move || format!("{} {}", selected.get().len(), ui.text("mig.selected"))}</span>
+                            <button type="button" class="btn btn-secondary btn-sm" disabled=move || objects.get().is_empty()
+                                on:click=move |_| {
+                                    let names: Vec<String> = objects.get().into_iter().map(|n| n.name).collect();
+                                    selected.update(|s| if names.iter().all(|n| s.contains(n)) { s.clear() } else { s.extend(names) });
+                                }>{ui.tr("mig.select_all")}</button>
                         </div>
-                    }.into_any(),
-                }}
-                {move || confirm_delete.get().map(|b| {
-                    let b2 = b.clone();
-                    view! {
-                        <div class="test-result fail" role="alertdialog">
-                            <p>{format!("{} “{}”", ui.text("bk.delete_question"), b.label)}</p>
-                            <p class="muted small mono"><bdi>{b.path.clone()}</bdi></p>
-                            <div class="toolbar">
-                                <button type="button" class="btn btn-danger" on:click=move |_| delete(b2.clone())>{ui.tr("bk.delete")}</button>
-                                <button type="button" class="btn btn-secondary" on:click=move |_| confirm_delete.set(None)>{ui.tr("common.cancel")}</button>
+                        <ul class="mig-list">
+                            {move || objects.get().into_iter().map(|n| {
+                                let (a, b) = (n.name.clone(), n.name.clone());
+                                view! {
+                                    <li><label class="field-check">
+                                        <input type="checkbox" prop:checked=move || selected.get().contains(&a)
+                                            on:change=move |e| { let on = event_target_checked(&e); selected.update(|s| { if on { s.insert(b.clone()); } else { s.remove(&b); } }); } />
+                                        <span class="mig-coll">{icon(Icon::for_kind(&n.kind))}<bdi>{n.name.clone()}</bdi></span>
+                                        {n.estimated_count.map(|c| view! { <span class="muted small">{format!("~{}", num(c))}</span> })}
+                                    </label></li>
+                                }
+                            }).collect_view()}
+                        </ul>
+                        <fieldset class="field-group scope">
+                            <legend>{ui.tr("bk.method")}</legend>
+                            <label class="scope-option">
+                                <input type="radio" name="bk-method" prop:checked=move || method.get() == "gazabridge" on:change=move |_| method.set("gazabridge".into()) />
+                                <span class="scope-text"><strong>{ui.tr("bk.m_gazabridge")}</strong><span class="muted small">{ui.tr("bk.m_gazabridge_help")}</span></span>
+                            </label>
+    <Show when=move || family(&conn_id.get()) != "mysql">
+                                                    <label class="scope-option" class:disabled=move || !tool_found(if pg() { "pg_dump" } else { "mongodump" })>
+                                <input type="radio" name="bk-method" disabled=move || !tool_found(if pg() { "pg_dump" } else { "mongodump" })
+                                    prop:checked=move || method.get() == "native" on:change=move |_| method.set("native".into()) />
+                                <span class="scope-text">
+                                    <strong>{move || if pg() { "pg_dump" } else { "mongodump" }}</strong>
+                                    <span class="muted small">{ui.tr("bk.m_native_help")}</span>
+                                </span>
+                            </label>
+                            </Show>
+                        </fieldset>
+                        <label class="field">
+                            <span>{ui.tr("bk.label")}</span>
+                            <input class="input" type="text" prop:value=move || label.get() on:input=move |e| label.set(event_target_value(&e)) />
+                        </label>
+                        <div class="toolbar">
+                            <button type="button" class="btn" disabled=move || selected.get().is_empty() || backup_status.get().is_some_and(|s| s.phase == "running") on:click=start_backup>
+                                {icon(Icon::Download)}" "{ui.tr("bk.start")}
+                            </button>
+                            <Show when=move || backup_status.get().is_some_and(|s| s.phase == "running")>
+                                <button type="button" class="btn btn-danger" on:click=move |_| cancel(backup_op.get_value())>{ui.tr("query.cancel")}</button>
+                            </Show>
+                        </div>
+                        <Progress status=backup_status />
+                    </section>
+
+                    <div class="mig-arrow" aria-hidden="true"></div>
+
+                    <section class="card mig-side" aria-labelledby="bk-tools">
+                        <h2 id="bk-tools">{icon(Icon::Settings)}" "{ui.tr("bk.tools")}</h2>
+                        <p class="muted small">{ui.tr("bk.tools_help")}</p>
+                        <ul class="bk-tools">
+                            {move || tools.get().into_iter().map(|t| view! {
+                                <li>
+                                    <span class=if t.found { "status status-ok" } else { "status status-muted" }>{if t.found { "✓" } else { "—" }}</span>
+                                    " "<strong class="mono">{t.name.clone()}</strong>
+                                    {if t.found {
+                                        view! { <span class="muted small">" "{t.version.clone().unwrap_or_default().trim_start_matches(t.name.as_str()).trim_start_matches(" version:").trim().to_owned()}</span> }.into_any()
+                                    } else {
+                                        view! { <div class="muted small">{t.install_hint.clone()}</div> }.into_any()
+                                    }}
+                                </li>
+                            }).collect_view()}
+                        </ul>
+                    </section>
+                </div>
+
+                <section class="bk-list" aria-labelledby="bk-list-title">
+                    <h2 id="bk-list-title">{ui.tr("bk.list")}</h2>
+                    {move || match backups.get() {
+                        Load::Loading => view! { <p class="muted">{ui.tr("common.loading")}</p> }.into_any(),
+                        Load::Failed(e) => view! { <p class="error-detail">{e}</p> }.into_any(),
+                        Load::Ready(l) if l.is_empty() => view! { <p class="muted small">{ui.tr("bk.empty")}</p> }.into_any(),
+                        Load::Ready(l) => view! {
+                            <div class="grid-wrap">
+                                <table class="grid">
+                                    <thead><tr>
+                                        <th>{ui.tr("bk.col_label")}</th>
+                                        <th>{ui.tr("bk.col_from")}</th>
+                                        <th>{ui.tr("bk.col_objects")}</th>
+                                        <th>{ui.tr("bk.col_size")}</th>
+                                        <th>{ui.tr("mig.col_started")}</th>
+                                        <th></th>
+                                    </tr></thead>
+                                    <tbody>
+                                        {l.into_iter().map(|b| {
+                                            let (b1, b2) = (b.clone(), b.clone());
+                                            view! {
+                                                <tr>
+                                                    <td><bdi>{b.label.clone()}</bdi>
+                                                        <div class="muted small">{b.tool.clone().unwrap_or_else(|| "GazaBridge".into())}</div></td>
+                                                    <td class="small"><bdi>{b.connection.clone()}</bdi><div class="muted mono"><bdi>{b.schema.clone().filter(|_| b.family == "postgres").or(b.database.clone()).unwrap_or_default()}</bdi></div></td>
+                                                    <td class="small">{format!("{} · {} {}", b.objects.len(), num(b.records), ui.text("bk.records"))}</td>
+                                                    <td class="small">{bytes(b.bytes)}</td>
+                                                    <td class="small">{short_time(&b.created_at)}</td>
+                                                    <td class="bk-actions">
+                                                        <button type="button" class="btn btn-secondary btn-sm" on:click=move |_| {
+                                                            r_only.set(b1.objects.iter().map(|o| o.object.display()).collect());
+                                                            r_rename.set(String::new());
+                                                            r_conn.set(String::new());
+                                                            r_status.set(None);
+                                                            restoring.set(Some(b1.clone()));
+                                                        }>{ui.tr("bk.restore")}</button>
+                                                        <button type="button" class="btn btn-secondary btn-sm" aria-label=ui.tr("bk.delete") title=ui.tr("bk.delete") on:click=move |_| confirm_delete.set(Some(b2.clone()))>{icon(Icon::Trash)}</button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        }).collect_view()}
+                                    </tbody>
+                                </table>
                             </div>
-                        </div>
+                        }.into_any(),
+                    }}
+                    {move || confirm_delete.get().map(|b| {
+                        let b2 = b.clone();
+                        view! {
+                            <div class="test-result fail" role="alertdialog">
+                                <p>{format!("{} “{}”", ui.text("bk.delete_question"), b.label)}</p>
+                                <p class="muted small mono"><bdi>{b.path.clone()}</bdi></p>
+                                <div class="toolbar">
+                                    <button type="button" class="btn btn-danger" on:click=move |_| delete(b2.clone())>{ui.tr("bk.delete")}</button>
+                                    <button type="button" class="btn btn-secondary" on:click=move |_| confirm_delete.set(None)>{ui.tr("common.cancel")}</button>
+                                </div>
+                            </div>
+                        }
+                    })}
+                </section>
+
+                {move || restoring.get().map(|b| {
+                    let fam = b.family.clone();
+                    let is_pg = fam == "postgres";
+                    let original = if is_pg { b.schema.clone() } else { b.database.clone() }.unwrap_or_default();
+                    view! {
+                        <section class="card bk-restore" aria-labelledby="bk-restore-title">
+                            <h2 id="bk-restore-title">{icon(Icon::Upload)}" "{ui.tr("bk.restore_title")}" — "<bdi>{b.label.clone()}</bdi></h2>
+                            {(!b.warnings.is_empty()).then(|| view! { <ul class="small">{b.warnings.iter().map(|w| view! { <li class="finding-warning">{w.clone()}</li> }).collect_view()}</ul> })}
+                            <div class="bk-restore-grid">
+                                <div>
+                                    <label class="field">
+                                        <span>{ui.tr("bk.restore_into")}</span>
+                                        <select class="input" on:change=move |e| r_conn.set(event_target_value(&e))>{conn_options(r_conn, Some(fam.clone()))}</select>
+                                    </label>
+                                    <label class="field">
+                                        <span>{if is_pg { ui.tr("bk.rename_schema") } else { ui.tr("bk.rename_db") }}</span>
+                                        <input class="input mono" type="text" placeholder=original.clone() prop:value=move || r_rename.get() on:input=move |e| r_rename.set(event_target_value(&e)) />
+                                    </label>
+                                    <ul class="mig-list">
+                                        {b.objects.iter().map(|o| {
+                                            let name = o.object.display();
+                                            let (a, c) = (name.clone(), name.clone());
+                                            view! {
+                                                <li><label class="field-check">
+                                                    <input type="checkbox" prop:checked=move || r_only.get().contains(&a)
+                                                        on:change=move |e| { let on = event_target_checked(&e); r_only.update(|s| { if on { s.insert(c.clone()); } else { s.remove(&c); } }); } />
+                                                    <span class="mig-coll mono"><bdi>{name.clone()}</bdi></span>
+                                                    <span class="muted small">{num(o.records)}</span>
+                                                </label></li>
+                                            }
+                                        }).collect_view()}
+                                    </ul>
+                                </div>
+                                <fieldset class="field-group scope">
+                                    <legend>{ui.tr("mig.existing_title")}</legend>
+                                    {existing_option("skip", "mig.ex_skip")}
+                                    {existing_option("update", "mig.ex_update")}
+                                    {existing_option("fail", "mig.ex_fail")}
+                                    {existing_option("replace", "mig.ex_replace")}
+                                </fieldset>
+                            </div>
+                            <div class="toolbar">
+                                <button type="button" class="btn btn-secondary" disabled=move || r_conn.get().is_empty() || r_only.get().is_empty() on:click=check_restore>{icon(Icon::Eye)}" "{ui.tr("bk.check")}</button>
+                                <span class="muted small">{ui.tr("bk.check_help")}</span>
+                            </div>
+                            {move || r_plan.get().map(|p| view! {
+                                <div class="bk-plan">
+                                    {(!p.blockers.is_empty()).then(|| view! { <div class="test-result fail" role="alert"><ul>{p.blockers.iter().map(|x| view! { <li>{x.clone()}</li> }).collect_view()}</ul></div> })}
+                                    <div class="grid-wrap">
+                                        <table class="grid">
+                                            <thead><tr><th>{ui.tr("bk.col_restore")}</th><th>{ui.tr("mig.col_docs")}</th><th>{ui.tr("mig.col_target_now")}</th><th>{ui.tr("bk.col_verified")}</th></tr></thead>
+                                            <tbody>{p.items.iter().map(|i| view! {
+                                                <tr>
+                                                    <td class="mono"><bdi>{i.from.display()}</bdi>" → "<bdi>{i.to.display()}</bdi></td>
+                                                    <td>{num(i.records)}</td>
+                                                    <td>{if i.target_exists { i.target_count.map_or("?".into(), num) } else { ui.text("mig.new_collection") }}</td>
+                                                    <td>{if i.verified { "✓ SHA-256" } else { "✗" }}</td>
+                                                </tr>
+                                            }).collect_view()}</tbody>
+                                        </table>
+                                    </div>
+                                    {p.warnings.iter().map(|w| view! { <p class="small finding-warning">{w.clone()}</p> }).collect_view()}
+                                    {p.command.clone().map(|c| view! { <details class="small" open=true><summary>{ui.tr("bk.command")}</summary><pre class="mono code-block">{c}</pre></details> })}
+                                    {(!p.statements.is_empty()).then(|| view! { <details class="small"><summary>{ui.tr("mig.statements")}</summary><pre class="mono code-block">{p.statements.join("\n")}</pre></details> })}
+                                    {p.destructive.then(|| view! {
+                                        <div class="test-result fail">
+                                            <p><strong>{ui.tr("mig.destructive_title")}</strong></p>
+                                            <label class="field">
+                                                <span>{move || format!("{} {}", ui.text("bk.type_to_confirm"), confirm_word())}</span>
+                                                <input class="input mono" type="text" autocomplete="off" prop:value=move || r_confirm.get() on:input=move |e| r_confirm.set(event_target_value(&e)) />
+                                            </label>
+                                        </div>
+                                    })}
+                                    <div class="toolbar">
+                                        <button type="button" class="btn" class:btn-danger=p.destructive disabled=move || !can_restore() on:click=start_restore>{icon(Icon::Upload)}" "{ui.tr("bk.restore_start")}</button>
+                                    </div>
+                                </div>
+                            })}
+                            <Progress status=r_status />
+                            <div class="toolbar">
+                                <button type="button" class="btn btn-secondary" disabled=move || r_status.get().is_some_and(|s| s.phase == "running") on:click=move |_| restoring.set(None)>{ui.tr("transfer.close")}</button>
+                            </div>
+                        </section>
                     }
                 })}
             </section>
-
-            {move || restoring.get().map(|b| {
-                let fam = b.family.clone();
-                let is_pg = fam == "postgres";
-                let original = if is_pg { b.schema.clone() } else { b.database.clone() }.unwrap_or_default();
-                view! {
-                    <section class="card bk-restore" aria-labelledby="bk-restore-title">
-                        <h2 id="bk-restore-title">{icon(Icon::Upload)}" "{ui.tr("bk.restore_title")}" — "<bdi>{b.label.clone()}</bdi></h2>
-                        {(!b.warnings.is_empty()).then(|| view! { <ul class="small">{b.warnings.iter().map(|w| view! { <li class="finding-warning">{w.clone()}</li> }).collect_view()}</ul> })}
-                        <div class="bk-restore-grid">
-                            <div>
-                                <label class="field">
-                                    <span>{ui.tr("bk.restore_into")}</span>
-                                    <select class="input" on:change=move |e| r_conn.set(event_target_value(&e))>{conn_options(r_conn, Some(fam.clone()))}</select>
-                                </label>
-                                <label class="field">
-                                    <span>{if is_pg { ui.tr("bk.rename_schema") } else { ui.tr("bk.rename_db") }}</span>
-                                    <input class="input mono" type="text" placeholder=original.clone() prop:value=move || r_rename.get() on:input=move |e| r_rename.set(event_target_value(&e)) />
-                                </label>
-                                <ul class="mig-list">
-                                    {b.objects.iter().map(|o| {
-                                        let name = o.object.display();
-                                        let (a, c) = (name.clone(), name.clone());
-                                        view! {
-                                            <li><label class="field-check">
-                                                <input type="checkbox" prop:checked=move || r_only.get().contains(&a)
-                                                    on:change=move |e| { let on = event_target_checked(&e); r_only.update(|s| { if on { s.insert(c.clone()); } else { s.remove(&c); } }); } />
-                                                <span class="mig-coll mono"><bdi>{name.clone()}</bdi></span>
-                                                <span class="muted small">{num(o.records)}</span>
-                                            </label></li>
-                                        }
-                                    }).collect_view()}
-                                </ul>
-                            </div>
-                            <fieldset class="field-group scope">
-                                <legend>{ui.tr("mig.existing_title")}</legend>
-                                {existing_option("skip", "mig.ex_skip")}
-                                {existing_option("update", "mig.ex_update")}
-                                {existing_option("fail", "mig.ex_fail")}
-                                {existing_option("replace", "mig.ex_replace")}
-                            </fieldset>
-                        </div>
-                        <div class="toolbar">
-                            <button type="button" class="btn btn-secondary" disabled=move || r_conn.get().is_empty() || r_only.get().is_empty() on:click=check_restore>{icon(Icon::Eye)}" "{ui.tr("bk.check")}</button>
-                            <span class="muted small">{ui.tr("bk.check_help")}</span>
-                        </div>
-                        {move || r_plan.get().map(|p| view! {
-                            <div class="bk-plan">
-                                {(!p.blockers.is_empty()).then(|| view! { <div class="test-result fail" role="alert"><ul>{p.blockers.iter().map(|x| view! { <li>{x.clone()}</li> }).collect_view()}</ul></div> })}
-                                <div class="grid-wrap">
-                                    <table class="grid">
-                                        <thead><tr><th>{ui.tr("bk.col_restore")}</th><th>{ui.tr("mig.col_docs")}</th><th>{ui.tr("mig.col_target_now")}</th><th>{ui.tr("bk.col_verified")}</th></tr></thead>
-                                        <tbody>{p.items.iter().map(|i| view! {
-                                            <tr>
-                                                <td class="mono"><bdi>{i.from.display()}</bdi>" → "<bdi>{i.to.display()}</bdi></td>
-                                                <td>{num(i.records)}</td>
-                                                <td>{if i.target_exists { i.target_count.map_or("?".into(), num) } else { ui.text("mig.new_collection") }}</td>
-                                                <td>{if i.verified { "✓ SHA-256" } else { "✗" }}</td>
-                                            </tr>
-                                        }).collect_view()}</tbody>
-                                    </table>
-                                </div>
-                                {p.warnings.iter().map(|w| view! { <p class="small finding-warning">{w.clone()}</p> }).collect_view()}
-                                {p.command.clone().map(|c| view! { <details class="small" open=true><summary>{ui.tr("bk.command")}</summary><pre class="mono code-block">{c}</pre></details> })}
-                                {(!p.statements.is_empty()).then(|| view! { <details class="small"><summary>{ui.tr("mig.statements")}</summary><pre class="mono code-block">{p.statements.join("\n")}</pre></details> })}
-                                {p.destructive.then(|| view! {
-                                    <div class="test-result fail">
-                                        <p><strong>{ui.tr("mig.destructive_title")}</strong></p>
-                                        <label class="field">
-                                            <span>{move || format!("{} {}", ui.text("bk.type_to_confirm"), confirm_word())}</span>
-                                            <input class="input mono" type="text" autocomplete="off" prop:value=move || r_confirm.get() on:input=move |e| r_confirm.set(event_target_value(&e)) />
-                                        </label>
-                                    </div>
-                                })}
-                                <div class="toolbar">
-                                    <button type="button" class="btn" class:btn-danger=p.destructive disabled=move || !can_restore() on:click=start_restore>{icon(Icon::Upload)}" "{ui.tr("bk.restore_start")}</button>
-                                </div>
-                            </div>
-                        })}
-                        <Progress status=r_status />
-                        <div class="toolbar">
-                            <button type="button" class="btn btn-secondary" disabled=move || r_status.get().is_some_and(|s| s.phase == "running") on:click=move |_| restoring.set(None)>{ui.tr("transfer.close")}</button>
-                        </div>
-                    </section>
-                }
-            })}
-        </section>
-    }
+        }
 }

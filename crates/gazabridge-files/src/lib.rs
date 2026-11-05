@@ -22,7 +22,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub use read::{FileReader, ReadIssue, ReadOptions, ReadStats, SourceRecord};
+pub use read::{
+    FileReader, ReadIssue, ReadOptions, ReadStats, SourceRecord, decode_cell, infer_cell_types,
+};
 pub use write::{CsvOptions, ExtraFields, FileWriter, WriteOptions, WriteSummary};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +50,7 @@ impl FileFormat {
     }
 
     pub fn readable(self) -> bool {
-        !matches!(self, Self::Csv | Self::Xlsx)
+        !matches!(self, Self::Xlsx)
     }
 }
 

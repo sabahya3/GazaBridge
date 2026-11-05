@@ -1,6 +1,6 @@
 //! The application services on a real MySQL server: connection test and
 //! detection, Explorer browsing and editing, Query Studio, and export and
-//! import through every row-friendly file format.
+//! import through JSONL and CSV.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -233,11 +233,9 @@ async fn mysql_through_the_application_services() {
             .unwrap();
         assert_eq!(out.records_read, 4);
         if format == FileFormat::Csv {
-            // CSV import is not offered yet; the file must still hold every row.
             let text = std::fs::read_to_string(&path).unwrap();
             assert_eq!(text.lines().count(), 5, "{text}");
             assert!(text.contains("غزة") && text.contains("18446744073709551615"));
-            continue;
         }
         let r = transfers
             .import(

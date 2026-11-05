@@ -175,6 +175,15 @@ pub struct RunDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReportArgs {
+    pub run_id: String,
+    /// `json`, `html`, `markdown` or `csv`.
+    pub format: String,
+    /// Absolute path of a file that does not exist yet.
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidateArgs {
     pub run_id: String,
     /// `basic` (counts), `standard` (keys) or `deep` (content).

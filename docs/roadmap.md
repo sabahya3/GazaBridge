@@ -100,8 +100,8 @@ the app, and prove each connector with the contract suite.
 |---|---|---|
 | ✅ 2.1 | Run the PostgreSQL contract suite on 13 and 17; fix findings; record evidence; promote `postgres.postgresql` if it passes — **done 2026-10-24**: passed on 13–17, two bugs fixed (EXPLAIN output type, ModifyTable rendering) | S–M |
 | ✅ 2.2 | `gazabridge-application` crate: `ConnectionService` (create, edit, duplicate, delete, test), secret storage and cleanup, audit events, server detection → `connector_metadata`, profile overrides applied to the live manifest — **done 2026-10-24**; also fixed two PostgreSQL connection bugs it exposed (auth errors masked by multi-address retries, TLS server-name override appending a host) | M |
-| ⏸ 2.3 | **Paused** (draft committed in `df098f1`, resumes after the priority track). MySQL/MariaDB connector (see decision D1): TLS modes, charset, SQL-mode detection, type mapping, keyset reads, savepoint-isolated writes, upsert, explain, server-side KILL QUERY for cancel | L |
-| 2.4 | MySQL contract runs: MySQL 8.0, 8.4; MariaDB 10.11, 11.4 | S |
+| ✅ 2.3 | MySQL/MariaDB connector (decision D1, `mysql_async` on rustls): TLS modes (disabled/preferred with plain fallback/required/verify-CA/verify-identity), utf8mb4 sessions in UTC with strict SQL mode, type mapping (unsigned 64-bit, decimals, JSON, spatial as WKB, bit, year, enum/set), keyset reads with resumable positions, savepoint-isolated multi-row writes retried row by row, upsert (`ON DUPLICATE KEY UPDATE`) and skip-existing with true counts, explain (`FORMAT=JSON`, `ANALYZE` rolled back), cancel and timeouts by `KILL QUERY` from a second connection, read-only sessions, bounded counts (`MAX_EXECUTION_TIME` / `max_statement_time`) — **done 2026-11-05**; registered in the app (connections, explorer, editor, Query Studio, export/import) and in conversions MongoDB ⇄ MySQL (normalize/flatten/JSONB/hybrid, reference/embed; indexed text becomes `varchar(n)` within InnoDB's 3,072-byte key limit; `DATETIME` read as UTC). Not done: SSH tunnels (2.7), binlog CDC (8.5) | L |
+| ✅ 2.4 | MySQL contract runs — **done 2026-11-05**: contract suite and behaviour tests pass on MySQL 8.0.46 and 8.4.13, MariaDB 10.11.19 and 11.4.13; `mysql.mysql` and `mysql.mariadb` promoted to beta with evidence in `profiles.toml` | S |
 | 2.5 | MongoDB connector (official driver): URI/hosts, TLS, read preference, list databases/collections, sampled schema inference (`$sample` with fallback), Decimal128 rules, null vs missing, transactions on replica sets, resumable reads by `_id` | L |
 | 2.6 | MongoDB contract runs on a single-node replica set (7.0, 8.0) | S |
 | 2.7 | SSH tunnels (decision D3): local port forward, strict host-key checking, key/agent/password auth; tunnel lifetime tied to the connection | M |
@@ -163,7 +163,7 @@ data on every supported engine; no view ever issues an unbounded query.
 | # | Task | Size |
 |---|---|---|
 | 4.1 | `gazabridge-files` crate implementing the connector traits for files | S |
-| 4.2 | CSV/TSV: delimiter/header detection, quoting, encodings (`encoding_rs`), NULL markers, type inference, malformed-row policies, exact line numbers | M |
+| 4.2 | CSV/TSV: delimiter/header detection, quoting, encodings (`encoding_rs`), NULL markers, type inference, malformed-row policies, exact line numbers — **mostly done 2026-11-05**: import reads a header row (BOM, duplicate/empty names refused), detects `,` `;` tab `|`, follows quoting and multi-line cells, empty cell = absent field, fail/skip/quarantine with file line numbers; tables convert text to column types (JSON cells parsed, base64 decoded for binary), MongoDB gets unambiguous numbers/booleans (`007`, `1.50`, dates stay text). Exact round trips tested on PostgreSQL, MySQL and MongoDB. Not done: encodings other than UTF-8, custom NULL markers on import | M |
 | 4.3 | JSON (streaming arrays, JSON path selection), JSONL/NDJSON with stop/skip/quarantine/repair policies | M |
 | 4.4 | Excel: read with `calamine` (sheet, range, header row, formula vs value), write with `rust_xlsxwriter` (writing done: one sheet, frozen header, exact numbers, CSV column rules; reading still to do) | M |
 | 4.5 | Parquet and Arrow IPC via `arrow`/`parquet`: schema inspection, projection, predicate pushdown, batched reads, type mapping | M |
@@ -218,7 +218,7 @@ types, deep nesting and missing vs null.
 | 6.6 | `gazabridge-jobs`: job runner, run lifecycle, events → monitor | M |
 | 6.7 | Monitor UI driven by engine events (no timers): throughput, ETA, queue pressure, latencies, memory/CPU | M |
 | 6.8 | Failure tests: network interruption, process kill and resume, duplicate keys, partial batches, disk full | M |
-| 6.9 | All 16 database directions tested end to end in CI | M |
+| 6.9 | All 16 database directions tested end to end in CI — **partial (2026-11-05)**: tested end to end against real servers: MongoDB → MongoDB, MongoDB ⇄ PostgreSQL, MongoDB ⇄ MySQL, and table copies PostgreSQL ⇄ MySQL, PostgreSQL → PostgreSQL, MySQL → MySQL (deep validation, reruns, replace). SQLite directions are not offered | M |
 
 ### Done when
 A large migration can be paused, killed, restarted and resumed without
@@ -234,7 +234,7 @@ losing or duplicating records, with memory staying bounded.
 |---|---|---|
 | 7.1 | Dry Run covering every check in the specification; tests proving zero target mutations (row counts, catalogue snapshots, file-system snapshots) | M |
 | 7.2 | `gazabridge-validation`: basic, standard and deep validation; canonical chunk checksums; difference reports | L |
-| 7.3 | `gazabridge-reporting`: JSON, HTML, Markdown, CSV; PDF only if a reliable pure-Rust path exists (decision D7) | M |
+| ✅ 7.3 | `gazabridge-reporting`: JSON, HTML, Markdown, CSV; PDF only if a reliable pure-Rust path exists (decision D7) — **done 2026-11-05** (as `gazabridge-application::report`): run status, connections by name, per-stream counts, latest validation with every difference, errors, rejected records and events; standalone HTML (escaped, no scripts, light/dark), never overwrites a file; "Save report" in the run panel. PDF not done | M |
 | 7.4 | Backups: export before replace, SQLite file backup, logical exports, configuration/job/mapping backups | M |
 | 7.5 | Native tools (`pg_dump`, `mysqldump`, `mongodump`, …): detection, version checks, sanitized previews, passwords via environment or password files, cancellation, exit-code checks | M |
 
@@ -317,4 +317,7 @@ recovery tests pass for each of them.
 ## Immediate next steps
 
 1. Priority track done (P1–P12).
-2. Next: resume Milestone 2 at task 2.3 (MySQL), or the Monitor page (6.7) and reports (7.3).
+2. MySQL/MariaDB (2.3–2.4) done 2026-11-05, with MongoDB ⇄ MySQL conversions and table copies between PostgreSQL and MySQL.
+3. MySQL backups/restores in the GazaBridge format done 2026-11-05.
+4. CSV import (4.2) and run reports (7.3) done 2026-11-05.
+5. Next: the Monitor page (6.7), SSH tunnels (2.7), Excel reading (4.4).

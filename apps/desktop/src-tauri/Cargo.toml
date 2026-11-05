@@ -50,7 +50,7 @@ tempfile.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 mongodb = "3.9"
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
+testcontainers-modules = { version = "0.15", features = ["postgres", "mysql"] }
 gazabridge-plugin-sdk.workspace = true
 
 [lints]

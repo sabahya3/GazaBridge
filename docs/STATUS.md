@@ -1,6 +1,6 @@
 # GazaBridge — project status and handoff
 
-**Updated:** 2026-10-29 · **Branch:** `milestone-2` · **Last feature commit:** `f00bb6f` (P12)
+**Updated:** 2026-11-05 · **Branch:** `milestone-2` · **Last feature:** MySQL/MariaDB connector, MongoDB ⇄ MySQL conversions, table copies between PostgreSQL and MySQL
 
 This file is the single place to learn where the project stands: what is
 done, what is partial, what has not started, and how to keep working. The
@@ -8,12 +8,15 @@ detailed plan (task numbers, sizes, decisions) is [roadmap.md](roadmap.md);
 keep both in sync when you finish something.
 
 > **ملخص سريع:** GazaBridge تطبيق سطح مكتب (Rust + Tauri 2 + Leptos) لنقل
-> وتحويل ومزامنة البيانات بين MongoDB وPostgreSQL والملفات. المسار ذو
+> وتحويل ومزامنة البيانات بين MongoDB وPostgreSQL وMySQL/MariaDB والملفات. المسار ذو
 > الأولوية (P1–P12) خلص بالكامل: الاتصالات، المستكشف والمحرر، Query Studio،
 > التصدير والاستيراد (JSON/JSONL/BSON/CSV/Excel)، نسخ MongoDB ⇄ MongoDB
 > كامل، التحويل MongoDB ⇄ PostgreSQL، التجربة بدون كتابة والتحقق، النسخ
-> الاحتياطي والاسترجاع، والمزامنة المستمرة. اللي لسه: MySQL، صفحة المراقبة
-> والتقارير، الجدولة، المزامنة في الاتجاهين، CLI، التغليف والتوقيع للتوزيع.
+> الاحتياطي والاسترجاع، والمزامنة المستمرة. بعدها اتضاف MySQL/MariaDB
+> (موصل كامل + تحويل MongoDB ⇄ MySQL + نسخ جداول بين PostgreSQL وMySQL).
+> ونسخ احتياطي واسترجاع لـ MySQL. اللي لسه: صفحة المراقبة والتقارير، الجدولة، المزامنة
+> في الاتجاهين، أنفاق SSH، قراءة Excel، CLI، التغليف والتوقيع للتوزيع.
+> واتضاف استيراد CSV واختبار شامل بيعدّي البيانات على كل المحركات ويرجعها زي ما هي.
 
 ---
 
@@ -24,8 +27,8 @@ WASM UI, local SQLite metadata store). The **priority track P1–P12**
 (MongoDB and MongoDB ⇄ PostgreSQL) is **complete and tested against real
 servers** (MongoDB 6.0–8.0, PostgreSQL 13–17 in Docker via Testcontainers).
 
-- **278 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
-  clean, `cargo audit` clean (7 allowed warnings only).
+- **318 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
+  clean, `cargo audit` clean (8 allowed warnings only). MongoDB 6.0–8.0, PostgreSQL 13–17, MySQL 8.0/8.4 and MariaDB 10.11/11.4 in Docker.
 - The macOS app builds as `target/release/bundle/macos/GazaBridge.app`,
   signed with the owner's Apple Development certificate (not notarized).
 - UI languages: English and Arabic (RTL).
@@ -62,7 +65,7 @@ model.
 | SQLite | Beta; contract suite passes |
 | PostgreSQL | Beta; contract suite passes on 13–17 |
 | MongoDB | Beta; contract suite passes on 6.0, 7.0, 8.0. Change streams (P12), exact Decimal128 (non-canonical bytes kept), exotic BSON preserved, bulk upserts, order-preserving skip-existing, full index and collection specifications |
-| MySQL / MariaDB | **Paused draft** (`crates/gazabridge-connector-mysql`, commit `df098f1`); not registered in the app |
+| MySQL / MariaDB | Beta; contract suite and behaviour tests pass on MySQL 8.0, 8.4 and MariaDB 10.11, 11.4. Registered in the app (explorer, editor, Query Studio, export/import, conversions, table copies, GazaBridge-format backups and restores). No SSH tunnels, no binlog CDC, no `mysqldump` |
 
 ### Priority track (all ✅, details per row in [roadmap.md](roadmap.md#priority-track--mongodb-and-mongodb--postgresql-decided-2026-10-25))
 | # | Feature | Where |
@@ -79,6 +82,18 @@ model.
 | P11 | Backups and restores: GazaBridge format with manifest and SHA-256, `mongodump`/`pg_dump` with passwords only in private temp files, backup before replace | `backup.rs`, `tools.rs`, `pages/backups.rs` |
 | P12 | Continuous sync after a copy: MongoDB change streams (resume tokens) or timestamp polling for any source; pause/resume/stop | `migration/sync.rs`, MongoDB `change_feed` |
 
+### After the priority track (2026-11-05)
+| Feature | Where |
+|---|---|
+| MySQL/MariaDB connector (2.3–2.4) | `crates/gazabridge-connector-mysql` (`tests/contract.rs`, `tests/behaviour.rs`), app wiring test `gazabridge-application/tests/mysql_service.rs` |
+| MongoDB ⇄ MySQL conversions (same modes as PostgreSQL; indexed text → `varchar(n)` within InnoDB's key limit; `DATETIME` read as UTC) | `convert.rs`, `tests/conversion_mysql.rs` |
+| Table copies PostgreSQL ⇄ MySQL, PostgreSQL → PostgreSQL, MySQL → MySQL: target table from canonical types, primary key required, simple indexes recreated, foreign keys / partial / expression indexes skipped with warnings, deep validation | `table_copy.rs`, `tests/table_copy.rs` |
+| MySQL backups and restores in the GazaBridge format (tables, keys, defaults, indexes, foreign keys; rename to another database); backup before a copy replaces a MySQL target; Backups page offers MySQL | `backup.rs`, `tests/backup_mysql.rs`, `pages/backups.rs` |
+| Round-trip test through the app's wiring (`AppState`) on MongoDB 8.0, PostgreSQL 16, MySQL 8.4, MariaDB 11.4: 300 documents with every common BSON type (Arabic/emoji/quotes, doubles, Decimal128, pre-1970 dates, Int64, binary, nested objects, arrays, null vs missing) normalized into PostgreSQL, copied PostgreSQL → MySQL → MariaDB → PostgreSQL and compared value by value; stored whole MongoDB → MySQL → PostgreSQL → MongoDB and compared document by document; BSON and JSONL files; dry run; deep validation at every step | `apps/desktop/src-tauri/tests/round_trip.rs` |
+| CSV import (4.2): header row, delimiter detection, quoting, line numbers in errors, skip/quarantine; JSON and binary cells decoded for tables; plain numbers/booleans for MongoDB | `gazabridge-files/src/read.rs`, `transfer.rs`, `pages/transfer.rs` |
+| Run reports (7.3): JSON, HTML, Markdown, CSV with counts, validation differences, errors and events; "Save report" in the run panel | `report.rs`, `pages/migrations.rs` |
+| Fixes the real tests found: concurrent `CREATE SCHEMA IF NOT EXISTS` in PostgreSQL (retried); validation of composite keys without an owner column (and siblings split across batches); "Validate" right after a copy finished was refused, and a finished validation briefly showed the previous result (two races); `char(n)` columns became `varchar(n)` in table copies (ObjectId identity lost); MySQL's JSON parser rounds doubles with 16–17 digits (now stored as `{"$numberDouble": …}` in MongoDB conversions); Int64 values that fit in 32 bits came back as Int32 from JSON-mode tables (now `{"$numberLong": …}`); MySQL literal column defaults were unquoted | `connector-postgres`, `migration/validate.rs`, `migration.rs`, `table_copy.rs`, `gazabridge-mapping`, `connector-mysql/meta.rs` |
+
 ### Also done along the way
 - Password dialog: when the keychain refuses (or a password is asked each
   time) the app asks, keeps it for the session, can save it again, and
@@ -92,27 +107,27 @@ model.
 |---|---|
 | PostgreSQL native tools | `pg_dump`/`pg_restore` are **not installed** on the build Mac; their command building and password file are unit-tested only. `pg_restore` cannot rename schemas or keep existing rows |
 | Sync | PostgreSQL logical replication not implemented (polling instead); polling does not see deletes; embedded child tables are not kept in sync; time series resumed batches may repeat (no unique `_id`) |
-| Conversions | JSONB does not keep key order; missing vs null both become NULL in typed columns; embedding is one level; PostgreSQL → PostgreSQL and anything MySQL are not offered |
-| Backups | PostgreSQL sequences are not backed up (values restored as stored); no scheduled backups |
+| Conversions | JSONB does not keep key order; missing vs null both become NULL in typed columns; embedding is one level; MySQL unconstrained decimals become `decimal(65,30)`; MySQL `ON DUPLICATE KEY` reacts to any unique key; table copies of JSON columns into MySQL may round 16–17-digit doubles (warned in the plan); SQLite is not offered as a copy source or target |
+| MySQL | JSON `null` and SQL NULL look the same in exported files; backups use the GazaBridge format only (`mysqldump` not supported); AUTO_INCREMENT is not recreated by a restore; SSH tunnels missing |
+| Backups | PostgreSQL sequences and MySQL AUTO_INCREMENT are not backed up (values restored as stored); no scheduled backups; no `mysqldump` |
 | Validation | Key and deep checks read both sides fully (no sampling for huge objects); target-only extras are reported from counts |
-| Files | Excel **reading**, CSV import, Parquet/Arrow, zstd/ZIP, split output, fuzzing (roadmap 4.2–4.9) |
+| Files | Excel **reading**, CSV in encodings other than UTF-8, Parquet/Arrow, zstd/ZIP, split output, fuzzing (roadmap 4.2–4.9) |
 | UI | Data grid is paged, not virtualized; Query Studio editor is plain text (no highlighting/autocomplete, question 4); no Monitor page; no Schema Studio page; no UI smoke tests (3.6) |
 | Docs | `requirements-traceability.md` and `connector-guide.md` were not refreshed during the priority track — verify before relying on them |
 | macOS app | Signed for local use only; not notarized; no updater |
 
 ## 5. Not started
 
-- **Milestone 2 remainder:** MySQL/MariaDB connector (2.3, draft paused) and its contract runs (2.4), SSH tunnels (2.7), connector docs (2.9).
+- **Milestone 2 remainder:** SSH tunnels (2.7), connector docs (2.9).
 - **Milestone 3:** Schema Studio (3.5), virtualized grid (3.2), UI smoke tests (3.6).
 - **Milestone 5:** general transformation pipelines and sandboxed expressions (5.2–5.3), drag-and-drop mapping UI (5.6).
 - **Milestone 6:** Merge/truncate write modes (6.5), job runner and Monitor UI (6.6–6.7), failure-injection suite on real servers (6.8), all 16 directions in CI (6.9).
-- **Milestone 7:** reports in JSON/HTML/Markdown/CSV (7.3).
 - **Milestone 8:** scheduler (8.1), PostgreSQL logical replication (8.4), MySQL binlog (8.5), SQLite change log (8.6).
 - **Milestone 9:** bidirectional sync (all).
 - **Milestone 10:** CLI, benchmarks, hardening pass, installers for all platforms, notarization and signed updates, SBOM, user documentation.
 
-**Suggested next:** the Monitor page and exportable reports (6.7, 7.3), or
-resume MySQL (2.3). The owner chooses.
+**Suggested next:** the Monitor page (6.7), SSH tunnels (2.7), Excel
+reading (4.4). The owner chooses.
 
 ## 6. Open questions for the owner
 
@@ -140,7 +155,7 @@ resume MySQL (2.3). The owner chooses.
 |---|---|
 | `crates/gazabridge-domain` | Values, types, connection profiles, job states |
 | `crates/gazabridge-plugin-sdk` | Connector traits, read/write/DDL/CDC contracts |
-| `crates/gazabridge-connector-*` | SQLite, PostgreSQL, MongoDB (MySQL draft) |
+| `crates/gazabridge-connector-*` | SQLite, PostgreSQL, MongoDB, MySQL/MariaDB |
 | `crates/gazabridge-bson` | BSON ⇄ canonical values |
 | `crates/gazabridge-files` | File readers and writers (incl. Excel) |
 | `crates/gazabridge-query` | mongosh-syntax parser and query builder (shared with the UI) |

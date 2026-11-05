@@ -80,6 +80,39 @@ async fn resolve_db(conn: &mut Conn, ns: &NamespacePath) -> ConnectorResult<Stri
     }
 }
 
+/// `COLUMN_DEFAULT` as an SQL expression usable in `DEFAULT (…)`. MySQL
+/// reports literals unquoted and marks expressions `DEFAULT_GENERATED`;
+/// MariaDB quotes literals, writes expressions as calls and reports a NULL
+/// default as the text `NULL`.
+fn default_sql(raw: Option<String>, extra: &str) -> Option<String> {
+    let raw = raw?;
+    let call = {
+        let name_end = raw.find('(').unwrap_or(0);
+        name_end > 0
+            && raw.ends_with(')')
+            && raw[..name_end]
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    };
+    if raw == "NULL" {
+        None
+    } else if extra.contains("default_generated")
+        || raw.starts_with('\'')
+        || raw.starts_with("b'")
+        || raw.starts_with("0x")
+        || (raw.parse::<f64>().is_ok()
+            && raw.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.'))
+        || call
+    {
+        Some(raw)
+    } else {
+        Some(format!(
+            "'{}'",
+            raw.replace('\\', "\\\\").replace('\'', "''")
+        ))
+    }
+}
+
 pub async fn load(conn: &mut Conn, object: &ObjectRef) -> ConnectorResult<TableMeta> {
     let db = resolve_db(conn, &object.namespace).await?;
     let p = || {
@@ -128,7 +161,7 @@ pub async fn load(conn: &mut Conn, object: &ObjectRef) -> ConnectorResult<TableM
             canonical_type: canonical_for(&my),
             native_type: cell_str(r, 2).unwrap_or_default(),
             nullable: cell_str(r, 7).as_deref() == Some("YES"),
-            default_expression: cell_str(r, 8),
+            default_expression: default_sql(cell_str(r, 8), &extra),
             is_generated: extra.contains("generated") && !extra.contains("default_generated"),
             is_identity: extra.contains("auto_increment"),
             comment: Some(my.comment).filter(|c| !c.is_empty()),
@@ -265,4 +298,32 @@ pub async fn constraints(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_sql;
+
+    #[test]
+    fn defaults_become_sql_expressions() {
+        let d = |raw: &str, extra: &str| default_sql(Some(raw.into()), extra);
+        // MySQL
+        assert_eq!(d("abc", "").as_deref(), Some("'abc'"));
+        assert_eq!(d("it's", "").as_deref(), Some("'it''s'"));
+        assert_eq!(d("0", "").as_deref(), Some("0"));
+        assert_eq!(d("1.5", "").as_deref(), Some("1.5"));
+        assert_eq!(
+            d("CURRENT_TIMESTAMP", "default_generated").as_deref(),
+            Some("CURRENT_TIMESTAMP")
+        );
+        assert_eq!(d("b'1'", "").as_deref(), Some("b'1'"));
+        // MariaDB
+        assert_eq!(d("'abc'", "").as_deref(), Some("'abc'"));
+        assert_eq!(
+            d("current_timestamp()", "").as_deref(),
+            Some("current_timestamp()")
+        );
+        assert_eq!(d("NULL", ""), None);
+        assert_eq!(default_sql(None, ""), None);
+    }
 }

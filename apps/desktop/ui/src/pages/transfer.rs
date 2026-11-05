@@ -429,8 +429,8 @@ pub fn TransferPanel(
                     }>
                         <option value="json" selected=move || format.get() == "json">"JSON"</option>
                         <option value="jsonl" selected=move || format.get() == "jsonl">{ui.tr("transfer.jsonl")}</option>
+                        <option value="csv" selected=move || format.get() == "csv">"CSV"</option>
                         {(direction == Direction::Export).then(|| view! {
-                            <option value="csv" selected=move || format.get() == "csv">"CSV"</option>
                             <option value="xlsx" selected=move || format.get() == "xlsx">{ui.tr("transfer.xlsx")}</option>
                         })}
                         <option value="bson" selected=move || format.get() == "bson">{ui.tr("transfer.bson")}</option>
@@ -514,6 +514,9 @@ pub fn TransferPanel(
                     </Show>
                 }.into_any(),
                 Direction::Import => view! {
+                    <Show when=move || format.get() == "csv">
+                        <p class="muted small">{ui.tr("transfer.csv_import_help")}</p>
+                    </Show>
                     <div class="toolbar">
                         <label class="field-inline">
                             <span>{ui.tr("transfer.mode")}</span>

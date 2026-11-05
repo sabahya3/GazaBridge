@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use gazabridge_ipc::{
     ConnectionSummary, CopyItemDto, ExplorerListArgs, MigrationArgs, MigrationPlanDto, NodeDto,
-    ObjectAddr, RunArgs, RunDto, StreamDto, SyncArgs, ValidateArgs, ValidationDto, commands,
+    ObjectAddr, PickPathArgs, ReportArgs, RunArgs, RunDto, StreamDto, SyncArgs, ValidateArgs,
+    ValidationDto, commands,
 };
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -151,6 +152,7 @@ pub fn MigrationsPage() -> impl IntoView {
     let direction = move || match (family(source_id).as_str(), family(target_id).as_str()) {
         ("mongodb", "postgres" | "mysql") => "doc_to_table",
         ("postgres" | "mysql", "mongodb") => "table_to_doc",
+        ("postgres" | "mysql", "postgres" | "mysql") => "table_copy",
         ("", _) | (_, "") => "",
         _ => "copy",
     };
@@ -464,6 +466,41 @@ pub fn MigrationsPage() -> impl IntoView {
         spawn_local(async move {
             match call::<_, ()>(commands::MIGRATION_VALIDATE, &Wrap { args: &args }).await {
                 Ok(()) => follow(run_id),
+                Err(e) => message.set(Some(e.message)),
+            }
+        });
+    };
+
+    let report_format = RwSignal::new("html".to_owned());
+    let save_report = move |run_id: String| {
+        message.set(None);
+        let format = report_format.get_untracked();
+        let ext = if format == "markdown" {
+            "md".to_owned()
+        } else {
+            format.clone()
+        };
+        let pick = PickPathArgs {
+            save: true,
+            default_name: Some(format!("gazabridge-report.{ext}")),
+            extensions: vec![ext],
+        };
+        spawn_local(async move {
+            let path =
+                match call::<_, Option<String>>(commands::PICK_FILE_PATH, &Wrap { args: &pick })
+                    .await
+                {
+                    Ok(Some(p)) => p,
+                    Ok(None) => return,
+                    Err(e) => return message.set(Some(e.message)),
+                };
+            let args = ReportArgs {
+                run_id,
+                format,
+                path: path.clone(),
+            };
+            match call::<_, ()>(commands::MIGRATION_REPORT, &Wrap { args: &args }).await {
+                Ok(()) => message.set(Some(format!("{} {path}", ui.text("mig.report_saved")))),
                 Err(e) => message.set(Some(e.message)),
             }
         });
@@ -1034,6 +1071,7 @@ pub fn MigrationsPage() -> impl IntoView {
                 let checkable = finished && !r.dry_run;
                 let checking = r.validation.as_ref().is_some_and(|v| v.running);
                 let (c1, c2, c3) = (r.run_id.clone(), r.run_id.clone(), r.run_id.clone());
+                let rep = r.run_id.clone();
                 let paused = r.status == "paused";
                 view! {
                     <section class="card mig-run" aria-labelledby="mig-run-title">
@@ -1059,6 +1097,16 @@ pub fn MigrationsPage() -> impl IntoView {
                             {(!active).then(|| view! {
                                 <button type="button" class="btn btn-secondary" on:click=move |_| run.set(None)>{ui.tr("transfer.close")}</button>
                             })}
+                            <label class="field-inline">
+                                <span>{ui.tr("mig.report")}</span>
+                                <select class="input" on:change=move |e| report_format.set(event_target_value(&e))>
+                                    <option value="html" selected=move || report_format.get() == "html">"HTML"</option>
+                                    <option value="markdown" selected=move || report_format.get() == "markdown">"Markdown"</option>
+                                    <option value="json" selected=move || report_format.get() == "json">"JSON"</option>
+                                    <option value="csv" selected=move || report_format.get() == "csv">"CSV"</option>
+                                </select>
+                            </label>
+                            <button type="button" class="btn btn-secondary" on:click=move |_| save_report(rep.clone())>{icon(Icon::Download)}" "{ui.tr("mig.save_report")}</button>
                         </div>
                         {resumable.then(|| view! { <p class="muted small">{ui.tr("mig.resume_help")}</p> })}
                         {checkable.then(|| view! {

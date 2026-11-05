@@ -2075,6 +2075,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "csv",
  "futures",
  "gazabridge-bson",
  "gazabridge-connector-mongodb",

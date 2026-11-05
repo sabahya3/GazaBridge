@@ -60,6 +60,11 @@ enum Source {
     Json(ArrayScanner<Box<dyn BufRead + Send>>),
     Jsonl(Box<dyn BufRead + Send>),
     Bson(Box<dyn BufRead + Send>),
+    /// Rows under a header row of field names.
+    Csv {
+        reader: Box<csv::Reader<Box<dyn BufRead + Send>>>,
+        headers: Vec<String>,
+    },
 }
 
 impl std::fmt::Debug for Source {
@@ -68,6 +73,7 @@ impl std::fmt::Debug for Source {
             Self::Json(_) => "Json",
             Self::Jsonl(_) => "Jsonl",
             Self::Bson(_) => "Bson",
+            Self::Csv { .. } => "Csv",
         })
     }
 }
@@ -87,6 +93,30 @@ pub struct FileReader {
 enum Raw {
     Json(Vec<u8>),
     Bson(Vec<u8>),
+    Csv(Vec<String>),
+}
+
+/// The delimiter used most in the header line (`,` when none is).
+fn sniff_delimiter(reader: &mut Box<dyn BufRead + Send>) -> std::io::Result<u8> {
+    let buf = reader.fill_buf()?;
+    let line = buf.split(|b| *b == b'\n').next().unwrap_or_default();
+    let mut best = (b',', 0);
+    let mut quoted = false;
+    let mut counts = [0usize; 4];
+    const CANDIDATES: [u8; 4] = *b",;\t|";
+    for b in line {
+        if *b == b'"' {
+            quoted = !quoted;
+        } else if !quoted && let Some(i) = CANDIDATES.iter().position(|c| c == b) {
+            counts[i] += 1;
+        }
+    }
+    for (i, n) in counts.iter().enumerate() {
+        if *n > best.1 {
+            best = (CANDIDATES[i], *n);
+        }
+    }
+    Ok(best.0)
 }
 
 impl FileReader {
@@ -109,7 +139,43 @@ impl FileReader {
             FileFormat::Json => Source::Json(ArrayScanner::new(reader)),
             FileFormat::Jsonl => Source::Jsonl(reader),
             FileFormat::Bson => Source::Bson(reader),
-            FileFormat::Csv | FileFormat::Xlsx => unreachable!("checked above"),
+            FileFormat::Csv => {
+                let mut reader = reader;
+                let delimiter = sniff_delimiter(&mut reader).map_err(|e| FileError::io(path, e))?;
+                let mut reader = csv::ReaderBuilder::new()
+                    .delimiter(delimiter)
+                    .has_headers(true)
+                    .flexible(true)
+                    .from_reader(reader);
+                let headers: Vec<String> = reader
+                    .headers()
+                    .map_err(|e| FileError::Malformed {
+                        kind: "line",
+                        location: 1,
+                        message: format!("unreadable header row: {e}"),
+                    })?
+                    .iter()
+                    .map(|h| h.trim().to_owned())
+                    .collect();
+                let mut seen = std::collections::BTreeSet::new();
+                for h in &headers {
+                    if h.is_empty() {
+                        return Err(FileError::Invalid(
+                            "the header row has an empty column name".into(),
+                        ));
+                    }
+                    if !seen.insert(h) {
+                        return Err(FileError::Invalid(format!(
+                            "the header row names `{h}` twice"
+                        )));
+                    }
+                }
+                Source::Csv {
+                    reader: Box::new(reader),
+                    headers,
+                }
+            }
+            FileFormat::Xlsx => unreachable!("checked above"),
         };
         let quarantine_path = match &options.malformed {
             MalformedPolicy::Quarantine { path } => Some(path.clone()),
@@ -135,7 +201,7 @@ impl FileReader {
 
     fn kind(&self) -> &'static str {
         match self.source {
-            Source::Jsonl(_) => "line",
+            Source::Jsonl(_) | Source::Csv { .. } => "line",
             _ => "record",
         }
     }
@@ -189,6 +255,23 @@ impl FileReader {
                 }
                 return Ok(Some(Raw::Json(line)));
             },
+            Source::Csv { reader, .. } => {
+                let mut row = csv::StringRecord::new();
+                match reader.read_record(&mut row) {
+                    Ok(false) => Ok(None),
+                    Ok(true) => {
+                        // The csv crate's line numbers are one lower than the
+                        // file's (whose line 1 is the header).
+                        self.position = row.position().map_or(self.position + 1, |p| p.line() + 1);
+                        Ok(Some(Raw::Csv(row.iter().map(str::to_owned).collect())))
+                    }
+                    Err(e) => Err(FileError::Malformed {
+                        kind: "line",
+                        location: e.position().map_or(self.position + 1, |p| p.line() + 1),
+                        message: e.to_string(),
+                    }),
+                }
+            }
             Source::Bson(reader) => {
                 let mut len = [0u8; 4];
                 let mut got = 0;
@@ -247,6 +330,27 @@ impl FileReader {
                     }
                 }
             }
+            Raw::Csv(cells) => {
+                let Source::Csv { headers, .. } = &self.source else {
+                    return Err("not a CSV file".into());
+                };
+                if cells.len() != headers.len() {
+                    return Err(format!(
+                        "{} values for {} columns",
+                        cells.len(),
+                        headers.len()
+                    ));
+                }
+                let mut r = Record::with_capacity(cells.len());
+                for (h, c) in headers.iter().zip(cells) {
+                    // An empty cell is an absent field (NULL or the column
+                    // default in a table).
+                    if !c.is_empty() {
+                        r.insert(h.clone(), gazabridge_domain::Value::String(c.clone()));
+                    }
+                }
+                Ok(r)
+            }
             Raw::Bson(bytes) => Document::from_reader(&bytes[..])
                 .map(|d| gazabridge_bson::document_to_record(&d))
                 .map_err(|e| format!("invalid BSON document: {e}")),
@@ -288,6 +392,17 @@ impl FileReader {
                 let r = match raw {
                     Raw::Json(bytes) => q.write_all(bytes).and_then(|()| q.write_all(b"\n")),
                     Raw::Bson(bytes) => q.write_all(bytes),
+                    Raw::Csv(cells) => {
+                        let mut w = csv::Writer::from_writer(Vec::new());
+                        let line = w
+                            .write_record(cells)
+                            .map_err(std::io::Error::other)
+                            .and_then(|()| {
+                                w.into_inner()
+                                    .map_err(|e| std::io::Error::other(e.to_string()))
+                            });
+                        line.and_then(|l| q.write_all(&l))
+                    }
                 };
                 r.map_err(|e| self.io_err(e))?;
                 self.stats.quarantined += 1;
@@ -328,5 +443,60 @@ impl FileReader {
             q.get_ref().sync_all().map_err(|e| self.io_err(e))?;
         }
         Ok(self.stats)
+    }
+}
+/// A CSV cell for a column whose values GazaBridge writes in a text form:
+/// JSON text for JSON columns, base64 for binary ones. `None` leaves the
+/// text as it is (the database then reports what does not fit).
+pub fn decode_cell(
+    column: &gazabridge_domain::CanonicalType,
+    text: &str,
+) -> Option<gazabridge_domain::Value> {
+    use base64::Engine;
+    use gazabridge_domain::{CanonicalType as T, Value};
+    match column {
+        T::Json | T::Object | T::Array(_) | T::Map { .. } => {
+            serde_json::from_str(text).ok().map(Value::Json)
+        }
+        T::Binary { .. } => base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .ok()
+            .map(Value::Binary),
+        _ => None,
+    }
+}
+
+/// Text cells read as the values they plainly are, for targets without
+/// column types (MongoDB): `true`/`false`, integers without leading zeros,
+/// and decimals whose shortest form is the text itself. Anything else (ZIP
+/// codes like `007`, `1.50`, dates) stays text.
+pub fn infer_cell_types(record: &mut Record) {
+    use gazabridge_domain::Value;
+    for v in record.fields.values_mut() {
+        let Value::String(s) = &v.value else { continue };
+        let typed = match s.as_str() {
+            "true" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            t => {
+                let digits = t.strip_prefix('-').unwrap_or(t);
+                let plain_int = !digits.is_empty()
+                    && digits.bytes().all(|b| b.is_ascii_digit())
+                    && (digits == "0" || !digits.starts_with('0'))
+                    && t != "-0";
+                if plain_int {
+                    t.parse::<i64>().ok().map(Value::Int)
+                } else if t.contains('.') && !t.contains(['e', 'E']) {
+                    t.parse::<f64>()
+                        .ok()
+                        .filter(|f| f.is_finite() && format!("{f:?}") == t)
+                        .map(Value::Float)
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(t) = typed {
+            v.value = t;
+        }
     }
 }

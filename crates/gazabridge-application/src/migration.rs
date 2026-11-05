@@ -566,7 +566,7 @@ impl MigrationService {
         let (sf, tf) = (family(source.as_ref()), family(target.as_ref()));
         let Some(direction) = convert::direction(sf, tf) else {
             plan.blockers.push(format!(
-                "{sf:?} → {tf:?} is not supported yet; supported: MongoDB → MongoDB, MongoDB ⇄ PostgreSQL, MongoDB ⇄ MySQL"
+                "{sf:?} → {tf:?} is not supported yet; supported: MongoDB → MongoDB, MongoDB ⇄ PostgreSQL, MongoDB ⇄ MySQL, and tables between PostgreSQL and MySQL"
             ));
             return Ok((plan, Vec::new()));
         };
@@ -585,6 +585,9 @@ impl MigrationService {
             let planned = match direction {
                 Direction::DocToTable => {
                     convert::plan_doc_to_table(req, source.as_ref(), target.as_ref()).await?
+                }
+                Direction::TableCopy => {
+                    crate::table_copy::plan(req, source.as_ref(), target.as_ref()).await?
                 }
                 _ => convert::plan_table_to_doc(req, &source, target.as_ref()).await?,
             };
@@ -1605,13 +1608,54 @@ impl MigrationService {
         }
     }
 
+    /// Writes the run's report (never over an existing file).
+    pub async fn export_report(
+        &self,
+        run_id: RunId,
+        path: &std::path::Path,
+        format: crate::report::ReportFormat,
+    ) -> AppResult<()> {
+        let view = self.view(run_id).await?;
+        let name = |id| async move {
+            self.store
+                .connections()
+                .require(id)
+                .await
+                .map(|c| c.name)
+                .unwrap_or_else(|_| "(deleted connection)".into())
+        };
+        let names = crate::report::ReportNames {
+            source: name(view.source).await,
+            target: name(view.target).await,
+        };
+        let text = crate::report::render(&view, &names, format)?;
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || crate::report::save(&path, &text))
+            .await
+            .map_err(|e| AppError::Invalid(e.to_string()))?
+    }
+
     /// Compares a run's sources with its targets in the background; follow
     /// it with [`Self::view`].
     pub async fn validate(&self, run_id: RunId, level: Level) -> AppResult<()> {
+        let mut run = self.store.jobs().require_run(run_id).await?;
+        // A finished run is recorded before it leaves the active list and
+        // while its automatic count check runs: wait for that hand-off.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while run.status.is_terminal()
+            && (self.is_active(run_id)
+                || self
+                    .validations
+                    .lock()
+                    .is_ok_and(|v| v.get(&run_id).is_some_and(|r| r.running)))
+            && std::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            run = self.store.jobs().require_run(run_id).await?;
+        }
         if self.is_active(run_id) {
             return Err(AppError::Invalid("wait until the copy has stopped".into()));
         }
-        let run = self.store.jobs().require_run(run_id).await?;
         if run.dry_run {
             return Err(AppError::Invalid(
                 "a dry run wrote nothing to validate".into(),
@@ -1657,7 +1701,7 @@ impl MigrationService {
             .validations
             .lock()
             .ok()
-            .and_then(|mut v| v.remove(&run.id))
+            .and_then(|v| v.get(&run.id).cloned())
             .unwrap_or(report);
         report.running = false;
         report.ended_at = Some(Utc::now());
@@ -1673,6 +1717,11 @@ impl MigrationService {
         }
         if let Ok(json) = serde_json::to_value(&report) {
             let _ = self.store.jobs().set_run_validation(run.id, &json).await;
+        }
+        // Only now: until the report is stored, a view would show the
+        // previous one.
+        if let Ok(mut v) = self.validations.lock() {
+            v.remove(&run.id);
         }
         let level_name = serde_json::to_value(level)
             .ok()
@@ -1761,6 +1810,13 @@ impl MigrationService {
 
     /// Live progress of a running copy, or the recorded state of an old one.
     pub async fn view(&self, run_id: RunId) -> AppResult<RunView> {
+        // Before the stored run: a validation stores its report and only
+        // then leaves this map, so one of the two always has the latest.
+        let live_validation = self
+            .validations
+            .lock()
+            .ok()
+            .and_then(|v| v.get(&run_id).cloned());
         let jobs = self.store.jobs();
         let run = jobs.require_run(run_id).await?;
         let job = jobs.require(run.job_id).await?;
@@ -1803,16 +1859,11 @@ impl MigrationService {
             error: run.error_summary,
             events,
             dry_run: run.dry_run,
-            validation: self
-                .validations
-                .lock()
-                .ok()
-                .and_then(|v| v.get(&run_id).cloned())
-                .or_else(|| {
-                    run.validation
-                        .as_ref()
-                        .and_then(|j| serde_json::from_value(j.clone()).ok())
-                }),
+            validation: live_validation.or_else(|| {
+                run.validation
+                    .as_ref()
+                    .and_then(|j| serde_json::from_value(j.clone()).ok())
+            }),
         })
     }
 

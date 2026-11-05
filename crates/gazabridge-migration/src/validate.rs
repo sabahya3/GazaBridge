@@ -370,16 +370,20 @@ pub(crate) async fn fetch_existing(
     spec: &TargetSpec,
     rows: &[&Record],
 ) -> Result<HashMap<String, Record>, ConnectorError> {
+    // With a composite key and no owner, rows are looked up by the first key
+    // column and only the asked-for keys are kept (a batch may hold some of
+    // a value's rows and the next batch the rest).
+    let only: Option<std::collections::HashSet<String>> = (spec.key_fields.len() > 1
+        && spec.owner.is_none())
+    .then(|| rows.iter().map(|r| key_of(r, &spec.key_fields)).collect());
     let lookup = match (spec.key_fields.as_slice(), &spec.owner) {
         ([k], _) => k.clone(),
         (_, Some(owner)) => owner.clone(),
+        ([first, ..], None) => first.clone(),
         _ => {
             return Err(ConnectorError::new(
                 ErrorKind::Unsupported,
-                format!(
-                    "`{}` has a composite key and no owner column to look rows up by",
-                    spec.object
-                ),
+                format!("`{}` has no key to look rows up by", spec.object),
             ));
         }
     };
@@ -409,7 +413,10 @@ pub(crate) async fn fetch_existing(
                 Err(e) => return Err(e),
             };
             for r in batch.records {
-                out.insert(key_of(&r, &spec.key_fields), r);
+                let key = key_of(&r, &spec.key_fields);
+                if only.as_ref().is_none_or(|o| o.contains(&key)) {
+                    out.insert(key, r);
+                }
             }
         }
     }

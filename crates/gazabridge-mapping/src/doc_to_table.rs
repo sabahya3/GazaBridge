@@ -816,7 +816,7 @@ pub fn rows(m: &DocMapping, doc: &Record) -> Result<Rows, String> {
     row[0] = key;
     if let Some(c) = root.column(&ColumnSource::Document) {
         let d = gazabridge_bson::record_to_document(doc).map_err(|e| e.to_string())?;
-        row[c] = Value::Json(Bson::Document(d).into_relaxed_extjson());
+        row[c] = Value::Json(crate::stored_json(&Bson::Document(d)));
     }
     b.finish(0, row, extra);
     Ok(b.out)

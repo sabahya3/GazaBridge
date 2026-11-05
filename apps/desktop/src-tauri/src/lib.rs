@@ -76,6 +76,7 @@ pub fn run() {
             migration_commands::migration_recent,
             migration_commands::migration_dry_run,
             migration_commands::migration_validate,
+            migration_commands::migration_report,
             backup_commands::backup_tools,
             backup_commands::backup_list,
             backup_commands::backup_start,

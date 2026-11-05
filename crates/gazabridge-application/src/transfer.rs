@@ -10,8 +10,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
+use gazabridge_domain::connection::EngineFamily;
 use gazabridge_domain::ids::ConnectionId;
 use gazabridge_domain::job::WriteMode;
+use gazabridge_domain::{CanonicalType, Value};
 use gazabridge_files::{
     FileFormat, FileReader, FileWriter, ReadOptions, WriteOptions, WriteSummary,
 };
@@ -340,6 +342,35 @@ impl TransferService {
         let (path, options) = (req.path.clone(), req.options.clone());
         let mut reader = blocking(move || FileReader::open(&path, options)).await??;
         let batch_size = req.batch_size.clamp(1, 50_000);
+        // CSV cells are text; tables convert them to their column types,
+        // except JSON and binary columns, whose cells hold JSON text and
+        // base64 (as exports write them), decoded here.
+        // Documents get the plain numbers and booleans the cells hold.
+        let csv = req.options.format == FileFormat::Csv;
+        let infer = csv && conn.manifest().family == EngineFamily::MongoDb;
+        let cell_types: Vec<(String, CanonicalType)> = if csv && !infer {
+            conn.inspect(&req.object, &InspectOptions::default())
+                .await
+                .map(|s| {
+                    s.columns
+                        .into_iter()
+                        .filter(|c| {
+                            matches!(
+                                c.canonical_type,
+                                CanonicalType::Json
+                                    | CanonicalType::Object
+                                    | CanonicalType::Array(_)
+                                    | CanonicalType::Map { .. }
+                                    | CanonicalType::Binary { .. }
+                            )
+                        })
+                        .map(|c| (c.name, c.canonical_type))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let mut progress = Progress::running();
         loop {
             if cancel.is_cancelled() {
@@ -359,7 +390,24 @@ impl TransferService {
             let write = WriteBatch {
                 object: req.object.clone(),
                 mode: req.mode,
-                records: batch.into_iter().map(|s| s.record).collect(),
+                records: batch
+                    .into_iter()
+                    .map(|s| {
+                        let mut r = s.record;
+                        if infer {
+                            gazabridge_files::infer_cell_types(&mut r);
+                        }
+                        for (c, t) in &cell_types {
+                            if let Some(v) = r.fields.get_mut(c)
+                                && let Value::String(text) = &v.value
+                                && let Some(decoded) = gazabridge_files::decode_cell(t, text)
+                            {
+                                v.value = decoded;
+                            }
+                        }
+                        r
+                    })
+                    .collect(),
                 key_fields: req.key_fields.clone(),
                 atomic: false,
             };

@@ -26,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::AppResult;
 use crate::migration::{CopyItem, ExistingData, MigrationRequest, PlanItem};
+use crate::table_copy::{self, TableCopy, TableCopyMapping};
 
 /// Documents sampled to choose column types.
 const SAMPLE: u64 = 2_000;
@@ -39,6 +40,8 @@ pub enum Direction {
     Copy,
     DocToTable,
     TableToDoc,
+    /// Relational tables → relational tables.
+    TableCopy,
 }
 
 pub fn direction(source: EngineFamily, target: EngineFamily) -> Option<Direction> {
@@ -48,6 +51,9 @@ pub fn direction(source: EngineFamily, target: EngineFamily) -> Option<Direction
         (EngineFamily::Postgres, EngineFamily::MongoDb) => Some(Direction::TableToDoc),
         (EngineFamily::MongoDb, EngineFamily::MySql) => Some(Direction::DocToTable),
         (EngineFamily::MySql, EngineFamily::MongoDb) => Some(Direction::TableToDoc),
+        (s, t) if table_copy::is_relational(s) && table_copy::is_relational(t) => {
+            Some(Direction::TableCopy)
+        }
         _ => None,
     }
 }
@@ -75,13 +81,29 @@ pub enum ItemMapping {
     DocToTable {
         mapping: Box<DocMapping>,
         indexes: Vec<IndexDefinition>,
+        /// Long doubles inside JSON columns written tagged (MySQL targets,
+        /// see [`gazabridge_mapping::exact_doubles`]).
+        #[serde(default)]
+        exact_doubles: bool,
     },
     TableToDoc {
         mapping: Box<TableDocMapping>,
         indexes: Vec<IndexDefinition>,
     },
+    /// A relational table copied into another relational database.
+    TableCopy(Box<TableCopyMapping>),
     /// Rows embedded in another stream's documents; not copied on their own.
     Embedded { into: ObjectRef },
+}
+
+/// Whether the target needs `CREATE SCHEMA` (PostgreSQL, other than
+/// `public`) or `CREATE DATABASE` (MySQL namespaces have no schema level).
+fn needs_namespace(ns: &gazabridge_plugin_sdk::schema::NamespacePath) -> bool {
+    match (&ns.schema, &ns.database) {
+        (Some(s), _) => s != "public" && s != "main",
+        (None, Some(_)) => true,
+        (None, None) => false,
+    }
 }
 
 impl ItemMapping {
@@ -91,6 +113,7 @@ impl ItemMapping {
             Self::View { .. } => "view",
             Self::DocToTable { .. } => "doc_to_table",
             Self::TableToDoc { .. } => "table_to_doc",
+            Self::TableCopy(_) => "table_copy",
             Self::Embedded { .. } => "embedded",
         }
     }
@@ -129,15 +152,7 @@ impl ItemMapping {
                         });
                     }
                 }
-                // A PostgreSQL schema other than `public`, or a MySQL
-                // database (MySQL namespaces have no schema level).
-                let ns = &item.target.namespace;
-                let create_namespace = match (&ns.schema, &ns.database) {
-                    (Some(s), _) => s != "public",
-                    (None, Some(_)) => true,
-                    (None, None) => false,
-                };
-                if create_namespace {
+                if needs_namespace(&item.target.namespace) {
                     ops.push(SchemaOperation::CreateNamespace {
                         namespace: item.target.namespace.clone(),
                         if_not_exists: true,
@@ -149,6 +164,26 @@ impl ItemMapping {
                         if_not_exists: true,
                     });
                 }
+                ops
+            }
+            Self::TableCopy(t) => {
+                let mut ops = Vec::new();
+                if replace {
+                    ops.push(SchemaOperation::DropObject {
+                        object: item.target.clone(),
+                        if_exists: true,
+                    });
+                }
+                if needs_namespace(&item.target.namespace) {
+                    ops.push(SchemaOperation::CreateNamespace {
+                        namespace: item.target.namespace.clone(),
+                        if_not_exists: true,
+                    });
+                }
+                ops.push(SchemaOperation::CreateTable {
+                    table: t.table.clone(),
+                    if_not_exists: true,
+                });
                 ops
             }
             Self::Embedded { .. } => Vec::new(),
@@ -171,8 +206,11 @@ impl ItemMapping {
     /// Indexes created after the data (conversions; copies read them live).
     pub fn index_ops(&self, item: &CopyItem) -> Vec<SchemaOperation> {
         let (object, indexes) = match self {
-            Self::DocToTable { mapping, indexes } => (mapping.tables[0].target.clone(), indexes),
+            Self::DocToTable {
+                mapping, indexes, ..
+            } => (mapping.tables[0].target.clone(), indexes),
             Self::TableToDoc { indexes, .. } => (item.target.clone(), indexes),
+            Self::TableCopy(t) => (item.target.clone(), &t.indexes),
             _ => return Vec::new(),
         };
         indexes
@@ -189,6 +227,7 @@ impl ItemMapping {
     pub fn source_keys(&self) -> Vec<String> {
         match self {
             Self::TableToDoc { mapping, .. } => mapping.key.clone(),
+            Self::TableCopy(t) => t.table.primary_key.clone(),
             _ => vec!["_id".into()],
         }
     }
@@ -199,13 +238,21 @@ impl ItemMapping {
         source: Arc<dyn Connection>,
     ) -> Option<Arc<dyn Transform>> {
         match self {
-            Self::DocToTable { mapping, .. } => Some(Arc::new(DocToTable {
+            Self::DocToTable {
+                mapping,
+                exact_doubles,
+                ..
+            } => Some(Arc::new(DocToTable {
                 mapping: mapping.as_ref().clone(),
+                exact_doubles: *exact_doubles,
                 replace_children: existing == ExistingData::Update,
             })),
             Self::TableToDoc { mapping, .. } => Some(Arc::new(TableToDoc {
                 mapping: mapping.as_ref().clone(),
                 source,
+            })),
+            Self::TableCopy(t) => Some(Arc::new(TableCopy {
+                mapping: t.as_ref().clone(),
             })),
             Self::Copy | Self::Collection { .. } | Self::View { .. } | Self::Embedded { .. } => {
                 None
@@ -218,6 +265,7 @@ impl ItemMapping {
 struct DocToTable {
     mapping: DocMapping,
     replace_children: bool,
+    exact_doubles: bool,
 }
 
 #[async_trait]
@@ -254,7 +302,16 @@ impl Transform for DocToTable {
                     if let Some(root) = tables.first().and_then(|t| t.first()) {
                         out.owners.push((i, root.get(doc_to_table::ID).clone()));
                     }
-                    for (t, rows) in tables.into_iter().enumerate() {
+                    for (t, mut rows) in tables.into_iter().enumerate() {
+                        if self.exact_doubles {
+                            for row in &mut rows {
+                                for v in row.fields.values_mut() {
+                                    if let Value::Json(j) = &mut v.value {
+                                        gazabridge_mapping::exact_doubles(j);
+                                    }
+                                }
+                            }
+                        }
                         out.rows[t].extend(rows.into_iter().map(|row| (i, row)));
                     }
                 }
@@ -416,7 +473,7 @@ pub async fn quick_count(conn: &dyn Connection, object: &ObjectRef) -> Option<u6
         .map(|c| c.count)
 }
 
-async fn sample(conn: &dyn Connection, object: &ObjectRef) -> Vec<Record> {
+pub(crate) async fn sample(conn: &dyn Connection, object: &ObjectRef) -> Vec<Record> {
     let mut req = ReadRequest::new(object.clone(), PREVIEW_RECORDS as usize);
     req.limit = Some(PREVIEW_RECORDS);
     read_all(conn, req).await.unwrap_or_default()
@@ -449,7 +506,7 @@ impl Existing {
     }
 }
 
-fn empty_item(item: &CopyItem, kind: &str) -> PlanItem {
+pub(crate) fn empty_item(item: &CopyItem, kind: &str) -> PlanItem {
     PlanItem {
         source: item.source.clone(),
         target: item.target.clone(),
@@ -581,6 +638,7 @@ pub async fn plan_doc_to_table(
         let m = ItemMapping::DocToTable {
             mapping: Box::new(mapping),
             indexes,
+            exact_doubles: target.manifest().family == EngineFamily::MySql,
         };
         let mut ops = m.prepare_ops(item, req.existing);
         ops.extend(m.index_ops(item));

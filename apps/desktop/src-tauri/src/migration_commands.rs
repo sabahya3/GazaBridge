@@ -8,8 +8,8 @@ use gazabridge_application::{
 use gazabridge_domain::ids::RunId;
 use gazabridge_ipc::{
     CommandError, CopyItemDto, DifferenceDto, MigrationArgs, MigrationPlanDto, ObjectAddr,
-    PlanItemDto, RunArgs, RunDto, RunEventDto, StreamDto, StreamValidationDto, TablePreviewDto,
-    TargetCheckDto, ValidateArgs, ValidationDto,
+    PlanItemDto, ReportArgs, RunArgs, RunDto, RunEventDto, StreamDto, StreamValidationDto,
+    TablePreviewDto, TargetCheckDto, ValidateArgs, ValidationDto,
 };
 use gazabridge_mapping::doc_to_table::DocMode;
 use gazabridge_mapping::table_to_doc::TableMode;
@@ -329,6 +329,30 @@ pub async fn migration_validate(
     state
         .migrations
         .validate(run_id(&args.run_id)?, level)
+        .await
+        .map_err(|e| app_error(&state, e))
+}
+
+#[tauri::command]
+pub async fn migration_report(
+    state: State<'_, AppState>,
+    args: ReportArgs,
+) -> Result<(), CommandError> {
+    use gazabridge_application::report::ReportFormat;
+    let format = match args.format.as_str() {
+        "json" => ReportFormat::Json,
+        "html" => ReportFormat::Html,
+        "markdown" | "md" => ReportFormat::Markdown,
+        "csv" => ReportFormat::Csv,
+        other => return Err(invalid(format!("unknown report format `{other}`"))),
+    };
+    state
+        .migrations
+        .export_report(
+            run_id(&args.run_id)?,
+            std::path::Path::new(&args.path),
+            format,
+        )
         .await
         .map_err(|e| app_error(&state, e))
 }

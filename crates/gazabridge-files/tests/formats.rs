@@ -398,7 +398,7 @@ fn empty_inputs_and_outputs() {
         FileReader::open(
             &path,
             ReadOptions {
-                format: FileFormat::Csv,
+                format: FileFormat::Xlsx,
                 json_flavor: JsonFlavor::Typed,
                 compression: Compression::None,
                 malformed: MalformedPolicy::Fail
@@ -406,4 +406,131 @@ fn empty_inputs_and_outputs() {
         )
         .is_err()
     );
+}
+
+fn csv_options(compression: Compression, malformed: MalformedPolicy) -> ReadOptions {
+    ReadOptions {
+        format: FileFormat::Csv,
+        json_flavor: JsonFlavor::Typed,
+        compression,
+        malformed,
+    }
+}
+
+#[test]
+fn csv_files_read_back_as_text_records() {
+    let dir = tempfile::tempdir().unwrap();
+    // Written by GazaBridge: quotes, commas, Arabic, newlines in a cell.
+    let records = vec![
+        Record::from_pairs([
+            ("id", Value::Int(1)),
+            ("name", Value::String("غزة, \"quoted\"\nline two".into())),
+            ("zip", Value::String("007".into())),
+        ]),
+        Record::from_pairs([("id", Value::Int(2)), ("name", Value::Null)]),
+    ];
+    for compression in [Compression::None, Compression::Gzip] {
+        let path = dir.path().join(format!("people-{compression:?}.csv"));
+        let mut opts = WriteOptions::new(FileFormat::Csv);
+        opts.compression = compression;
+        opts.csv = CsvOptions {
+            columns: vec!["id".into(), "name".into(), "zip".into()],
+            ..CsvOptions::default()
+        };
+        write(&path, opts, &records);
+        let (back, stats) = read_all(&path, csv_options(compression, MalformedPolicy::Fail));
+        assert_eq!(stats.records, 2);
+        assert_eq!(
+            back[0],
+            Record::from_pairs([
+                ("id", Value::String("1".into())),
+                ("name", Value::String("غزة, \"quoted\"\nline two".into())),
+                ("zip", Value::String("007".into())),
+            ])
+        );
+        // Empty cells are absent fields.
+        assert_eq!(
+            back[1],
+            Record::from_pairs([("id", Value::String("2".into()))])
+        );
+    }
+}
+
+#[test]
+fn csv_delimiters_are_detected_and_bad_rows_follow_the_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("semicolons.csv");
+    // A BOM, `;` as delimiter (commas inside values), a short row, CRLF.
+    std::fs::write(
+        &path,
+        "\u{feff}id;price;note\r\n1;1,50;a, b\r\n2;3\r\n3;4,25;\"x;y\"\r\n",
+    )
+    .unwrap();
+    let err = FileReader::open(&path, csv_options(Compression::None, MalformedPolicy::Fail))
+        .unwrap()
+        .next_batch(10)
+        .unwrap_err();
+    assert!(err.to_string().contains("line 3"), "{err}");
+
+    let mut r =
+        FileReader::open(&path, csv_options(Compression::None, MalformedPolicy::Skip)).unwrap();
+    let lines: Vec<u64> = r
+        .next_batch(10)
+        .unwrap()
+        .iter()
+        .map(|s| s.location)
+        .collect();
+    assert_eq!(lines, [2, 4], "file line numbers");
+    assert_eq!(r.stats().issues[0].location, 3);
+
+    let q = dir.path().join("rejected.csv");
+    let (back, stats) = read_all(
+        &path,
+        csv_options(
+            Compression::None,
+            MalformedPolicy::Quarantine { path: q.clone() },
+        ),
+    );
+    assert_eq!((stats.records, stats.quarantined), (2, 1));
+    assert_eq!(back[0].get("id"), &Value::String("1".into()));
+    assert_eq!(back[0].get("price"), &Value::String("1,50".into()));
+    assert_eq!(back[1].get("note"), &Value::String("x;y".into()));
+    assert_eq!(std::fs::read_to_string(q).unwrap(), "2,3\n");
+
+    for (header, why) in [("a,,b\n1,2,3\n", "empty"), ("a,b,a\n1,2,3\n", "twice")] {
+        let p = dir.path().join(format!("{why}.csv"));
+        std::fs::write(&p, header).unwrap();
+        let err = FileReader::open(&p, csv_options(Compression::None, MalformedPolicy::Fail))
+            .unwrap_err();
+        assert!(err.to_string().contains(why), "{err}");
+    }
+}
+
+#[test]
+fn csv_cells_become_plain_types_only_when_unambiguous() {
+    let mut r = Record::from_pairs([
+        ("a", Value::String("42".into())),
+        ("b", Value::String("-7".into())),
+        ("c", Value::String("007".into())),
+        ("d", Value::String("1.5".into())),
+        ("e", Value::String("1.50".into())),
+        ("f", Value::String("true".into())),
+        ("g", Value::String("TRUE".into())),
+        ("h", Value::String("2026-01-01".into())),
+        ("i", Value::String("99999999999999999999".into())),
+        ("j", Value::String("1e5".into())),
+        ("k", Value::String("0".into())),
+    ]);
+    gazabridge_files::infer_cell_types(&mut r);
+    assert_eq!(r.get("a"), &Value::Int(42));
+    assert_eq!(r.get("b"), &Value::Int(-7));
+    assert_eq!(r.get("c"), &Value::String("007".into()));
+    assert_eq!(r.get("d"), &Value::Float(1.5));
+    assert_eq!(r.get("e"), &Value::String("1.50".into()));
+    assert_eq!(r.get("f"), &Value::Bool(true));
+    assert_eq!(r.get("g"), &Value::String("TRUE".into()));
+    assert_eq!(r.get("h"), &Value::String("2026-01-01".into()));
+    assert_eq!(r.get("i"), &Value::String("99999999999999999999".into()));
+    assert_eq!(r.get("j"), &Value::String("1e5".into()));
+    assert_eq!(r.get("k"), &Value::Int(0));
 }

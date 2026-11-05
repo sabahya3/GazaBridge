@@ -393,10 +393,20 @@ impl BackupService {
         let profile = self.store.connections().require(req.connection).await?;
         let conn = self.explorer.session(req.connection).await?;
         let fam = family(conn.as_ref());
-        if !matches!(fam, EngineFamily::MongoDb | EngineFamily::Postgres) {
-            return Err(AppError::Invalid(
-                "backups support MongoDB and PostgreSQL".into(),
-            ));
+        match (fam, req.method) {
+            (EngineFamily::MongoDb | EngineFamily::Postgres, _)
+            | (EngineFamily::MySql, BackupMethod::GazaBridge) => {}
+            (EngineFamily::MySql, BackupMethod::Native) => {
+                return Err(AppError::Invalid(
+                    "MySQL backups use the GazaBridge format; mysqldump is not supported yet"
+                        .into(),
+                ));
+            }
+            _ => {
+                return Err(AppError::Invalid(
+                    "backups support MongoDB, PostgreSQL and MySQL".into(),
+                ));
+            }
         }
         let first = &req.objects[0];
         let label = req
@@ -530,7 +540,7 @@ impl BackupService {
                     .collect(),
                 table: None,
             };
-            if fam == EngineFamily::Postgres {
+            if fam != EngineFamily::MongoDb {
                 let mut dropped_defaults = false;
                 item.table = Some(TableDefinition {
                     object: o.clone(),
@@ -544,6 +554,8 @@ impl BackupService {
                                 dropped_defaults |= !keep;
                                 keep
                             });
+                            // MySQL AUTO_INCREMENT is not part of the column type.
+                            dropped_defaults |= fam == EngineFamily::MySql && c.is_identity;
                             ColumnDefinition {
                                 name: c.name.clone(),
                                 canonical_type: c.canonical_type.clone(),
@@ -574,7 +586,7 @@ impl BackupService {
                 });
                 if dropped_defaults {
                     manifest.warnings.push(format!(
-                        "`{}`: sequence defaults are not recreated; stored values are restored as they are",
+                        "`{}`: sequences and auto-increment are not recreated; stored values are restored as they are",
                         o.name
                     ));
                 }
@@ -905,6 +917,15 @@ impl BackupService {
             ns.schema = Some(schema.trim().to_owned());
             ops.push(SchemaOperation::CreateNamespace {
                 namespace: ns,
+                if_not_exists: true,
+            });
+        }
+        // A MySQL database may have been dropped since, or be a new name.
+        if manifest.family == EngineFamily::MySql
+            && let Some(first) = ordered.first()
+        {
+            ops.push(SchemaOperation::CreateNamespace {
+                namespace: renamed(&first.object, manifest.family, rename).namespace,
                 if_not_exists: true,
             });
         }
