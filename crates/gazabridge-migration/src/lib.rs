@@ -150,6 +150,34 @@ pub struct StreamStats {
     pub failed: u64,
     pub bytes: u64,
     pub retries: u64,
+    /// Live figures for the Monitor; never stored with a checkpoint.
+    #[serde(skip)]
+    pub gauges: Gauges,
+}
+
+/// How the pipeline is doing right now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Gauges {
+    /// Batches read and waiting for the writer, after the last batch.
+    /// Full means the target is the slow side; empty means the source is.
+    pub queue_len: u32,
+    pub queue_capacity: u32,
+    /// Time the source took per batch (moving average, microseconds).
+    pub read_us: u64,
+    /// Time the target took per batch, transform included (moving
+    /// average, microseconds).
+    pub write_us: u64,
+    /// The rate limit held the last batch back.
+    pub throttled: bool,
+}
+
+/// Moving average weighing the newest sample by a quarter.
+fn smooth(avg: u64, sample: u64) -> u64 {
+    if avg == 0 {
+        sample
+    } else {
+        (avg * 3 + sample) / 4
+    }
 }
 
 impl StreamStats {
@@ -253,6 +281,8 @@ struct Reader {
     retry: RetryPolicy,
     position: Option<ReadPosition>,
     retries: Arc<AtomicU64>,
+    /// See [`Gauges::read_us`].
+    read_us: Arc<AtomicU64>,
 }
 
 impl Reader {
@@ -269,15 +299,20 @@ impl Reader {
                 Err(e) => e,
                 Ok(mut stream) => {
                     let mut failed = None;
+                    let mut asked = Instant::now();
                     while let Some(item) = stream.next().await {
                         match item {
                             Ok(batch) => {
+                                let took = asked.elapsed().as_micros() as u64;
+                                let avg = self.read_us.load(Ordering::Relaxed);
+                                self.read_us.store(smooth(avg, took), Ordering::Relaxed);
                                 attempt = 0;
                                 read_any = true;
                                 self.position = batch.position.clone();
                                 if tx.send(Ok(batch)).await.is_err() {
                                     return;
                                 }
+                                asked = Instant::now();
                             }
                             Err(e) => {
                                 failed = Some(e);
@@ -325,6 +360,7 @@ struct Writer<'a> {
     position: Option<ReadPosition>,
     rejections: Vec<String>,
     reader_retries: Arc<AtomicU64>,
+    read_us: Arc<AtomicU64>,
     base_retries: u64,
     write_retries: u64,
 }
@@ -356,6 +392,10 @@ impl Writer<'_> {
             if batch.records.is_empty() {
                 continue;
             }
+            let write_started = Instant::now();
+            self.stats.gauges.queue_len = rx.len() as u32;
+            self.stats.gauges.queue_capacity = rx.max_capacity() as u32;
+            self.stats.gauges.read_us = self.read_us.load(Ordering::Relaxed);
             let records = batch.records;
             let Some(out) = self.transform(&records, stop).await? else {
                 return Ok(true);
@@ -384,6 +424,10 @@ impl Writer<'_> {
                 self.stats.read += records.len() as u64;
                 self.stats.bytes += batch.approx_bytes;
                 self.position = batch.position.clone();
+                self.stats.gauges.write_us = smooth(
+                    self.stats.gauges.write_us,
+                    write_started.elapsed().as_micros() as u64,
+                );
                 (self.on_progress)(&self.stats);
                 continue;
             }
@@ -523,6 +567,10 @@ impl Writer<'_> {
             self.stats.retries = self.base_retries
                 + self.write_retries
                 + self.reader_retries.load(Ordering::Relaxed);
+            self.stats.gauges.write_us = smooth(
+                self.stats.gauges.write_us,
+                write_started.elapsed().as_micros() as u64,
+            );
             self.checkpoints
                 .save(&self.spec.key, self.position.as_ref(), &self.stats)
                 .await
@@ -532,6 +580,7 @@ impl Writer<'_> {
             if let Some(rate) = self.options.max_records_per_sec.filter(|r| *r > 0) {
                 let due = Duration::from_secs_f64((self.stats.read - base) as f64 / rate as f64);
                 let elapsed = started.elapsed();
+                self.stats.gauges.throttled = due > elapsed;
                 if due > elapsed {
                     tokio::select! {
                         () = tokio::time::sleep(due - elapsed) => {}
@@ -712,6 +761,7 @@ pub async fn convert_stream(
     let (stats, position) =
         resume.map_or((StreamStats::default(), None), |r| (r.stats, r.position));
     let reader_retries = Arc::new(AtomicU64::new(0));
+    let read_us = Arc::new(AtomicU64::new(0));
     let (tx, mut rx) = mpsc::channel(options.queue_depth.max(1));
     let reader_stop = stop.child_token();
     let reader = tokio::spawn(
@@ -722,6 +772,7 @@ pub async fn convert_stream(
             retry: options.retry.clone(),
             position: position.clone(),
             retries: reader_retries.clone(),
+            read_us: read_us.clone(),
         }
         .run(tx, reader_stop.clone()),
     );
@@ -742,6 +793,7 @@ pub async fn convert_stream(
         position,
         rejections: Vec::new(),
         reader_retries,
+        read_us,
         write_retries: 0,
     };
     let result = writer.run(&mut rx, &stop, resumed).await;

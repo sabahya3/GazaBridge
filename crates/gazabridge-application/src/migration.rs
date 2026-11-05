@@ -285,6 +285,9 @@ pub struct RunView {
     pub dry_run: bool,
     /// The latest validation of this run (live while it runs).
     pub validation: Option<ValidationReport>,
+    /// Set when the run keeps following changes after the copy.
+    #[serde(default)]
+    pub sync: Option<SyncSettings>,
 }
 
 /// Source and target compared after a copy.
@@ -323,6 +326,8 @@ pub struct MigrationService {
     backups: Option<BackupService>,
     rates: Arc<crate::monitor::Rates>,
     probe: Arc<crate::monitor::ProcessProbe>,
+    /// Bumped whenever a running copy moves on (see [`Self::changes`]).
+    pulse: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 impl std::fmt::Debug for MigrationService {
@@ -459,6 +464,7 @@ impl MigrationService {
             backups: None,
             rates: Arc::default(),
             probe: Arc::default(),
+            pulse: Arc::new(tokio::sync::watch::channel(0).0),
         }
     }
 
@@ -1080,6 +1086,7 @@ impl MigrationService {
                 },
             );
         }
+        self.bump();
         let svc = self.clone();
         tokio::spawn(async move {
             let following = req.sync.is_some() && !run.dry_run;
@@ -1102,6 +1109,7 @@ impl MigrationService {
             if let Ok(mut a) = svc.active.lock() {
                 a.remove(&run.id);
             }
+            svc.bump();
         });
     }
 
@@ -1361,8 +1369,10 @@ impl MigrationService {
             stats: s.stats.clone(),
         });
         let progress_streams = streams.clone();
+        let pulse = self.pulse.clone();
         let on_progress = move |s: &StreamStats| {
             set_stream(&progress_streams, i, |v| v.stats = s.clone());
+            pulse.send_modify(|n| *n = n.wrapping_add(1));
         };
         let result = match mapping.transform(req.existing, source.clone()) {
             None => {
@@ -1610,6 +1620,18 @@ impl MigrationService {
         {
             self.run_validation(run, Level::Basic).await;
         }
+    }
+
+    /// Tells [`Self::changes`] listeners that something moved on.
+    fn bump(&self) {
+        self.pulse.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// Changes whenever a copy starts, ends or writes a batch, or a sync
+    /// applies changes: the Monitor and Sync Jobs pages refresh on these
+    /// instead of on a timer.
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.pulse.subscribe()
     }
 
     /// Live figures for every running copy, and the app's memory and CPU.
@@ -1884,6 +1906,7 @@ impl MigrationService {
             source: req.source,
             target: req.target,
             existing: req.existing,
+            sync: req.sync.clone(),
             streams,
             created_at: run.created_at,
             started_at: run.started_at,
@@ -1952,7 +1975,7 @@ impl MigrationService {
             if job.kind != JobKind::Migration {
                 continue;
             }
-            runs.extend(jobs.runs_for(job.id, 5).await?);
+            runs.extend(jobs.runs_for(job.id, limit).await?);
         }
         runs.sort_by_key(|r| std::cmp::Reverse(r.created_at));
         let mut out = Vec::new();

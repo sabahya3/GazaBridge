@@ -18,6 +18,36 @@ use tauri::Manager;
 
 pub use state::AppState;
 
+/// Sends the Monitor a fresh snapshot whenever a copy starts, ends or
+/// writes a batch (at most twice a second). While copies run, a quiet
+/// copy is still re-sent every 2 s so a stall shows as a falling rate.
+fn push_monitor(app: tauri::AppHandle, migrations: gazabridge_application::MigrationService) {
+    use std::time::Duration;
+    use tauri::Emitter;
+    tauri::async_runtime::spawn(async move {
+        let mut changes = migrations.changes();
+        let mut busy = false;
+        loop {
+            if busy {
+                tokio::select! {
+                    r = changes.changed() => if r.is_err() { return },
+                    () = tokio::time::sleep(Duration::from_secs(2)) => {}
+                }
+            } else if changes.changed().await.is_err() {
+                return;
+            }
+            if let Ok(snap) = migrations.monitor().await {
+                busy = !snap.runs.is_empty();
+                let _ = app.emit(
+                    gazabridge_ipc::events::MONITOR,
+                    migration_commands::monitor_dto(snap),
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    });
+}
+
 pub fn run() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -25,6 +55,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let log_dir = app.path().app_log_dir()?;
             let state = tauri::async_runtime::block_on(AppState::initialize(data_dir, log_dir))?;
+            push_monitor(app.handle().clone(), state.migrations.clone());
             app.manage(state);
             Ok(())
         })

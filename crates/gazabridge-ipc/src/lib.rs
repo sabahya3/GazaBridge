@@ -19,6 +19,12 @@ pub use migration::*;
 pub use query::*;
 pub use transfer::*;
 
+/// Names of the events the backend pushes to the window.
+pub mod events {
+    /// A [`crate::MonitorDto`], sent when a running copy moves on.
+    pub const MONITOR: &str = "monitor";
+}
+
 /// Names of the Tauri commands, shared so both sides agree.
 pub mod commands {
     pub const APP_INFO: &str = "app_info";

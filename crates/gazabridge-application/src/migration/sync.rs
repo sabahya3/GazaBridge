@@ -480,6 +480,7 @@ impl MigrationService {
                                     v.stats.failed += failed;
                                     v.last_change = at;
                                 });
+                                self.bump();
                             }
                             Err(e) => return self.sync_failed(run, &e.to_string()).await,
                         }
@@ -597,13 +598,18 @@ impl MigrationService {
                         )
                         .await
                     {
-                        Ok((_, failed)) => set_stream(streams, i, |v| {
-                            v.changes += fresh;
-                            v.stats.failed += failed;
+                        Ok((_, failed)) => {
+                            set_stream(streams, i, |v| {
+                                v.changes += fresh;
+                                v.stats.failed += failed;
+                                if fresh > 0 {
+                                    v.last_change = Some(chrono::Utc::now());
+                                }
+                            });
                             if fresh > 0 {
-                                v.last_change = Some(chrono::Utc::now());
+                                self.bump();
                             }
-                        }),
+                        }
                         Err(e) => return self.sync_failed(run, &e.to_string()).await,
                     }
                 }

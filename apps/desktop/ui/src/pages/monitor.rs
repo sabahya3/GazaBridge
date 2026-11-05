@@ -1,9 +1,8 @@
 //! Live view of running copies: records and bytes per second, time left,
-//! and the app's own memory and CPU. Refreshes every second while open.
+//! queue fill and time per batch on each side, and the app's own memory
+//! and CPU. The backend pushes a snapshot whenever a copy moves on.
 
-use std::time::Duration;
-
-use gazabridge_ipc::{MonitorDto, RunMonitorDto, StreamMonitorDto, commands};
+use gazabridge_ipc::{MonitorDto, RunMonitorDto, StreamMonitorDto, commands, events};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
@@ -11,7 +10,7 @@ use super::Load;
 use super::backups::bytes;
 use super::migrations::{num, phase_key, status_class, status_key};
 use crate::app::use_ui;
-use crate::ipc::{NoArgs, call};
+use crate::ipc::{NoArgs, Subscription, call, listen};
 
 /// `3725` → `1:02:05`, `65` → `1:05`.
 fn duration(secs: u64) -> String {
@@ -31,6 +30,17 @@ fn byte_rate(per_sec: Option<f64>) -> String {
     per_sec.map_or_else(|| "—".into(), |r| format!("{}/s", bytes(r.round() as u64)))
 }
 
+/// `12.34` → `12 ms`, `0.42` → `0.4 ms`, `2500.0` → `2.5 s`.
+fn millis(ms: f64) -> String {
+    if ms >= 1000.0 {
+        format!("{:.1} s", ms / 1000.0)
+    } else if ms >= 10.0 {
+        format!("{ms:.0} ms")
+    } else {
+        format!("{ms:.1} ms")
+    }
+}
+
 fn percent(done: u64, total: Option<u64>) -> Option<f64> {
     total
         .filter(|t| *t > 0)
@@ -41,7 +51,7 @@ fn percent(done: u64, total: Option<u64>) -> Option<f64> {
 pub fn MonitorPage() -> impl IntoView {
     let ui = use_ui();
     let snap = RwSignal::new(Load::<MonitorDto>::Loading);
-    let handle = StoredValue::new(None::<IntervalHandle>);
+    let subscription = StoredValue::new_local(None::<Subscription>);
 
     let refresh = move || {
         spawn_local(async move {
@@ -56,13 +66,18 @@ pub fn MonitorPage() -> impl IntoView {
         });
     };
     refresh();
-    if let Ok(h) = set_interval_with_handle(refresh, Duration::from_secs(1)) {
-        handle.set_value(Some(h));
-    }
-    on_cleanup(move || {
-        if let Some(h) = handle.get_value() {
-            h.clear();
+    spawn_local(async move {
+        let pushed = listen(events::MONITOR, move |s: MonitorDto| {
+            snap.set(Load::Ready(s))
+        })
+        .await;
+        if let Ok(sub) = pushed {
+            // Dropped (and unsubscribed) at once if the page already closed.
+            let _ = subscription.try_set_value(Some(sub));
         }
+    });
+    on_cleanup(move || {
+        let _ = subscription.try_update_value(Option::take);
     });
 
     let stream_row = move |s: StreamMonitorDto| {
@@ -86,6 +101,16 @@ pub fn MonitorPage() -> impl IntoView {
                     {(s.failed > 0).then(|| view! { <span class="finding-warning">{format!("{} {}", num(s.failed), ui.text("mig.n_rejected"))}</span> })}
                     {(s.retries > 0).then(|| view! { <span>{format!("{} {}", s.retries, ui.text("mig.n_retries"))}</span> })}
                 </div>
+                {(s.queue_capacity > 0 && (s.read_ms.is_some() || s.write_ms.is_some())).then(|| view! {
+                    <div class="muted small mig-numbers mon-pipe">
+                        <span>{format!("{} {}/{}", ui.text("mon.queue"), s.queue_len, s.queue_capacity)}</span>
+                        {s.read_ms.map(|ms| view! { <span>{format!("{} {}", ui.text("mon.read_ms"), millis(ms))}</span> })}
+                        {s.write_ms.map(|ms| view! { <span>{format!("{} {}", ui.text("mon.write_ms"), millis(ms))}</span> })}
+                        {s.slow_side.as_deref().map(|side| view! {
+                            <span class="mon-slow">{ui.tr(match side { "source" => "mon.slow_source", "limit" => "mon.slow_limit", _ => "mon.slow_target" })}</span>
+                        })}
+                    </div>
+                })}
             </li>
         }
     };
@@ -148,6 +173,9 @@ mod tests {
         assert_eq!(percent(5, Some(0)), None);
         assert_eq!(percent(20, Some(10)), Some(100.0));
         assert_eq!(rate(None), "—");
+        assert_eq!(millis(12.34), "12 ms");
+        assert_eq!(millis(0.42), "0.4 ms");
+        assert_eq!(millis(2500.0), "2.5 s");
         assert_eq!(rate(Some(1234.4)), "1,234");
     }
 }

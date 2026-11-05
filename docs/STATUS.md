@@ -14,7 +14,7 @@ keep both in sync when you finish something.
 > كامل، التحويل MongoDB ⇄ PostgreSQL، التجربة بدون كتابة والتحقق، النسخ
 > الاحتياطي والاسترجاع، والمزامنة المستمرة. بعدها اتضاف MySQL/MariaDB
 > (موصل كامل + تحويل MongoDB ⇄ MySQL + نسخ جداول بين PostgreSQL وMySQL).
-> ونسخ احتياطي واسترجاع لـ MySQL. واتضافت تقارير التشغيل وصفحة المراقبة (السرعة والوقت المتبقي والذاكرة). اللي لسه: الجدولة، المزامنة
+> ونسخ احتياطي واسترجاع لـ MySQL. واتضافت صفحات المراقبة (بتتحدث بالأحداث من المحرك)، والاستيراد والتصدير، والتقارير، والمزامنات. الصفحات اللي لسه "قريبًا": Schema Studio والتحويلات والجدولة. اللي لسه: الجدولة، المزامنة
 > في الاتجاهين، أنفاق SSH، قراءة Excel، CLI، التغليف والتوقيع للتوزيع.
 > واتضاف استيراد CSV واختبار شامل بيعدّي البيانات على كل المحركات ويرجعها زي ما هي.
 
@@ -27,7 +27,7 @@ WASM UI, local SQLite metadata store). The **priority track P1–P12**
 (MongoDB and MongoDB ⇄ PostgreSQL) is **complete and tested against real
 servers** (MongoDB 6.0–8.0, PostgreSQL 13–17 in Docker via Testcontainers).
 
-- **318 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
+- **323 tests pass** (`cargo test --workspace -- --include-ignored`), clippy
   clean, `cargo audit` clean (8 allowed warnings only). MongoDB 6.0–8.0, PostgreSQL 13–17, MySQL 8.0/8.4 and MariaDB 10.11/11.4 in Docker.
 - The macOS app builds as `target/release/bundle/macos/GazaBridge.app`,
   signed with the owner's Apple Development certificate (not notarized).
@@ -92,7 +92,10 @@ model.
 | Round-trip test through the app's wiring (`AppState`) on MongoDB 8.0, PostgreSQL 16, MySQL 8.4, MariaDB 11.4: 300 documents with every common BSON type (Arabic/emoji/quotes, doubles, Decimal128, pre-1970 dates, Int64, binary, nested objects, arrays, null vs missing) normalized into PostgreSQL, copied PostgreSQL → MySQL → MariaDB → PostgreSQL and compared value by value; stored whole MongoDB → MySQL → PostgreSQL → MongoDB and compared document by document; BSON and JSONL files; dry run; deep validation at every step | `apps/desktop/src-tauri/tests/round_trip.rs` |
 | CSV import (4.2): header row, delimiter detection, quoting, line numbers in errors, skip/quarantine; JSON and binary cells decoded for tables; plain numbers/booleans for MongoDB | `gazabridge-files/src/read.rs`, `transfer.rs`, `pages/transfer.rs` |
 | Run reports (7.3): JSON, HTML, Markdown, CSV with counts, validation differences, errors and events; "Save report" in the run panel | `report.rs`, `pages/migrations.rs` |
-| Monitor page (6.7, partial): running copies with records/s and bytes/s over 10 s, time left, progress, rejects and retries; app memory and CPU; refreshes each second while open. Tested on a live rate-limited MongoDB copy | `monitor.rs`, `pages/monitor.rs`, `tests/migration.rs` |
+| Monitor page (6.7): running copies with records/s and bytes/s over 10 s, time left, progress, rejects and retries; per stream the queue fill, source and target time per batch, and what holds the copy back; app memory and CPU. Pushed by the backend on every batch (no polling). Connection lists on Backups and Migrations can add a new connection in place. Tested on a live rate-limited MongoDB copy | `monitor.rs`, `pages/monitor.rs`, `tests/migration.rs` |
+| Imports and Exports pages: pick connection → database → schema → collection/table (views for exports; a new MongoDB collection for imports; read-only connections hidden for imports) and use the Explorer's transfer panel, without opening the Explorer | `pages/files.rs` |
+| Reports page: the last 200 copies, conversions and syncs with status, start, duration, records, rejects and validation result; filter and search; save any run's report (HTML, Markdown, JSON, CSV) | `pages/reports.rs` |
+| Sync Jobs page: every sync with its method (change streams or polling field and interval), objects, changes, deletes, last change and rejects; pause, resume, stop; refreshed when the backend announces applied changes (no polling). Tested on a live MongoDB replica-set sync | `pages/sync_jobs.rs`, `tests/sync.rs` |
 | Fixes the real tests found: concurrent `CREATE SCHEMA IF NOT EXISTS` in PostgreSQL (retried); validation of composite keys without an owner column (and siblings split across batches); "Validate" right after a copy finished was refused, and a finished validation briefly showed the previous result (two races); `char(n)` columns became `varchar(n)` in table copies (ObjectId identity lost); MySQL's JSON parser rounds doubles with 16–17 digits (now stored as `{"$numberDouble": …}` in MongoDB conversions); Int64 values that fit in 32 bits came back as Int32 from JSON-mode tables (now `{"$numberLong": …}`); MySQL literal column defaults were unquoted | `connector-postgres`, `migration/validate.rs`, `migration.rs`, `table_copy.rs`, `gazabridge-mapping`, `connector-mysql/meta.rs` |
 
 ### Also done along the way
@@ -113,7 +116,7 @@ model.
 | Backups | PostgreSQL sequences and MySQL AUTO_INCREMENT are not backed up (values restored as stored); no scheduled backups; no `mysqldump` |
 | Validation | Key and deep checks read both sides fully (no sampling for huge objects); target-only extras are reported from counts |
 | Files | Excel **reading**, CSV in encodings other than UTF-8, Parquet/Arrow, zstd/ZIP, split output, fuzzing (roadmap 4.2–4.9) |
-| UI | Data grid is paged, not virtualized; Query Studio editor is plain text (no highlighting/autocomplete, question 4); Monitor page polls once a second and has no queue-pressure or latency figures; no Schema Studio page; no UI smoke tests (3.6) |
+| UI | Data grid is paged, not virtualized; Query Studio editor is plain text (no highlighting/autocomplete, question 4); no Schema Studio, Transformations or Schedules pages (still "Soon" in the menu); no UI smoke tests (3.6) |
 | Docs | `requirements-traceability.md` and `connector-guide.md` were not refreshed during the priority track — verify before relying on them |
 | macOS app | Signed for local use only; not notarized; no updater |
 
@@ -122,12 +125,12 @@ model.
 - **Milestone 2 remainder:** SSH tunnels (2.7), connector docs (2.9).
 - **Milestone 3:** Schema Studio (3.5), virtualized grid (3.2), UI smoke tests (3.6).
 - **Milestone 5:** general transformation pipelines and sandboxed expressions (5.2–5.3), drag-and-drop mapping UI (5.6).
-- **Milestone 6:** Merge/truncate write modes (6.5), job runner (6.6), Monitor queue pressure/latencies (6.7 rest), failure-injection suite on real servers (6.8), all 16 directions in CI (6.9).
+- **Milestone 6:** Merge/truncate write modes (6.5), job runner (6.6), failure-injection suite on real servers (6.8), all 16 directions in CI (6.9).
 - **Milestone 8:** scheduler (8.1), PostgreSQL logical replication (8.4), MySQL binlog (8.5), SQLite change log (8.6).
 - **Milestone 9:** bidirectional sync (all).
 - **Milestone 10:** CLI, benchmarks, hardening pass, installers for all platforms, notarization and signed updates, SBOM, user documentation.
 
-**Suggested next:** SSH tunnels (2.7), Excel reading (4.4). The owner chooses.
+**Suggested next:** Schedules (8.1, scheduler plus page), SSH tunnels (2.7), Excel reading (4.4). The owner chooses.
 
 ## 6. Open questions for the owner
 

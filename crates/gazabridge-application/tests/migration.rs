@@ -369,8 +369,14 @@ async fn mongodb_collections_copy_between_servers_exactly_and_resumably() {
     let mut slow = request(s, t, vec![item("shop", "orders", "copy2")]);
     slow.batch_size = 100;
     slow.max_records_per_sec = Some(4_000);
+    let mut changes = m.changes();
     let run = m.start(slow, false).await.unwrap();
     wait(&m, run, |v| v.streams[0].stats.inserted >= 300).await;
+    // Every written batch is announced, so the Monitor needs no timer.
+    tokio::time::timeout(Duration::from_secs(5), changes.changed())
+        .await
+        .unwrap()
+        .unwrap();
     // The Monitor follows the running copy: a rate close to the limit, the
     // time left, and the app's own memory.
     let first = m.monitor().await.unwrap();
@@ -386,6 +392,20 @@ async fn mongodb_collections_copy_between_servers_exactly_and_resumably() {
         "{live:?}"
     );
     assert!(snap.process.unwrap().memory_bytes > 1_000_000);
+    // The pipeline figures: the queue's room, time per batch on each side,
+    // and the rate limit (not the target) named as what holds it back.
+    let s0 = &live.streams[0];
+    assert_eq!(s0.queue_capacity, 4, "{s0:?}");
+    assert!(s0.queue_len <= 4, "{s0:?}");
+    assert!(
+        s0.read_ms.unwrap() > 0.0 && s0.write_ms.unwrap() > 0.0,
+        "{s0:?}"
+    );
+    assert_eq!(
+        s0.slow_side,
+        Some(gazabridge_application::monitor::SlowSide::Limit),
+        "{s0:?}"
+    );
     m.pause(run).await.unwrap();
     let v = wait(&m, run, settled).await;
     assert_eq!(v.status, JobStatus::Paused);

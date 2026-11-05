@@ -3,24 +3,31 @@ mod backups;
 mod connection_editor;
 mod connections;
 mod explorer;
+mod files;
 mod home;
 mod logs;
 mod migrations;
 mod monitor;
 mod query_bar;
 mod query_studio;
+mod reports;
 mod settings;
+mod sync_jobs;
 mod transfer;
 
 pub use backups::BackupsPage;
 pub use connections::ConnectionsPage;
 pub use explorer::ExplorerPage;
+pub use files::FilesPage;
 pub use home::HomePage;
 pub use logs::LogsPage;
 pub use migrations::MigrationsPage;
 pub use monitor::MonitorPage;
 pub use query_studio::QueryStudioPage;
+pub use reports::ReportsPage;
 pub use settings::SettingsPage;
+pub use sync_jobs::SyncJobsPage;
+pub use transfer::Direction as TransferDirection;
 
 use leptos::prelude::*;
 

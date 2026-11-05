@@ -9,8 +9,8 @@ use crate::i18n::t;
 use crate::ipc::{NoArgs, call};
 use crate::nav::Section;
 use crate::pages::{
-    BackupsPage, ConnectionsPage, ExplorerPage, HomePage, LogsPage, MigrationsPage, MonitorPage,
-    QueryStudioPage, SettingsPage,
+    BackupsPage, ConnectionsPage, ExplorerPage, FilesPage, HomePage, LogsPage, MigrationsPage,
+    MonitorPage, QueryStudioPage, ReportsPage, SettingsPage, SyncJobsPage, TransferDirection,
 };
 
 /// Shared UI state, provided as context.
@@ -101,7 +101,11 @@ pub fn App() -> impl IntoView {
                     Section::QueryStudio => view! { <QueryStudioPage /> }.into_any(),
                     Section::Migrations => view! { <MigrationsPage /> }.into_any(),
                     Section::Backups => view! { <BackupsPage /> }.into_any(),
+                    Section::SyncJobs => view! { <SyncJobsPage /> }.into_any(),
                     Section::Monitor => view! { <MonitorPage /> }.into_any(),
+                    Section::Imports => view! { <FilesPage direction=TransferDirection::Import /> }.into_any(),
+                    Section::Exports => view! { <FilesPage direction=TransferDirection::Export /> }.into_any(),
+                    Section::Reports => view! { <ReportsPage /> }.into_any(),
                     Section::Logs => view! { <LogsPage /> }.into_any(),
                     Section::Settings => view! { <SettingsPage /> }.into_any(),
                     _ => view! { <HomePage /> }.into_any(),

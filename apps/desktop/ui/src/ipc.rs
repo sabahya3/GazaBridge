@@ -96,3 +96,58 @@ async fn call_once<A: Serialize, R: DeserializeOwned>(
 /// Arguments for commands that take none.
 #[derive(Serialize)]
 pub struct NoArgs {}
+
+#[wasm_bindgen(inline_js = r#"
+export async function gazabridge_listen(event, cb) {
+    const ev = window.__TAURI__ && window.__TAURI__.event;
+    if (!ev || typeof ev.listen !== "function") {
+        throw { code: "ipc", message: "backend unavailable" };
+    }
+    return await ev.listen(event, (e) => cb(e.payload));
+}
+"#)]
+extern "C" {
+    #[wasm_bindgen(js_name = gazabridge_listen, catch)]
+    async fn listen_js(event: &str, cb: &js_sys::Function) -> Result<JsValue, JsValue>;
+}
+
+/// A subscription to a backend event; dropping it stops listening.
+pub struct Subscription {
+    unlisten: Option<js_sys::Function>,
+    _callback: Closure<dyn Fn(JsValue)>,
+}
+
+impl std::fmt::Debug for Subscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Subscription").finish_non_exhaustive()
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if let Some(f) = self.unlisten.take() {
+            let _ = f.call0(&JsValue::NULL);
+        }
+    }
+}
+
+/// Calls `on` with every payload of `event` the backend pushes (see
+/// `gazabridge_ipc::events`) until the subscription is dropped.
+pub async fn listen<T: DeserializeOwned + 'static>(
+    event: &str,
+    on: impl Fn(T) + 'static,
+) -> Result<Subscription, CommandError> {
+    let callback = Closure::<dyn Fn(JsValue)>::new(move |v: JsValue| {
+        if let Ok(t) = serde_wasm_bindgen::from_value(v) {
+            on(t);
+        }
+    });
+    match listen_js(event, callback.as_ref().unchecked_ref()).await {
+        Ok(f) => Ok(Subscription {
+            unlisten: f.dyn_into().ok(),
+            _callback: callback,
+        }),
+        Err(e) => Err(serde_wasm_bindgen::from_value::<CommandError>(e)
+            .unwrap_or_else(|_| transport_error("backend unavailable"))),
+    }
+}

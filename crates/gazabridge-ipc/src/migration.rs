@@ -172,6 +172,9 @@ pub struct RunDto {
     pub dry_run: bool,
     #[serde(default)]
     pub validation: Option<ValidationDto>,
+    /// Set for runs that keep the target in sync after the copy.
+    #[serde(default)]
+    pub sync: Option<SyncArgs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,6 +267,17 @@ pub struct StreamMonitorDto {
     pub records_per_sec: Option<f64>,
     pub bytes_per_sec: Option<f64>,
     pub eta_secs: Option<u64>,
+    #[serde(default)]
+    pub queue_len: u32,
+    #[serde(default)]
+    pub queue_capacity: u32,
+    #[serde(default)]
+    pub read_ms: Option<f64>,
+    #[serde(default)]
+    pub write_ms: Option<f64>,
+    /// `source` or `target`: the side holding the copy back.
+    #[serde(default)]
+    pub slow_side: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

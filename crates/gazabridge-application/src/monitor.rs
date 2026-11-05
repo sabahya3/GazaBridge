@@ -39,6 +39,39 @@ pub struct StreamMonitor {
     pub records_per_sec: Option<f64>,
     pub bytes_per_sec: Option<f64>,
     pub eta_secs: Option<u64>,
+    /// Batches waiting between reader and writer, out of the queue's room.
+    pub queue_len: u32,
+    pub queue_capacity: u32,
+    /// Average time per batch on each side, in milliseconds.
+    pub read_ms: Option<f64>,
+    pub write_ms: Option<f64>,
+    /// Which side holds the copy back, judged from the queue.
+    pub slow_side: Option<SlowSide>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlowSide {
+    /// The queue is empty: the writer waits for the source.
+    Source,
+    /// The queue is full: the reader waits for the target.
+    Target,
+    /// The copy's rate limit holds it back.
+    Limit,
+}
+
+/// Judges the slow side from the queue after the writer took a batch.
+pub fn slow_side(queue_len: u32, capacity: u32) -> Option<SlowSide> {
+    if capacity < 2 {
+        return None;
+    }
+    if queue_len == 0 {
+        Some(SlowSide::Source)
+    } else if queue_len + 1 >= capacity {
+        Some(SlowSide::Target)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,7 +181,22 @@ impl Rates {
                             (true, Some((a, b))) => (Some(a), Some(b)),
                             _ => (None, None),
                         };
+                        let g = s.stats.gauges;
+                        let ms = |us: u64| (moving && us > 0).then(|| us as f64 / 1000.0);
                         StreamMonitor {
+                            queue_len: g.queue_len,
+                            queue_capacity: g.queue_capacity,
+                            read_ms: ms(g.read_us),
+                            write_ms: ms(g.write_us),
+                            slow_side: if moving && rps.is_some() {
+                                if g.throttled {
+                                    Some(SlowSide::Limit)
+                                } else {
+                                    slow_side(g.queue_len, g.queue_capacity)
+                                }
+                            } else {
+                                None
+                            },
                             source: s.source.clone(),
                             target: s.target.clone(),
                             phase: s.phase,
@@ -263,6 +311,11 @@ mod tests {
         assert_eq!(eta(1_000, None, Some(500.0)), None);
         assert_eq!(eta(1_000, Some(3_000), Some(0.0)), None);
         assert_eq!(eta(5_000, Some(3_000), Some(10.0)), Some(0));
+
+        assert_eq!(slow_side(0, 4), Some(SlowSide::Source));
+        assert_eq!(slow_side(3, 4), Some(SlowSide::Target));
+        assert_eq!(slow_side(1, 4), None);
+        assert_eq!(slow_side(0, 1), None);
 
         rates.retain(&[]);
         assert!(rates.samples.lock().unwrap().is_empty());

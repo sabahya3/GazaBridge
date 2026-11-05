@@ -239,7 +239,16 @@ async fn mongodb_changes_flow_into_mongodb_and_postgresql_and_resume_after_a_pau
         .await
         .unwrap();
     following(&e.m, run).await;
+    // The run says it is a sync, and every applied change is announced
+    // (the Sync Jobs and Monitor pages refresh on these, not on a timer).
+    assert!(view(&e.m, run).await.sync.is_some());
+    let mut announced = e.m.changes();
+    announced.mark_unchanged();
     orders.delete_one(doc! { "_id": 7 }).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), announced.changed())
+        .await
+        .expect("an applied change is announced")
+        .unwrap();
     orders
         .update_one(doc! { "_id": 3 }, doc! { "$set": { "late": true } })
         .await

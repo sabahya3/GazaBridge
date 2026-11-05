@@ -9,7 +9,7 @@ use gazabridge_domain::ids::RunId;
 use gazabridge_ipc::{
     CommandError, CopyItemDto, DifferenceDto, MigrationArgs, MigrationPlanDto, MonitorDto,
     ObjectAddr, PlanItemDto, ReportArgs, RunArgs, RunDto, RunEventDto, RunMonitorDto, StreamDto,
-    StreamMonitorDto, StreamValidationDto, TablePreviewDto, TargetCheckDto, ValidateArgs,
+    StreamMonitorDto, StreamValidationDto, SyncArgs, TablePreviewDto, TargetCheckDto, ValidateArgs,
     ValidationDto,
 };
 use gazabridge_mapping::doc_to_table::DocMode;
@@ -245,6 +245,12 @@ pub fn run_dto(v: RunView) -> RunDto {
         name: v.name,
         dry_run: v.dry_run,
         validation: v.validation.map(validation_dto),
+        sync: v.sync.map(|s| SyncArgs {
+            method: as_str(&s.method),
+            cursor_field: s.cursor_field,
+            interval_secs: s.interval_secs,
+            initial_copy: s.initial_copy,
+        }),
         status: v.status.as_str().to_owned(),
         source_connection_id: v.source.to_string(),
         target_connection_id: v.target.to_string(),
@@ -368,6 +374,11 @@ pub fn monitor_dto(m: gazabridge_application::monitor::MonitorSnapshot) -> Monit
                         records_per_sec: s.records_per_sec,
                         bytes_per_sec: s.bytes_per_sec,
                         eta_secs: s.eta_secs,
+                        queue_len: s.queue_len,
+                        queue_capacity: s.queue_capacity,
+                        read_ms: s.read_ms,
+                        write_ms: s.write_ms,
+                        slow_side: s.slow_side.map(|side| as_str(&side)),
                     })
                     .collect(),
             })
@@ -459,10 +470,13 @@ pub async fn migration_cancel(
 }
 
 #[tauri::command]
-pub async fn migration_recent(state: State<'_, AppState>) -> Result<Vec<RunDto>, CommandError> {
+pub async fn migration_recent(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<RunDto>, CommandError> {
     state
         .migrations
-        .recent(20)
+        .recent(limit.unwrap_or(20).clamp(1, 500))
         .await
         .map(|v| v.into_iter().map(run_dto).collect())
         .map_err(|e| app_error(&state, e))
