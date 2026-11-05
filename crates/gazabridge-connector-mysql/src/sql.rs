@@ -6,7 +6,7 @@ use gazabridge_domain::{CanonicalType, Value};
 use gazabridge_plugin_sdk::ddl::{ColumnDefinition, DdlPlan, SchemaOperation, TableDefinition};
 use gazabridge_plugin_sdk::filter::{Filter, SortDirection, SortKey};
 use gazabridge_plugin_sdk::schema::{NamespacePath, ObjectKind, ObjectRef};
-use gazabridge_plugin_sdk::{Capability, ConnectorError, ConnectorResult};
+use gazabridge_plugin_sdk::{Capability, ConnectorError, ConnectorResult, ErrorKind};
 use mysql_async::Value as My;
 
 use crate::types::{encode, native_type_for};
@@ -16,10 +16,14 @@ pub const MAX_IDENTIFIER_CHARS: usize = 64;
 
 pub fn quote_ident(ident: &str) -> ConnectorResult<String> {
     if ident.is_empty() {
-        return Err(ConnectorError::invalid_input("identifier must not be empty"));
+        return Err(ConnectorError::invalid_input(
+            "identifier must not be empty",
+        ));
     }
     if ident.contains('\0') {
-        return Err(ConnectorError::invalid_input("identifier must not contain NUL"));
+        return Err(ConnectorError::invalid_input(
+            "identifier must not contain NUL",
+        ));
     }
     if ident.chars().count() > MAX_IDENTIFIER_CHARS {
         return Err(ConnectorError::invalid_input(format!(
@@ -27,7 +31,9 @@ pub fn quote_ident(ident: &str) -> ConnectorResult<String> {
         )));
     }
     if ident.ends_with(' ') {
-        return Err(ConnectorError::invalid_input("MySQL identifiers cannot end with a space"));
+        return Err(ConnectorError::invalid_input(
+            "MySQL identifiers cannot end with a space",
+        ));
     }
     Ok(format!("`{}`", ident.replace('`', "``")))
 }
@@ -39,7 +45,11 @@ pub fn database_of(ns: &NamespacePath) -> Option<&str> {
 
 pub fn qualified(object: &ObjectRef) -> ConnectorResult<String> {
     match database_of(&object.namespace) {
-        Some(db) => Ok(format!("{}.{}", quote_ident(db)?, quote_ident(&object.name)?)),
+        Some(db) => Ok(format!(
+            "{}.{}",
+            quote_ident(db)?,
+            quote_ident(&object.name)?
+        )),
         None => quote_ident(&object.name),
     }
 }
@@ -60,7 +70,9 @@ impl Params {
 
 fn column<'a>(types: &'a ColumnTypes, field: &str) -> ConnectorResult<(&'a CanonicalType, String)> {
     if field.contains('.') {
-        return Err(ConnectorError::invalid_input("nested field paths are not supported on relational tables"));
+        return Err(ConnectorError::invalid_input(
+            "nested field paths are not supported on relational tables",
+        ));
     }
     let t = types
         .get(field)
@@ -68,16 +80,24 @@ fn column<'a>(types: &'a ColumnTypes, field: &str) -> ConnectorResult<(&'a Canon
     Ok((t, quote_ident(field)?))
 }
 
-pub fn filter_sql(filter: &Filter, types: &ColumnTypes, out: &mut Params) -> ConnectorResult<String> {
+pub fn filter_sql(
+    filter: &Filter,
+    types: &ColumnTypes,
+    out: &mut Params,
+) -> ConnectorResult<String> {
     let cmp = |field: &str, op: &str, value: &Value, out: &mut Params| -> ConnectorResult<String> {
         let (t, col) = column(types, field)?;
         let p = out.push(encode(value, Some(t))?);
         Ok(format!("{col} {op} {p}"))
     };
     Ok(match filter {
-        Filter::Eq { field, value } if value.is_absent() => format!("{} IS NULL", column(types, &field.0)?.1),
+        Filter::Eq { field, value } if value.is_absent() => {
+            format!("{} IS NULL", column(types, &field.0)?.1)
+        }
         Filter::Eq { field, value } => cmp(&field.0, "=", value, out)?,
-        Filter::Ne { field, value } if value.is_absent() => format!("{} IS NOT NULL", column(types, &field.0)?.1),
+        Filter::Ne { field, value } if value.is_absent() => {
+            format!("{} IS NOT NULL", column(types, &field.0)?.1)
+        }
         Filter::Ne { field, value } => {
             let (t, col) = column(types, &field.0)?;
             let p = out.push(encode(value, Some(t))?);
@@ -102,7 +122,9 @@ pub fn filter_sql(filter: &Filter, types: &ColumnTypes, out: &mut Params) -> Con
         Filter::IsNull { field } => format!("{} IS NULL", column(types, &field.0)?.1),
         Filter::IsNotNull { field } => format!("{} IS NOT NULL", column(types, &field.0)?.1),
         Filter::IsMissing { .. } => {
-            return Err(ConnectorError::invalid_input("relational columns cannot be missing; use IsNull"));
+            return Err(ConnectorError::invalid_input(
+                "relational columns cannot be missing; use IsNull",
+            ));
         }
         Filter::Contains { field, text } => {
             let (_, col) = column(types, &field.0)?;
@@ -121,10 +143,19 @@ pub fn filter_sql(filter: &Filter, types: &ColumnTypes, out: &mut Params) -> Con
             if filters.is_empty() {
                 return Ok(if and { "TRUE" } else { "FALSE" }.into());
             }
-            let parts = filters.iter().map(|f| filter_sql(f, types, out)).collect::<ConnectorResult<Vec<_>>>()?;
+            let parts = filters
+                .iter()
+                .map(|f| filter_sql(f, types, out))
+                .collect::<ConnectorResult<Vec<_>>>()?;
             format!("({})", parts.join(if and { " AND " } else { " OR " }))
         }
         Filter::Not { filter } => format!("NOT ({})", filter_sql(filter, types, out)?),
+        Filter::Native { .. } => {
+            return Err(ConnectorError::new(
+                ErrorKind::Unsupported,
+                "native MongoDB filters cannot be used with MySQL",
+            ));
+        }
     })
 }
 
@@ -136,7 +167,14 @@ pub fn order_sql(keys: &[SortKey], types: &ColumnTypes) -> ConnectorResult<Strin
         .iter()
         .map(|k| {
             let (_, col) = column(types, &k.field.0)?;
-            Ok(format!("{col} {}", if k.direction == SortDirection::Asc { "ASC" } else { "DESC" }))
+            Ok(format!(
+                "{col} {}",
+                if k.direction == SortDirection::Asc {
+                    "ASC"
+                } else {
+                    "DESC"
+                }
+            ))
         })
         .collect::<ConnectorResult<Vec<_>>>()?;
     Ok(format!(" ORDER BY {}", parts.join(", ")))
@@ -163,14 +201,24 @@ fn column_def(c: &ColumnDefinition) -> ConnectorResult<String> {
 }
 
 fn idents(names: &[String]) -> ConnectorResult<String> {
-    Ok(names.iter().map(|c| quote_ident(c)).collect::<ConnectorResult<Vec<_>>>()?.join(", "))
+    Ok(names
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<ConnectorResult<Vec<_>>>()?
+        .join(", "))
 }
 
 fn create_table(t: &TableDefinition, if_not_exists: bool) -> ConnectorResult<String> {
     if t.columns.is_empty() {
-        return Err(ConnectorError::invalid_input("a table needs at least one column"));
+        return Err(ConnectorError::invalid_input(
+            "a table needs at least one column",
+        ));
     }
-    let mut parts = t.columns.iter().map(column_def).collect::<ConnectorResult<Vec<_>>>()?;
+    let mut parts = t
+        .columns
+        .iter()
+        .map(column_def)
+        .collect::<ConnectorResult<Vec<_>>>()?;
     if !t.primary_key.is_empty() {
         parts.push(format!("PRIMARY KEY ({})", idents(&t.primary_key)?));
     }
@@ -205,18 +253,29 @@ pub fn plan(ops: &[SchemaOperation]) -> ConnectorResult<DdlPlan> {
     for op in ops {
         destructive |= op.is_destructive();
         match op {
-            SchemaOperation::CreateNamespace { namespace, if_not_exists } => {
-                let db = database_of(namespace).ok_or_else(|| ConnectorError::invalid_input("database name required"))?;
+            SchemaOperation::CreateNamespace {
+                namespace,
+                if_not_exists,
+            } => {
+                let db = database_of(namespace)
+                    .ok_or_else(|| ConnectorError::invalid_input("database name required"))?;
                 statements.push(format!(
                     "CREATE DATABASE {}{} DEFAULT CHARACTER SET utf8mb4",
                     if *if_not_exists { "IF NOT EXISTS " } else { "" },
                     quote_ident(db)?
                 ));
             }
-            SchemaOperation::CreateTable { table, if_not_exists } => statements.push(create_table(table, *if_not_exists)?),
-            SchemaOperation::CreateIndex { object, index, if_not_exists } => {
+            SchemaOperation::CreateTable {
+                table,
+                if_not_exists,
+            } => statements.push(create_table(table, *if_not_exists)?),
+            SchemaOperation::CreateIndex {
+                object,
+                index,
+                if_not_exists,
+            } => {
                 if *if_not_exists {
-                    warnings.push("MySQL has no CREATE INDEX IF NOT EXISTS; an existing index makes this fail".into());
+                    warnings.push("MySQL has no CREATE INDEX IF NOT EXISTS; the index is skipped when one with this name exists".into());
                 }
                 statements.push(format!(
                     "CREATE {}INDEX {} ON {} ({})",
@@ -229,12 +288,18 @@ pub fn plan(ops: &[SchemaOperation]) -> ConnectorResult<DdlPlan> {
             SchemaOperation::DropObject { object, if_exists } => {
                 let exists = if *if_exists { "IF EXISTS " } else { "" };
                 statements.push(match object.kind {
-                    ObjectKind::Table | ObjectKind::Partition => format!("DROP TABLE {exists}{}", qualified(object)?),
+                    ObjectKind::Table | ObjectKind::Partition => {
+                        format!("DROP TABLE {exists}{}", qualified(object)?)
+                    }
                     ObjectKind::View => format!("DROP VIEW {exists}{}", qualified(object)?),
                     ObjectKind::Trigger => format!("DROP TRIGGER {exists}{}", qualified(object)?),
-                    ObjectKind::Procedure => format!("DROP PROCEDURE {exists}{}", qualified(object)?),
+                    ObjectKind::Procedure => {
+                        format!("DROP PROCEDURE {exists}{}", qualified(object)?)
+                    }
                     ObjectKind::Function => format!("DROP FUNCTION {exists}{}", qualified(object)?),
-                    ObjectKind::Database | ObjectKind::Schema => format!("DROP DATABASE {exists}{}", quote_ident(&object.name)?),
+                    ObjectKind::Database | ObjectKind::Schema => {
+                        format!("DROP DATABASE {exists}{}", quote_ident(&object.name)?)
+                    }
                     other => {
                         return Err(ConnectorError::invalid_input(format!(
                             "dropping objects of kind {other:?} is not supported"
@@ -242,14 +307,22 @@ pub fn plan(ops: &[SchemaOperation]) -> ConnectorResult<DdlPlan> {
                     }
                 });
             }
-            SchemaOperation::TruncateObject { object } => statements.push(format!("TRUNCATE TABLE {}", qualified(object)?)),
-            SchemaOperation::CreateCollection { .. } | SchemaOperation::AlterCollection { .. } => return Err(ConnectorError::unsupported(Capability::CreateCollection)),
+            SchemaOperation::TruncateObject { object } => {
+                statements.push(format!("TRUNCATE TABLE {}", qualified(object)?))
+            }
+            SchemaOperation::CreateCollection { .. } | SchemaOperation::AlterCollection { .. } => {
+                return Err(ConnectorError::unsupported(Capability::CreateCollection));
+            }
         }
     }
     if statements.len() > 1 {
         warnings.push("MySQL DDL commits each statement; a failure part-way leaves earlier statements applied".into());
     }
-    Ok(DdlPlan { statements, destructive, warnings })
+    Ok(DdlPlan {
+        statements,
+        destructive,
+        warnings,
+    })
 }
 
 /// Classifies a statement for read-only connections. Only statements that
@@ -268,8 +341,14 @@ pub fn is_read_only_statement(sql: &str) -> bool {
         }
     }
     let upper = s.to_ascii_uppercase();
-    let first = upper.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
-    let words: Vec<&str> = upper.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').filter(|w| !w.is_empty()).collect();
+    let first = upper
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or("");
+    let words: Vec<&str> = upper
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .collect();
     let has = |w: &str| words.contains(&w);
     if has("INTO") && (has("OUTFILE") || has("DUMPFILE")) {
         return false;
@@ -305,9 +384,15 @@ mod tests {
         assert!(is_read_only_statement("  -- note\n/* c */ show tables"));
         assert!(!is_read_only_statement("DELETE FROM t"));
         assert!(!is_read_only_statement("DROP TABLE t"));
-        assert!(!is_read_only_statement("SELECT * FROM t INTO OUTFILE '/tmp/x'"));
-        assert!(!is_read_only_statement("WITH x AS (SELECT 1) DELETE FROM t"));
-        assert!(!is_read_only_statement("SET SESSION TRANSACTION READ WRITE"));
+        assert!(!is_read_only_statement(
+            "SELECT * FROM t INTO OUTFILE '/tmp/x'"
+        ));
+        assert!(!is_read_only_statement(
+            "WITH x AS (SELECT 1) DELETE FROM t"
+        ));
+        assert!(!is_read_only_statement(
+            "SET SESSION TRANSACTION READ WRITE"
+        ));
         assert!(!is_read_only_statement("SELECT 1; DROP TABLE t"));
         assert!(!is_read_only_statement("EXPLAIN ANALYZE SELECT 1"));
     }
@@ -320,7 +405,9 @@ mod tests {
                 object: obj,
                 columns: vec![ColumnDefinition {
                     name: "at".into(),
-                    canonical_type: CanonicalType::UtcDateTime { fractional_digits: 3 },
+                    canonical_type: CanonicalType::UtcDateTime {
+                        fractional_digits: 3,
+                    },
                     native_type: None,
                     nullable: true,
                     default_expression: None,
@@ -331,7 +418,11 @@ mod tests {
             if_not_exists: false,
         }])
         .unwrap();
-        assert!(p.statements[0].contains("`at` datetime(3) NULL COMMENT 'gazabridge:utc_datetime'"), "{}", p.statements[0]);
+        assert!(
+            p.statements[0].contains("`at` datetime(3) NULL COMMENT 'gazabridge:utc_datetime'"),
+            "{}",
+            p.statements[0]
+        );
         assert!(p.statements[0].starts_with("CREATE TABLE `app`.`t`"));
     }
 }

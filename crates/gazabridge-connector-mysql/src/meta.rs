@@ -26,11 +26,17 @@ pub struct TableMeta {
 
 impl TableMeta {
     pub fn types(&self) -> ColumnTypes {
-        self.columns.iter().map(|c| (c.name.clone(), c.canonical_type.clone())).collect()
+        self.columns
+            .iter()
+            .map(|c| (c.name.clone(), c.canonical_type.clone()))
+            .collect()
     }
 
     pub fn column_type(&self, name: &str) -> Option<&CanonicalType> {
-        self.columns.iter().find(|c| c.name == name).map(|c| &c.canonical_type)
+        self.columns
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| &c.canonical_type)
     }
 }
 
@@ -53,7 +59,9 @@ pub fn cell_u64(row: &Row, i: usize) -> Option<u64> {
 }
 
 async fn rows(conn: &mut Conn, sql: &str, params: Vec<My>) -> ConnectorResult<Vec<Row>> {
-    conn.exec::<Row, _, _>(sql, Params::Positional(params)).await.map_err(map_mysql)
+    conn.exec::<Row, _, _>(sql, Params::Positional(params))
+        .await
+        .map_err(map_mysql)
 }
 
 pub async fn current_database(conn: &mut Conn) -> ConnectorResult<Option<String>> {
@@ -64,25 +72,36 @@ pub async fn current_database(conn: &mut Conn) -> ConnectorResult<Option<String>
 async fn resolve_db(conn: &mut Conn, ns: &NamespacePath) -> ConnectorResult<String> {
     match database_of(ns) {
         Some(db) => Ok(db.to_owned()),
-        None => current_database(conn)
-            .await?
-            .ok_or_else(|| ConnectorError::invalid_input("no database selected; qualify the object with a database")),
+        None => current_database(conn).await?.ok_or_else(|| {
+            ConnectorError::invalid_input(
+                "no database selected; qualify the object with a database",
+            )
+        }),
     }
 }
 
 pub async fn load(conn: &mut Conn, object: &ObjectRef) -> ConnectorResult<TableMeta> {
     let db = resolve_db(conn, &object.namespace).await?;
-    let p = || vec![My::Bytes(db.clone().into_bytes()), My::Bytes(object.name.clone().into_bytes())];
+    let p = || {
+        vec![
+            My::Bytes(db.clone().into_bytes()),
+            My::Bytes(object.name.clone().into_bytes()),
+        ]
+    };
     let t = rows(
         conn,
         "SELECT TABLE_TYPE, TABLE_ROWS, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
         p(),
     )
     .await?;
-    let t = t
-        .first()
-        .ok_or_else(|| ConnectorError::new(ErrorKind::NotFound, format!("{object} does not exist")))?;
-    let kind = if cell_str(t, 0).as_deref() == Some("VIEW") { ObjectKind::View } else { ObjectKind::Table };
+    let t = t.first().ok_or_else(|| {
+        ConnectorError::new(ErrorKind::NotFound, format!("{object} does not exist"))
+    })?;
+    let kind = if cell_str(t, 0).as_deref() == Some("VIEW") {
+        ObjectKind::View
+    } else {
+        ObjectKind::Table
+    };
 
     let cols = rows(
         conn,
@@ -138,7 +157,10 @@ pub async fn indexes(conn: &mut Conn, db: &str, table: &str) -> ConnectorResult<
         conn,
         "SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, INDEX_TYPE FROM information_schema.STATISTICS
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX",
-        vec![My::Bytes(db.as_bytes().to_vec()), My::Bytes(table.as_bytes().to_vec())],
+        vec![
+            My::Bytes(db.as_bytes().to_vec()),
+            My::Bytes(table.as_bytes().to_vec()),
+        ],
     )
     .await?;
     let mut by_name: BTreeMap<String, IndexInfo> = BTreeMap::new();
@@ -154,13 +176,24 @@ pub async fn indexes(conn: &mut Conn, db: &str, table: &str) -> ConnectorResult<
             native: None,
             name,
         });
-        entry.columns.push(cell_str(row, 2).unwrap_or_else(|| "<expression>".into()));
+        entry
+            .columns
+            .push(cell_str(row, 2).unwrap_or_else(|| "<expression>".into()));
     }
     Ok(by_name.into_values().collect())
 }
 
-pub async fn constraints(conn: &mut Conn, db: &str, table: &str) -> ConnectorResult<Vec<ConstraintInfo>> {
-    let p = || vec![My::Bytes(db.as_bytes().to_vec()), My::Bytes(table.as_bytes().to_vec())];
+pub async fn constraints(
+    conn: &mut Conn,
+    db: &str,
+    table: &str,
+) -> ConnectorResult<Vec<ConstraintInfo>> {
+    let p = || {
+        vec![
+            My::Bytes(db.as_bytes().to_vec()),
+            My::Bytes(table.as_bytes().to_vec()),
+        ]
+    };
     let mut out = Vec::new();
     let keys = rows(
         conn,
@@ -181,25 +214,29 @@ pub async fn constraints(conn: &mut Conn, db: &str, table: &str) -> ConnectorRes
     for r in &keys {
         let name = cell_str(r, 0).unwrap_or_default();
         let ctype = cell_str(r, 1).unwrap_or_default();
-        let entry = grouped.entry(name.clone()).or_insert_with(|| ConstraintInfo {
-            name: Some(name.clone()),
-            columns: Vec::new(),
-            kind: match ctype.as_str() {
-                "PRIMARY KEY" => ConstraintKind::PrimaryKey,
-                "FOREIGN KEY" => ConstraintKind::ForeignKey {
-                    referenced: ObjectRef::table(
-                        NamespacePath::database(cell_str(r, 3).unwrap_or_default()),
-                        cell_str(r, 4).unwrap_or_default(),
-                    ),
-                    referenced_columns: Vec::new(),
-                    on_delete: cell_str(r, 6),
-                    on_update: cell_str(r, 7),
+        let entry = grouped
+            .entry(name.clone())
+            .or_insert_with(|| ConstraintInfo {
+                name: Some(name.clone()),
+                columns: Vec::new(),
+                kind: match ctype.as_str() {
+                    "PRIMARY KEY" => ConstraintKind::PrimaryKey,
+                    "FOREIGN KEY" => ConstraintKind::ForeignKey {
+                        referenced: ObjectRef::table(
+                            NamespacePath::database(cell_str(r, 3).unwrap_or_default()),
+                            cell_str(r, 4).unwrap_or_default(),
+                        ),
+                        referenced_columns: Vec::new(),
+                        on_delete: cell_str(r, 6),
+                        on_update: cell_str(r, 7),
+                    },
+                    _ => ConstraintKind::Unique,
                 },
-                _ => ConstraintKind::Unique,
-            },
-        });
+            });
         entry.columns.push(cell_str(r, 2).unwrap_or_default());
-        if let ConstraintKind::ForeignKey { referenced_columns, .. } = &mut entry.kind
+        if let ConstraintKind::ForeignKey {
+            referenced_columns, ..
+        } = &mut entry.kind
             && let Some(c) = cell_str(r, 5)
         {
             referenced_columns.push(c);

@@ -58,6 +58,7 @@ impl AppState {
         registry.register(Arc::new(
             gazabridge_connector_mongodb::MongoConnectorFactory,
         ))?;
+        registry.register(Arc::new(gazabridge_connector_mysql::MySqlConnectorFactory))?;
         tracing::info!(version = env!("CARGO_PKG_VERSION"), "GazaBridge started");
         let secrets = SecretResolver::os_default(redactor);
         let connections = ConnectionService::new(store.clone(), registry.clone(), secrets.clone());

@@ -4,9 +4,11 @@ use gazabridge_plugin_sdk::{ConnectorError, ErrorKind};
 
 pub fn kind_for_code(code: u16) -> ErrorKind {
     match code {
-        1062 | 1586 => ErrorKind::Conflict,
+        1062 | 1586 | 1061 | 1050 | 1007 => ErrorKind::Conflict,
         1048 | 1364 | 1451 | 1452 | 1216 | 1217 | 3819 => ErrorKind::Constraint,
-        1264 | 1265 | 1292 | 1366 | 1367 | 1406 | 1690 | 3140 | 1411 | 1416 | 4025 => ErrorKind::Conversion,
+        1264 | 1265 | 1292 | 1366 | 1367 | 1406 | 1690 | 3140 | 1411 | 1416 | 4025 => {
+            ErrorKind::Conversion
+        }
         1205 | 1213 | 1614 => ErrorKind::TransientServer,
         1290 | 1792 | 1836 => ErrorKind::ReadOnly,
         1045 | 1251 | 2049 => ErrorKind::Authentication,
@@ -17,16 +19,22 @@ pub fn kind_for_code(code: u16) -> ErrorKind {
         3024 | 1969 => ErrorKind::Timeout,
         1114 | 1021 | 1041 | 1037 | 1038 => ErrorKind::ResourceExhausted,
         1040 | 1053 | 1152 | 1158..=1161 | 2002 | 2003 | 2006 | 2013 => ErrorKind::Connection,
-        1235 | 1289 => ErrorKind::Unsupported,
+        1235 | 1289 | 1071 | 1170 => ErrorKind::Unsupported,
         _ => ErrorKind::Internal,
     }
 }
 
 pub fn map_mysql(e: mysql_async::Error) -> ConnectorError {
     match e {
-        mysql_async::Error::Server(s) => ConnectorError::from_driver(kind_for_code(s.code), s.message, Some(s.code.to_string())),
-        mysql_async::Error::Io(io) => ConnectorError::from_driver(ErrorKind::Connection, io.to_string(), None),
-        mysql_async::Error::Url(u) => ConnectorError::from_driver(ErrorKind::InvalidInput, u.to_string(), None),
+        mysql_async::Error::Server(s) => {
+            ConnectorError::from_driver(kind_for_code(s.code), s.message, Some(s.code.to_string()))
+        }
+        mysql_async::Error::Io(io) => {
+            ConnectorError::from_driver(ErrorKind::Connection, io.to_string(), None)
+        }
+        mysql_async::Error::Url(u) => {
+            ConnectorError::from_driver(ErrorKind::InvalidInput, u.to_string(), None)
+        }
         other => {
             let text = other.to_string();
             let lower = text.to_ascii_lowercase();

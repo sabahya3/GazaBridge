@@ -34,7 +34,10 @@ pub struct MyType {
 
 fn enum_labels(column_type: &str) -> Vec<String> {
     // enum('a','b''c') → ["a", "b'c"]
-    let Some(inner) = column_type.find('(').and_then(|i| column_type.rfind(')').map(|j| &column_type[i + 1..j])) else {
+    let Some(inner) = column_type
+        .find('(')
+        .and_then(|i| column_type.rfind(')').map(|j| &column_type[i + 1..j]))
+    else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -73,7 +76,11 @@ pub fn canonical_for(t: &MyType) -> CanonicalType {
     if let Some(marker) = t.comment.strip_prefix(MARKER_PREFIX) {
         let marker = marker.split_whitespace().next().unwrap_or("");
         match marker {
-            "utc_datetime" => return T::UtcDateTime { fractional_digits: digits(t.datetime_precision) },
+            "utc_datetime" => {
+                return T::UtcDateTime {
+                    fractional_digits: digits(t.datetime_precision),
+                };
+            }
             "zoned_datetime" => return T::ZonedDateTime,
             "duration" => return T::Duration,
             "interval" => return T::Interval,
@@ -84,7 +91,13 @@ pub fn canonical_for(t: &MyType) -> CanonicalType {
         }
     }
     let unsigned = t.column_type.contains("unsigned");
-    let int = |bits: u8| if unsigned { T::UInt { bits } } else { T::Int { bits } };
+    let int = |bits: u8| {
+        if unsigned {
+            T::UInt { bits }
+        } else {
+            T::Int { bits }
+        }
+    };
     match t.data_type.as_str() {
         "tinyint" if t.column_type.starts_with("tinyint(1)") => T::Boolean,
         "tinyint" => int(8),
@@ -98,23 +111,40 @@ pub fn canonical_for(t: &MyType) -> CanonicalType {
         },
         "float" => T::Float { bits: 32 },
         "double" | "real" => T::F64,
-        "bit" => T::Binary { max_bytes: t.precision.map(|bits| bits.div_ceil(8)) },
-        "char" | "varchar" => T::String { max_chars: t.char_length },
+        "bit" => T::Binary {
+            max_bytes: t.precision.map(|bits| bits.div_ceil(8)),
+        },
+        "char" | "varchar" => T::String {
+            max_chars: t.char_length,
+        },
         "tinytext" | "text" | "mediumtext" | "longtext" => T::TEXT,
-        "binary" | "varbinary" => T::Binary { max_bytes: t.char_length },
+        "binary" | "varbinary" => T::Binary {
+            max_bytes: t.char_length,
+        },
         "tinyblob" | "blob" | "mediumblob" | "longblob" => T::BYTES,
         "date" => T::Date,
-        "time" => T::Time { fractional_digits: digits(t.datetime_precision) },
-        "datetime" => T::LocalDateTime { fractional_digits: digits(t.datetime_precision) },
+        "time" => T::Time {
+            fractional_digits: digits(t.datetime_precision),
+        },
+        "datetime" => T::LocalDateTime {
+            fractional_digits: digits(t.datetime_precision),
+        },
         // The session time zone is UTC, so TIMESTAMP values are instants.
-        "timestamp" => T::UtcDateTime { fractional_digits: digits(t.datetime_precision) },
+        "timestamp" => T::UtcDateTime {
+            fractional_digits: digits(t.datetime_precision),
+        },
         "year" => T::Int { bits: 16 },
         "json" => T::Json,
-        "enum" => T::Enum { name: None, labels: enum_labels(&t.column_type) },
+        "enum" => T::Enum {
+            name: None,
+            labels: enum_labels(&t.column_type),
+        },
         "uuid" => T::Uuid,
-        "geometry" | "point" | "linestring" | "polygon" | "multipoint" | "multilinestring" | "multipolygon"
-        | "geometrycollection" | "geomcollection" => T::Geometry,
-        other => T::Extension { name: other.to_owned() },
+        "geometry" | "point" | "linestring" | "polygon" | "multipoint" | "multilinestring"
+        | "multipolygon" | "geometrycollection" | "geomcollection" => T::Geometry,
+        other => T::Extension {
+            name: other.to_owned(),
+        },
     }
 }
 
@@ -144,7 +174,9 @@ pub fn native_type_for(t: &CanonicalType) -> ConnectorResult<(String, Option<&'s
         }
         T::BigInt => Ok(("decimal(65,0)".into(), Some("gazabridge:bigint"))),
         T::Decimal { precision, scale } => match (precision, scale) {
-            (Some(p), Some(s)) if *p <= 65 && (0..=30).contains(s) && *s as u32 <= *p => plain(&format!("decimal({p},{s})")),
+            (Some(p), Some(s)) if *p <= 65 && (0..=30).contains(s) && *s as u32 <= *p => {
+                plain(&format!("decimal({p},{s})"))
+            }
             (Some(p), None) if *p <= 65 => plain(&format!("decimal({p},0)")),
             (None, _) => plain("decimal(65,30)"),
             _ => Err(ConnectorError::new(
@@ -162,21 +194,31 @@ pub fn native_type_for(t: &CanonicalType) -> ConnectorResult<(String, Option<&'s
         T::ObjectId => Ok(("char(24)".into(), Some("gazabridge:object_id"))),
         T::Date => plain("date"),
         T::Time { fractional_digits } => plain(&format!("time({})", (*fractional_digits).min(6))),
-        T::LocalDateTime { fractional_digits } => plain(&format!("datetime({})", (*fractional_digits).min(6))),
-        // DATETIME covers years 1000–9999; TIMESTAMP would stop in 2038.
-        T::UtcDateTime { fractional_digits } => {
-            Ok((format!("datetime({})", (*fractional_digits).min(6)), Some("gazabridge:utc_datetime")))
+        T::LocalDateTime { fractional_digits } => {
+            plain(&format!("datetime({})", (*fractional_digits).min(6)))
         }
+        // DATETIME covers years 1000–9999; TIMESTAMP would stop in 2038.
+        T::UtcDateTime { fractional_digits } => Ok((
+            format!("datetime({})", (*fractional_digits).min(6)),
+            Some("gazabridge:utc_datetime"),
+        )),
         T::ZonedDateTime => Ok(("varchar(80)".into(), Some("gazabridge:zoned_datetime"))),
         T::Duration => Ok(("varchar(48)".into(), Some("gazabridge:duration"))),
         T::Interval => Ok(("varchar(64)".into(), Some("gazabridge:interval"))),
         T::Array(_) | T::Object | T::Map { .. } | T::Json => plain("json"),
-        T::Enum { labels, .. } if !labels.is_empty() => {
-            plain(&format!("enum({})", labels.iter().map(|l| quote_label(l)).collect::<Vec<_>>().join(",")))
-        }
+        T::Enum { labels, .. } if !labels.is_empty() => plain(&format!(
+            "enum({})",
+            labels
+                .iter()
+                .map(|l| quote_label(l))
+                .collect::<Vec<_>>()
+                .join(",")
+        )),
         T::Enum { .. } | T::Null => plain("longtext"),
         T::Geometry => plain("geometry"),
-        T::Mixed(_) | T::Extension { .. } | T::Unknown => Err(ConnectorError::unsupported(Capability::CreateTable)),
+        T::Mixed(_) | T::Extension { .. } | T::Unknown => {
+            Err(ConnectorError::unsupported(Capability::CreateTable))
+        }
     }
 }
 
@@ -185,7 +227,13 @@ pub fn canonical_for_column(c: &Column) -> CanonicalType {
     use CanonicalType as T;
     let unsigned = c.flags().contains(ColumnFlags::UNSIGNED_FLAG);
     let binary = c.character_set() == 63;
-    let int = |bits: u8| if unsigned { T::UInt { bits } } else { T::Int { bits } };
+    let int = |bits: u8| {
+        if unsigned {
+            T::UInt { bits }
+        } else {
+            T::Int { bits }
+        }
+    };
     match c.column_type() {
         ColumnType::MYSQL_TYPE_TINY if c.column_length() == 1 => T::Boolean,
         ColumnType::MYSQL_TYPE_TINY => int(8),
@@ -201,13 +249,15 @@ pub fn canonical_for_column(c: &Column) -> CanonicalType {
         ColumnType::MYSQL_TYPE_FLOAT => T::Float { bits: 32 },
         ColumnType::MYSQL_TYPE_DOUBLE => T::F64,
         ColumnType::MYSQL_TYPE_DATE | ColumnType::MYSQL_TYPE_NEWDATE => T::Date,
-        ColumnType::MYSQL_TYPE_TIME | ColumnType::MYSQL_TYPE_TIME2 => T::Time { fractional_digits: c.decimals().min(6) },
-        ColumnType::MYSQL_TYPE_DATETIME | ColumnType::MYSQL_TYPE_DATETIME2 => {
-            T::LocalDateTime { fractional_digits: c.decimals().min(6) }
-        }
-        ColumnType::MYSQL_TYPE_TIMESTAMP | ColumnType::MYSQL_TYPE_TIMESTAMP2 => {
-            T::UtcDateTime { fractional_digits: c.decimals().min(6) }
-        }
+        ColumnType::MYSQL_TYPE_TIME | ColumnType::MYSQL_TYPE_TIME2 => T::Time {
+            fractional_digits: c.decimals().min(6),
+        },
+        ColumnType::MYSQL_TYPE_DATETIME | ColumnType::MYSQL_TYPE_DATETIME2 => T::LocalDateTime {
+            fractional_digits: c.decimals().min(6),
+        },
+        ColumnType::MYSQL_TYPE_TIMESTAMP | ColumnType::MYSQL_TYPE_TIMESTAMP2 => T::UtcDateTime {
+            fractional_digits: c.decimals().min(6),
+        },
         ColumnType::MYSQL_TYPE_JSON => T::Json,
         ColumnType::MYSQL_TYPE_GEOMETRY => T::Geometry,
         ColumnType::MYSQL_TYPE_BIT => T::BYTES,
@@ -218,6 +268,7 @@ pub fn canonical_for_column(c: &Column) -> CanonicalType {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // mirrors the driver's Date variant
 fn date_value(y: u16, mo: u8, d: u8, h: u8, mi: u8, s: u8, us: u32, as_date: bool) -> Value {
     let date = NaiveDate::from_ymd_opt(i32::from(y), u32::from(mo), u32::from(d));
     let time = NaiveTime::from_hms_micro_opt(u32::from(h), u32::from(mi), u32::from(s), us);
@@ -227,7 +278,9 @@ fn date_value(y: u16, mo: u8, d: u8, h: u8, mi: u8, s: u8, us: u32, as_date: boo
         // Zero dates such as 0000-00-00 have no calendar value.
         _ => Value::Extension {
             type_name: if as_date { "date" } else { "datetime" }.into(),
-            text: Some(format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}")),
+            text: Some(format!(
+                "{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}"
+            )),
             binary: None,
         },
     }
@@ -252,7 +305,10 @@ pub fn raw_value(v: My, binary: bool, is_date_column: bool) -> Value {
                 NaiveTime::from_hms_micro_opt(u32::from(h), u32::from(m), u32::from(s), us)
                     .map_or(Value::Null, Value::Time)
             } else {
-                let secs = i128::from(days) * 86_400 + i128::from(h) * 3600 + i128::from(m) * 60 + i128::from(s);
+                let secs = i128::from(days) * 86_400
+                    + i128::from(h) * 3600
+                    + i128::from(m) * 60
+                    + i128::from(s);
                 let total = secs * 1_000_000_000 + i128::from(us) * 1000;
                 Duration::from_total_nanos(if neg { -total } else { total })
                     .map_or(Value::Null, Value::Duration)
@@ -280,19 +336,22 @@ pub fn decode(raw: Value, t: &CanonicalType) -> Value {
     }
     let strict = ConversionPolicy::strict();
     match (t, &raw) {
-        (CanonicalType::Mixed(_) | CanonicalType::Unknown | CanonicalType::Extension { .. }, _) => raw,
-        // Session time zone is UTC; DATETIME/TIMESTAMP values are UTC wall clock.
-        (CanonicalType::UtcDateTime { .. }, Value::LocalDateTime(dt)) => Value::UtcDateTime(dt.and_utc()),
-        (CanonicalType::Geometry, Value::Binary(b) | Value::String(_)) => {
-            let bytes = match &raw {
-                Value::Binary(b) => b.clone(),
-                Value::String(s) => s.as_bytes().to_vec(),
-                _ => b.clone(),
-            };
-            decode_geometry(&bytes).unwrap_or(raw)
+        (CanonicalType::Mixed(_) | CanonicalType::Unknown | CanonicalType::Extension { .. }, _) => {
+            raw
         }
-        (CanonicalType::Enum { .. }, Value::String(s)) => Value::Enum { type_name: None, label: s.clone() },
-        (CanonicalType::Boolean, Value::Int(0 | 1)) => convert(&raw, t, &strict).map_or(raw, |c| c.value),
+        // Session time zone is UTC; DATETIME/TIMESTAMP values are UTC wall clock.
+        (CanonicalType::UtcDateTime { .. }, Value::LocalDateTime(dt)) => {
+            Value::UtcDateTime(dt.and_utc())
+        }
+        (CanonicalType::Geometry, Value::Binary(b)) => decode_geometry(b).unwrap_or(raw),
+        (CanonicalType::Geometry, Value::String(s)) => decode_geometry(s.as_bytes()).unwrap_or(raw),
+        (CanonicalType::Enum { .. }, Value::String(s)) => Value::Enum {
+            type_name: None,
+            label: s.clone(),
+        },
+        (CanonicalType::Boolean, Value::Int(0 | 1)) => {
+            convert(&raw, t, &strict).map_or(raw, |c| c.value)
+        }
         _ => convert(&raw, t, &strict).map_or(raw, |c| c.value),
     }
 }
@@ -317,7 +376,7 @@ fn time_from_duration(d: &Duration) -> ConnectorResult<My> {
         return Err(conversion("MySQL TIME has microsecond resolution"));
     }
     let neg = total < 0;
-    let micros = (total.unsigned_abs() / 1000) as u128;
+    let micros = total.unsigned_abs() / 1000;
     let secs = micros / 1_000_000;
     if secs > 838 * 3600 + 59 * 60 + 59 {
         return Err(conversion("duration exceeds MySQL TIME range (±838:59:59)"));
@@ -336,6 +395,21 @@ fn time_from_duration(d: &Duration) -> ConnectorResult<My> {
 /// `column` (when known). Values MySQL cannot store exactly are errors.
 pub fn encode(v: &Value, column: Option<&CanonicalType>) -> ConnectorResult<My> {
     use CanonicalType as T;
+    // JSON columns take the JSON form of any value (a string becomes a JSON
+    // string), as PostgreSQL's jsonb columns do.
+    if matches!(
+        column,
+        Some(T::Json | T::Object | T::Map { .. } | T::Array(_))
+    ) && !matches!(v, Value::Null | Value::Missing | Value::Json(_))
+    {
+        let (json, exact) = value_to_json(v);
+        if !exact {
+            return Err(conversion(
+                "value contains types without a JSON form; convert it to JSON first",
+            ));
+        }
+        return Ok(My::Bytes(json.to_string().into_bytes()));
+    }
     Ok(match v {
         Value::Null | Value::Missing => My::NULL,
         Value::Bool(b) => My::Int(i64::from(*b)),
@@ -343,7 +417,11 @@ pub fn encode(v: &Value, column: Option<&CanonicalType>) -> ConnectorResult<My> 
         Value::UInt(u) => My::UInt(*u),
         Value::BigInt(_) | Value::Decimal(_) => text(v)?,
         Value::Float(f) if f.is_finite() => My::Double(*f),
-        Value::Float(_) => return Err(conversion("MySQL cannot store NaN or infinite floating-point values")),
+        Value::Float(_) => {
+            return Err(conversion(
+                "MySQL cannot store NaN or infinite floating-point values",
+            ));
+        }
         Value::String(s) => My::Bytes(s.clone().into_bytes()),
         Value::Binary(b) => My::Bytes(b.clone()),
         Value::Uuid(u) => match column {
@@ -359,7 +437,11 @@ pub fn encode(v: &Value, column: Option<&CanonicalType>) -> ConnectorResult<My> 
         },
         Value::ZonedDateTime { .. } => match column {
             Some(T::ZonedDateTime | T::String { .. }) | None => text(v)?,
-            _ => return Err(conversion("zoned date-times must be converted to the column type first")),
+            _ => {
+                return Err(conversion(
+                    "zoned date-times must be converted to the column type first",
+                ));
+            }
         },
         Value::Duration(d) => match column {
             Some(T::Time { .. }) => time_from_duration(d)?,
@@ -370,7 +452,9 @@ pub fn encode(v: &Value, column: Option<&CanonicalType>) -> ConnectorResult<My> 
         Value::Array(_) | Value::Object(_) | Value::Map(_) => {
             let (json, exact) = value_to_json(v);
             if !exact {
-                return Err(conversion("nested value contains types without a JSON form; convert it to JSON first"));
+                return Err(conversion(
+                    "nested value contains types without a JSON form; convert it to JSON first",
+                ));
             }
             My::Bytes(json.to_string().into_bytes())
         }
@@ -380,9 +464,13 @@ pub fn encode(v: &Value, column: Option<&CanonicalType>) -> ConnectorResult<My> 
             My::Bytes(out)
         }
         Value::Extension { text: Some(t), .. } => My::Bytes(t.clone().into_bytes()),
-        Value::Extension { binary: Some(b), .. } => My::Bytes(b.clone()),
+        Value::Extension {
+            binary: Some(b), ..
+        } => My::Bytes(b.clone()),
         Value::Extension { .. } => return Err(conversion("empty extension value")),
-        Value::Invalid { reason, .. } => return Err(conversion(format!("invalid source value: {reason}"))),
+        Value::Invalid { reason, .. } => {
+            return Err(conversion(format!("invalid source value: {reason}")));
+        }
     })
 }
 
@@ -391,20 +479,41 @@ mod tests {
     use super::*;
 
     fn ty(data_type: &str, column_type: &str) -> MyType {
-        MyType { data_type: data_type.into(), column_type: column_type.into(), ..Default::default() }
+        MyType {
+            data_type: data_type.into(),
+            column_type: column_type.into(),
+            ..Default::default()
+        }
     }
 
     #[test]
     fn catalog_types_map() {
-        assert_eq!(canonical_for(&ty("tinyint", "tinyint(1)")), CanonicalType::Boolean);
-        assert_eq!(canonical_for(&ty("int", "int unsigned")), CanonicalType::UInt { bits: 32 });
+        assert_eq!(
+            canonical_for(&ty("tinyint", "tinyint(1)")),
+            CanonicalType::Boolean
+        );
+        assert_eq!(
+            canonical_for(&ty("int", "int unsigned")),
+            CanonicalType::UInt { bits: 32 }
+        );
         assert_eq!(canonical_for(&ty("bigint", "bigint")), CanonicalType::I64);
         let e = canonical_for(&ty("enum", "enum('a','it''s','b\\\\c')"));
-        assert_eq!(e, CanonicalType::Enum { name: None, labels: vec!["a".into(), "it's".into(), "b\\c".into()] });
+        assert_eq!(
+            e,
+            CanonicalType::Enum {
+                name: None,
+                labels: vec!["a".into(), "it's".into(), "b\\c".into()]
+            }
+        );
         let mut utc = ty("datetime", "datetime(3)");
         utc.datetime_precision = Some(3);
         utc.comment = "gazabridge:utc_datetime".into();
-        assert_eq!(canonical_for(&utc), CanonicalType::UtcDateTime { fractional_digits: 3 });
+        assert_eq!(
+            canonical_for(&utc),
+            CanonicalType::UtcDateTime {
+                fractional_digits: 3
+            }
+        );
     }
 
     #[test]
@@ -431,7 +540,28 @@ mod tests {
             };
             assert_eq!(canonical_for(&my), t, "{native}");
         }
-        assert!(native_type_for(&T::Decimal { precision: Some(70), scale: Some(2) }).is_err());
+        assert!(
+            native_type_for(&T::Decimal {
+                precision: Some(70),
+                scale: Some(2)
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn json_columns_take_the_json_form() {
+        let j = Some(&CanonicalType::Json);
+        assert_eq!(
+            encode(&Value::String("text".into()), j).unwrap(),
+            My::Bytes(br#""text""#.to_vec())
+        );
+        assert_eq!(encode(&Value::Int(3), j).unwrap(), My::Bytes(b"3".to_vec()));
+        assert_eq!(encode(&Value::Null, j).unwrap(), My::NULL);
+        assert_eq!(
+            encode(&Value::String("text".into()), None).unwrap(),
+            My::Bytes(b"text".to_vec())
+        );
     }
 
     #[test]
@@ -439,15 +569,43 @@ mod tests {
         assert!(encode(&Value::Float(f64::NAN), None).is_err());
         let d = Duration::from_total_nanos(-(3_600_000_000_000i128 * 30)).unwrap();
         assert_eq!(
-            encode(&Value::Duration(d), Some(&CanonicalType::Time { fractional_digits: 0 })).unwrap(),
+            encode(
+                &Value::Duration(d),
+                Some(&CanonicalType::Time {
+                    fractional_digits: 0
+                })
+            )
+            .unwrap(),
             My::Time(true, 1, 6, 0, 0, 0)
         );
         // 30h back out of TIME is a duration, not a time of day.
-        assert!(matches!(raw_value(My::Time(true, 1, 6, 0, 0, 0), false, false), Value::Duration(_)));
-        assert!(matches!(raw_value(My::Date(0, 0, 0, 0, 0, 0, 0), false, true), Value::Extension { .. }));
-        assert_eq!(decode(Value::Int(2), &CanonicalType::Boolean), Value::Int(2));
-        let geom = encode(&Value::Geometry { srid: Some(4326), wkb: vec![1, 1, 0, 0, 0, 0, 0, 0, 0] }, None).unwrap();
+        assert!(matches!(
+            raw_value(My::Time(true, 1, 6, 0, 0, 0), false, false),
+            Value::Duration(_)
+        ));
+        assert!(matches!(
+            raw_value(My::Date(0, 0, 0, 0, 0, 0, 0), false, true),
+            Value::Extension { .. }
+        ));
+        assert_eq!(
+            decode(Value::Int(2), &CanonicalType::Boolean),
+            Value::Int(2)
+        );
+        let geom = encode(
+            &Value::Geometry {
+                srid: Some(4326),
+                wkb: vec![1, 1, 0, 0, 0, 0, 0, 0, 0],
+            },
+            None,
+        )
+        .unwrap();
         let My::Bytes(b) = geom else { panic!() };
-        assert_eq!(decode(Value::Binary(b), &CanonicalType::Geometry), Value::Geometry { srid: Some(4326), wkb: vec![1, 1, 0, 0, 0, 0, 0, 0, 0] });
+        assert_eq!(
+            decode(Value::Binary(b), &CanonicalType::Geometry),
+            Value::Geometry {
+                srid: Some(4326),
+                wkb: vec![1, 1, 0, 0, 0, 0, 0, 0, 0]
+            }
+        );
     }
 }

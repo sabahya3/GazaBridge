@@ -46,6 +46,8 @@ pub fn direction(source: EngineFamily, target: EngineFamily) -> Option<Direction
         (EngineFamily::MongoDb, EngineFamily::MongoDb) => Some(Direction::Copy),
         (EngineFamily::MongoDb, EngineFamily::Postgres) => Some(Direction::DocToTable),
         (EngineFamily::Postgres, EngineFamily::MongoDb) => Some(Direction::TableToDoc),
+        (EngineFamily::MongoDb, EngineFamily::MySql) => Some(Direction::DocToTable),
+        (EngineFamily::MySql, EngineFamily::MongoDb) => Some(Direction::TableToDoc),
         _ => None,
     }
 }
@@ -127,13 +129,15 @@ impl ItemMapping {
                         });
                     }
                 }
-                if item
-                    .target
-                    .namespace
-                    .schema
-                    .as_deref()
-                    .is_some_and(|s| s != "public")
-                {
+                // A PostgreSQL schema other than `public`, or a MySQL
+                // database (MySQL namespaces have no schema level).
+                let ns = &item.target.namespace;
+                let create_namespace = match (&ns.schema, &ns.database) {
+                    (Some(s), _) => s != "public",
+                    (None, Some(_)) => true,
+                    (None, None) => false,
+                };
+                if create_namespace {
                     ops.push(SchemaOperation::CreateNamespace {
                         namespace: item.target.namespace.clone(),
                         if_not_exists: true,
@@ -523,6 +527,11 @@ pub async fn plan_doc_to_table(
         } else {
             Vec::new()
         };
+        let (mapping, indexes) = if target.manifest().family == EngineFamily::MySql {
+            fit_mysql_indexes(mapping, indexes, &mut p.warnings)
+        } else {
+            (mapping, indexes)
+        };
         p.indexes = indexes.iter().map(|i| i.name.clone()).collect();
         p.source_count = quick_count(source, &item.source).await;
         // Existing tables must already have every planned column.
@@ -588,6 +597,68 @@ pub async fn plan_doc_to_table(
         out.mappings.push(m);
     }
     Ok(out)
+}
+
+/// InnoDB keys hold at most 3,072 bytes; utf8mb4 needs 4 bytes a character
+/// and other key columns take up to 16 bytes each.
+const MYSQL_KEY_BYTES: u64 = 3_072;
+
+/// MySQL cannot index TEXT or JSON columns without a prefix length (and a
+/// prefix would change what a unique index means). Indexed text columns
+/// become `varchar(n)`, with the key's byte budget shared between an
+/// index's text columns; indexes on JSON columns are left out.
+fn fit_mysql_indexes(
+    mut mapping: DocMapping,
+    indexes: Vec<IndexDefinition>,
+    warnings: &mut Vec<String>,
+) -> (DocMapping, Vec<IndexDefinition>) {
+    let root = &mut mapping.tables[0];
+    let is_text = |t: &CanonicalType| matches!(t, CanonicalType::String { max_chars: None });
+    let mut limits: BTreeMap<String, u64> = BTreeMap::new();
+    let mut kept = Vec::with_capacity(indexes.len());
+    for ix in indexes {
+        let cols: Vec<&gazabridge_mapping::doc_to_table::ColumnMap> = ix
+            .columns
+            .iter()
+            .filter_map(|c| root.columns.iter().find(|m| &m.name == c))
+            .collect();
+        if let Some(c) = cols.iter().find(|m| {
+            matches!(
+                m.canonical_type,
+                CanonicalType::Json
+                    | CanonicalType::Object
+                    | CanonicalType::Array(_)
+                    | CanonicalType::Mixed(_)
+            )
+        }) {
+            warnings.push(format!(
+                "index `{}` is left out: MySQL cannot index the JSON column `{}`",
+                ix.name, c.name
+            ));
+            continue;
+        }
+        let texts = cols.iter().filter(|m| is_text(&m.canonical_type)).count() as u64;
+        if texts > 0 {
+            let others = cols.len() as u64 - texts;
+            let chars = (MYSQL_KEY_BYTES.saturating_sub(16 * others) / (4 * texts)).max(1);
+            for m in cols.iter().filter(|m| is_text(&m.canonical_type)) {
+                let e = limits.entry(m.name.clone()).or_insert(chars);
+                *e = (*e).min(chars);
+            }
+        }
+        kept.push(ix);
+    }
+    for (name, chars) in limits {
+        if let Some(m) = root.columns.iter_mut().find(|m| m.name == name) {
+            m.canonical_type = CanonicalType::String {
+                max_chars: Some(chars),
+            };
+            warnings.push(format!(
+                "`{name}` is indexed, so it becomes varchar({chars}) in MySQL; longer values are rejected"
+            ));
+        }
+    }
+    (mapping, kept)
 }
 
 /// Plans tables → collections, embedding child tables when asked.

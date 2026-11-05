@@ -39,6 +39,11 @@ pub struct Columns {
     pub json: BTreeSet<String>,
     /// 32-bit integers, kept as BSON `Int32`.
     pub int32: BTreeSet<String>,
+    /// Date-times without a time zone (PostgreSQL `timestamp`, MySQL
+    /// `DATETIME`): read as UTC and stored as BSON dates, since BSON has no
+    /// local date-time. (Older stored mappings lack the field.)
+    #[serde(default)]
+    pub local_datetimes: BTreeSet<String>,
 }
 
 impl Columns {
@@ -58,6 +63,9 @@ impl Columns {
             if matches!(col.canonical_type, CanonicalType::Int { bits } if bits <= 32) {
                 c.int32.insert(col.name.clone());
             }
+            if matches!(col.canonical_type, CanonicalType::LocalDateTime { .. }) {
+                c.local_datetimes.insert(col.name.clone());
+            }
         }
         c
     }
@@ -69,6 +77,9 @@ impl Columns {
                 None => v.clone(),
             },
             Value::Json(j) if self.json.contains(column) => from_ext_json(j),
+            Value::LocalDateTime(dt) if self.local_datetimes.contains(column) => {
+                Value::UtcDateTime(dt.and_utc())
+            }
             other => other.clone(),
         }
     }
@@ -137,6 +148,17 @@ pub fn plan(schema: &ObjectSchema, target: ObjectRef) -> Result<TableDocMapping,
             "the table holds whole documents (JSONB/hybrid copy): they are restored as stored"
                 .into(),
         );
+    }
+    if !columns.local_datetimes.is_empty() {
+        warnings.push(format!(
+            "{} has no time zone: values are read as UTC and stored as dates",
+            columns
+                .local_datetimes
+                .iter()
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     Ok(TableDocMapping {
         source: schema.object.clone(),

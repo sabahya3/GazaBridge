@@ -34,10 +34,11 @@ zeroize.workspace = true
 [dev-dependencies]
 gazabridge-query.workspace = true
 gazabridge-connector-mongodb.workspace = true
+gazabridge-connector-mysql.workspace = true
 mongodb = "3.9"
 gazabridge-connector-postgres.workspace = true
 gazabridge-connector-sqlite.workspace = true
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
+testcontainers-modules = { version = "0.15", features = ["mysql", "postgres"] }
 tempfile.workspace = true
 
 [lints]

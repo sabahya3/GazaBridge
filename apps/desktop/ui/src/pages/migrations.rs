@@ -124,7 +124,7 @@ pub fn MigrationsPage() -> impl IntoView {
     let usable = move || match connections.get() {
         Load::Ready(list) => list
             .into_iter()
-            .filter(|c| matches!(c.family.as_str(), "mongodb" | "postgres"))
+            .filter(|c| matches!(c.family.as_str(), "mongodb" | "postgres" | "mysql"))
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
@@ -149,8 +149,8 @@ pub fn MigrationsPage() -> impl IntoView {
             .filter(|d| !d.is_empty() && !d.contains(':'))
     };
     let direction = move || match (family(source_id).as_str(), family(target_id).as_str()) {
-        ("mongodb", "postgres") => "doc_to_table",
-        ("postgres", "mongodb") => "table_to_doc",
+        ("mongodb", "postgres" | "mysql") => "doc_to_table",
+        ("postgres" | "mysql", "mongodb") => "table_to_doc",
         ("", _) | (_, "") => "",
         _ => "copy",
     };
@@ -315,7 +315,12 @@ pub fn MigrationsPage() -> impl IntoView {
                         database: Some(tdb.clone()),
                         schema: tschema.clone(),
                         name,
-                        kind: if target_pg { "table" } else { "collection" }.into(),
+                        kind: if family(target_id) == "mongodb" {
+                            "collection"
+                        } else {
+                            "table"
+                        }
+                        .into(),
                     },
                 })
                 .collect(),
@@ -524,7 +529,11 @@ pub fn MigrationsPage() -> impl IntoView {
             {move || usable().into_iter().map(|c| {
                 let id = c.id.clone();
                 let sel = id.clone();
-                let engine = if c.family == "postgres" { "PostgreSQL" } else { "MongoDB" };
+                let engine = match c.family.as_str() {
+                    "postgres" => "PostgreSQL",
+                    "mysql" => "MySQL",
+                    _ => "MongoDB",
+                };
                 let label = if c.read_only {
                     format!("{} · {engine} · {}", c.name, ui.text("mig.read_only"))
                 } else {

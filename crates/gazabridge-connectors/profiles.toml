@@ -182,16 +182,23 @@ id = "mysql.mysql"
 family = "my_sql"
 display_name = "MySQL"
 vendor_icon = "mysql"
-status = "experimental"
+status = "beta"
 auth_methods = ["password", "client_certificate"]
-tested_versions = []
+tested_versions = ["8.0", "8.4"]
 documentation_url = "https://dev.mysql.com/doc/"
 known_limitations = [
-  "Binlog CDC requires binlog_format=ROW, binlog_row_image=FULL and REPLICATION SLAVE/CLIENT privileges.",
+  "Binlog CDC is not implemented yet (Milestone 8); continuous sync from MySQL uses timestamp polling.",
+  "Upserts use ON DUPLICATE KEY UPDATE, which reacts to any unique key of the table, not only the chosen key.",
+  "DDL is not transactional: a failure part-way leaves earlier statements applied.",
+  "SSH tunnels are not available yet.",
 ]
 [profile.defaults]
 port = 3306
 tls = "VERIFY_IDENTITY"
+[profile.contract_evidence]
+suite_version = "1.0"
+versions = ["8.0", "8.4"]
+recorded_at = "2026-11-05"
 [profile.supported_versions]
 min = "8.0"
 [profile.detection]
@@ -202,17 +209,23 @@ id = "mysql.mariadb"
 family = "my_sql"
 display_name = "MariaDB"
 vendor_icon = "mysql"
-status = "experimental"
+status = "beta"
 auth_methods = ["password", "client_certificate"]
-tested_versions = []
+tested_versions = ["10.11", "11.4"]
 documentation_url = "https://mariadb.com/kb/en/documentation/"
 known_limitations = [
   "JSON is an alias for LONGTEXT with a JSON_VALID check; values round-trip as text.",
   "MariaDB GTIDs use a different format from MySQL GTIDs.",
+  "Binlog CDC is not implemented yet (Milestone 8); continuous sync from MariaDB uses timestamp polling.",
+  "SSH tunnels are not available yet.",
 ]
 [profile.defaults]
 port = 3306
 tls = "VERIFY_IDENTITY"
+[profile.contract_evidence]
+suite_version = "1.0"
+versions = ["10.11", "11.4"]
+recorded_at = "2026-11-05"
 [profile.supported_versions]
 min = "10.6"
 [profile.detection]

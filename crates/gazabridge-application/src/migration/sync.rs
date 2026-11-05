@@ -185,7 +185,7 @@ impl MigrationService {
                             .inferred
                             .as_ref()
                             .is_some_and(|i| i.fields.iter().any(|f| f.path == field));
-                    if !seen && family == EngineFamily::Postgres {
+                    if !seen && family != EngineFamily::MongoDb {
                         plan.blockers
                             .push(format!("`{}` has no column `{field}`", item.source));
                     } else if !seen {

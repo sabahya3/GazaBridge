@@ -566,7 +566,7 @@ impl MigrationService {
         let (sf, tf) = (family(source.as_ref()), family(target.as_ref()));
         let Some(direction) = convert::direction(sf, tf) else {
             plan.blockers.push(format!(
-                "{sf:?} → {tf:?} is not supported yet; supported: MongoDB → MongoDB, MongoDB → PostgreSQL, PostgreSQL → MongoDB"
+                "{sf:?} → {tf:?} is not supported yet; supported: MongoDB → MongoDB, MongoDB ⇄ PostgreSQL, MongoDB ⇄ MySQL"
             ));
             return Ok((plan, Vec::new()));
         };
