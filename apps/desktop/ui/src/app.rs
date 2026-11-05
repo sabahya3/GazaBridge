@@ -9,7 +9,7 @@ use crate::i18n::t;
 use crate::ipc::{NoArgs, call};
 use crate::nav::Section;
 use crate::pages::{
-    BackupsPage, ConnectionsPage, ExplorerPage, HomePage, LogsPage, MigrationsPage,
+    BackupsPage, ConnectionsPage, ExplorerPage, HomePage, LogsPage, MigrationsPage, MonitorPage,
     QueryStudioPage, SettingsPage,
 };
 
@@ -101,6 +101,7 @@ pub fn App() -> impl IntoView {
                     Section::QueryStudio => view! { <QueryStudioPage /> }.into_any(),
                     Section::Migrations => view! { <MigrationsPage /> }.into_any(),
                     Section::Backups => view! { <BackupsPage /> }.into_any(),
+                    Section::Monitor => view! { <MonitorPage /> }.into_any(),
                     Section::Logs => view! { <LogsPage /> }.into_any(),
                     Section::Settings => view! { <SettingsPage /> }.into_any(),
                     _ => view! { <HomePage /> }.into_any(),

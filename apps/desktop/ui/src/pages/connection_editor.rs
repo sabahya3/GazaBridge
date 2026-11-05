@@ -11,7 +11,57 @@ use leptos::task::spawn_local;
 use serde::Serialize;
 
 use crate::app::use_ui;
-use crate::ipc::call;
+use crate::ipc::{NoArgs, call};
+
+/// Value of the "New connection…" entry in connection lists.
+pub const NEW_CONNECTION: &str = "__new_connection__";
+
+/// "New connection…" entry for the end of a connection `<select>`.
+pub fn new_connection_option() -> impl IntoView {
+    let ui = use_ui();
+    view! { <option value=NEW_CONNECTION>{format!("+ {}", ui.text("conn.new_here"))}</option> }
+}
+
+/// The connection editor in a dialog, for pages that pick a connection.
+/// `on_created` receives the saved connection's id.
+#[component]
+pub fn NewConnectionDialog(open: RwSignal<bool>, on_created: Callback<String>) -> impl IntoView {
+    let ui = use_ui();
+    let profiles = RwSignal::new(None::<Result<Vec<ProfileSummary>, String>>);
+    Effect::new(move |_| {
+        if open.get() && profiles.get_untracked().is_none() {
+            spawn_local(async move {
+                profiles.set(Some(
+                    call::<_, Vec<ProfileSummary>>(commands::LIST_PROFILES, &NoArgs {})
+                        .await
+                        .map_err(|e| e.message),
+                ));
+            });
+        }
+    });
+    let close = Callback::new(move |()| open.set(false));
+    let saved = Callback::new(move |id: String| {
+        open.set(false);
+        on_created.run(id);
+    });
+    move || {
+        open.get().then(|| view! {
+            <div class="modal-backdrop">
+                <div class="modal conn-dialog" role="dialog" aria-modal="true" aria-labelledby="editor-title"
+                    on:keydown=move |e| if e.key() == "Escape" { open.set(false) }>
+                    {move || match profiles.get() {
+                        None => view! { <p class="muted">{ui.tr("common.loading")}</p> }.into_any(),
+                        Some(Err(e)) => view! {
+                            <p class="error-detail">{e}</p>
+                            <button type="button" class="btn btn-secondary" on:click=move |_| open.set(false)>{ui.tr("common.cancel")}</button>
+                        }.into_any(),
+                        Some(Ok(p)) => view! { <ConnectionEditor initial=None profiles=p on_done=close on_saved=saved /> }.into_any(),
+                    }}
+                </div>
+            </div>
+        })
+    }
+}
 
 #[derive(Serialize)]
 struct Wrap<'a, T> {
@@ -249,6 +299,10 @@ pub fn ConnectionEditor(
     initial: Option<ConnectionDetails>,
     profiles: Vec<ProfileSummary>,
     on_done: Callback<()>,
+    /// Set when the editor opens from another page: called with the new
+    /// connection's id, and "Save and connect" is not offered.
+    #[prop(optional)]
+    on_saved: Option<Callback<String>>,
 ) -> impl IntoView {
     let ui = use_ui();
     let is_new = initial.is_none();
@@ -385,6 +439,9 @@ pub fn ConnectionEditor(
                 .await
             {
                 Ok(saved) => {
+                    if let (Some(cb), Some(id)) = (on_saved, saved.form.id.clone()) {
+                        cb.run(id);
+                    }
                     if open_after {
                         ui.open_connection.set(saved.form.id.clone());
                         ui.section.set(crate::nav::Section::Explorer);
@@ -555,7 +612,9 @@ pub fn ConnectionEditor(
                     {move || if testing.get() { ui.text("editor.testing") } else { ui.text("editor.test") }}
                 </button>
                 <button type="button" class="btn btn-secondary" disabled=move || busy.get() on:click=move |_| save(false)>{ui.tr("editor.save")}</button>
-                <button type="button" class="btn" disabled=move || busy.get() on:click=move |_| save(true)>{ui.tr("editor.save_connect")}</button>
+                {on_saved.is_none().then(|| view! {
+                    <button type="button" class="btn" disabled=move || busy.get() on:click=move |_| save(true)>{ui.tr("editor.save_connect")}</button>
+                })}
             </div>
 
             <div role="status" aria-live="polite">

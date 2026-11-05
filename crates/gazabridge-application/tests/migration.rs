@@ -371,6 +371,21 @@ async fn mongodb_collections_copy_between_servers_exactly_and_resumably() {
     slow.max_records_per_sec = Some(4_000);
     let run = m.start(slow, false).await.unwrap();
     wait(&m, run, |v| v.streams[0].stats.inserted >= 300).await;
+    // The Monitor follows the running copy: a rate close to the limit, the
+    // time left, and the app's own memory.
+    let first = m.monitor().await.unwrap();
+    assert!(first.runs.iter().any(|r| r.run_id == run), "{first:?}");
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let snap = m.monitor().await.unwrap();
+    let live = snap.runs.iter().find(|r| r.run_id == run).unwrap();
+    let rps = live.records_per_sec.unwrap();
+    assert!((500.0..=8_000.0).contains(&rps), "{live:?}");
+    assert!(live.bytes_per_sec.unwrap() > 0.0, "{live:?}");
+    assert!(
+        live.eta_secs.is_some() && live.total == live.streams[0].total,
+        "{live:?}"
+    );
+    assert!(snap.process.unwrap().memory_bytes > 1_000_000);
     m.pause(run).await.unwrap();
     let v = wait(&m, run, settled).await;
     assert_eq!(v.status, JobStatus::Paused);

@@ -1076,3 +1076,13 @@ button.module:disabled { cursor: default; color: var(--muted); background: var(-
 .transfer-status:empty { display: none; }
 .transfer-footer .test-result { margin: 0; }
 .mig-changes { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 0; }
+
+/* Monitor */
+.mon-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 0 0 16px; }
+.mon-stats > div { display: grid; gap: 2px; }
+.mon-stats dt { color: var(--muted); font-size: 0.85em; }
+.mon-stats dd { margin: 0; font-size: 1.25em; font-variant-numeric: tabular-nums; }
+.mon-runs { display: grid; gap: 16px; }
+.mon-run-name { margin: 0; font-size: 1.1em; }
+.conn-dialog { padding: 18px 20px; }
+.conn-dialog .editor { border: 0; padding: 0; box-shadow: none; }

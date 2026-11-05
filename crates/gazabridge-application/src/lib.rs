@@ -6,6 +6,7 @@ pub mod connections;
 pub mod convert;
 pub mod explorer;
 pub mod migration;
+pub mod monitor;
 pub mod profiled;
 pub mod query;
 pub mod report;

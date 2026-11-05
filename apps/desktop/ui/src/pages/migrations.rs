@@ -14,6 +14,7 @@ use leptos::task::spawn_local;
 use serde::Serialize;
 
 use super::Load;
+use super::connection_editor::{NEW_CONNECTION, NewConnectionDialog, new_connection_option};
 use crate::app::use_ui;
 use crate::icons::{Icon, icon};
 use crate::ipc::{NoArgs, call};
@@ -29,7 +30,7 @@ struct ListArgs {
 }
 
 /// `12345` → `12,345`.
-fn num(n: u64) -> String {
+pub(super) fn num(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     for (i, c) in s.chars().enumerate() {
@@ -41,7 +42,7 @@ fn num(n: u64) -> String {
     out
 }
 
-fn status_class(status: &str) -> &'static str {
+pub(super) fn status_class(status: &str) -> &'static str {
     match status {
         "completed" => "status status-ok",
         "completed_with_warnings" | "paused" | "pausing" => "status status-warn",
@@ -50,7 +51,7 @@ fn status_class(status: &str) -> &'static str {
     }
 }
 
-fn status_key(status: &str) -> &'static str {
+pub(super) fn status_key(status: &str) -> &'static str {
     match status {
         "running" => "mig.st_running",
         "pausing" => "mig.st_pausing",
@@ -65,7 +66,7 @@ fn status_key(status: &str) -> &'static str {
     }
 }
 
-fn phase_key(phase: &str) -> &'static str {
+pub(super) fn phase_key(phase: &str) -> &'static str {
     match phase {
         "pending" => "mig.ph_pending",
         "preparing" => "mig.ph_preparing",
@@ -255,18 +256,66 @@ pub fn MigrationsPage() -> impl IntoView {
         });
     };
 
-    spawn_local(async move {
-        match call::<_, Vec<ConnectionSummary>>(
-            commands::LIST_CONNECTIONS,
-            &ListArgs { search: None },
-        )
-        .await
+    let load_connections = move |then: Option<Box<dyn FnOnce()>>| {
+        spawn_local(async move {
+            match call::<_, Vec<ConnectionSummary>>(
+                commands::LIST_CONNECTIONS,
+                &ListArgs { search: None },
+            )
+            .await
+            {
+                Ok(list) => connections.set(Load::Ready(list)),
+                Err(e) => connections.set(Load::Failed(e.message)),
+            }
+            if let Some(f) = then {
+                f();
+            }
+        });
+    };
+    load_connections(None);
+    load_history();
+
+    let pick_source = move |v: String| {
+        source_id.set(v.clone());
+        source_db.set(String::new());
+        source_schema.set(String::new());
+        list_dbs(v.clone(), source_dbs);
+        if is_pg(source_id)
+            && let Some(db) = own_db(&v)
         {
-            Ok(list) => connections.set(Load::Ready(list)),
-            Err(e) => connections.set(Load::Failed(e.message)),
+            source_db.set(db);
+            list_schemas();
+        } else {
+            list_collections();
+        }
+    };
+    let pick_target = move |v: String| {
+        target_id.set(v.clone());
+        list_dbs(v, target_dbs);
+    };
+    // A connection made from this page: `Some(true)` for the source side.
+    let new_conn_for = RwSignal::new(None::<bool>);
+    let new_conn_open = RwSignal::new(false);
+    Effect::new(move |_| {
+        if new_conn_for.get().is_some() {
+            new_conn_open.set(true);
         }
     });
-    load_history();
+    Effect::new(move |_| {
+        if !new_conn_open.get() {
+            new_conn_for.set(None);
+        }
+    });
+    let new_conn_created = Callback::new(move |id: String| {
+        let source = new_conn_for.get_untracked().unwrap_or(false);
+        load_connections(Some(Box::new(move || {
+            if source {
+                pick_source(id)
+            } else {
+                pick_target(id)
+            }
+        })));
+    });
 
     let args = move |confirm: bool| -> MigrationArgs {
         let (sdb, tdb) = (source_db.get_untracked(), target_db.get_untracked());
@@ -578,6 +627,7 @@ pub fn MigrationsPage() -> impl IntoView {
                 };
                 view! { <option value=id selected=move || current.get() == sel>{label}</option> }
             }).collect_view()}
+            {new_connection_option()}
         }
     };
 
@@ -741,6 +791,7 @@ pub fn MigrationsPage() -> impl IntoView {
 
     view! {
         <section class="page page-wide migrations" aria-labelledby="mig-title">
+            <NewConnectionDialog open=new_conn_open on_created=new_conn_created />
             <h1 id="mig-title">{ui.tr("mig.title")}</h1>
             <p class="muted">{ui.tr("mig.intro")}</p>
             <div role="status" aria-live="polite">
@@ -753,17 +804,13 @@ pub fn MigrationsPage() -> impl IntoView {
                     <h2 id="mig-src">{icon(Icon::Database)}" "{ui.tr("mig.source")}</h2>
                     <label class="field">
                         <span>{ui.tr("mig.connection")}</span>
-                        <select class="input" on:change=move |e| {
+                        <select class="input" prop:value=move || source_id.get() on:change=move |e| {
                             let v = event_target_value(&e);
-                            source_id.set(v.clone());
-                            source_db.set(String::new());
-                            source_schema.set(String::new());
-                            list_dbs(v.clone(), source_dbs);
-                            if is_pg(source_id) && let Some(db) = own_db(&v) {
-                                source_db.set(db);
-                                list_schemas();
+                            if v == NEW_CONNECTION {
+                                source_id.set(source_id.get_untracked());
+                                new_conn_for.set(Some(true));
                             } else {
-                                list_collections();
+                                pick_source(v);
                             }
                         }>{conn_options(source_id)}</select>
                     </label>
@@ -845,10 +892,14 @@ pub fn MigrationsPage() -> impl IntoView {
                     <h2 id="mig-dst">{icon(Icon::Database)}" "{ui.tr("mig.target")}</h2>
                     <label class="field">
                         <span>{ui.tr("mig.connection")}</span>
-                        <select class="input" on:change=move |e| {
+                        <select class="input" prop:value=move || target_id.get() on:change=move |e| {
                             let v = event_target_value(&e);
-                            target_id.set(v.clone());
-                            list_dbs(v, target_dbs);
+                            if v == NEW_CONNECTION {
+                                target_id.set(target_id.get_untracked());
+                                new_conn_for.set(Some(false));
+                            } else {
+                                pick_target(v);
+                            }
                         }>{conn_options(target_id)}</select>
                     </label>
                     <Show when=move || !is_pg(target_id) fallback=move || view! {

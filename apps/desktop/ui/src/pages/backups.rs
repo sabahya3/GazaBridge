@@ -12,6 +12,7 @@ use leptos::task::spawn_local;
 use serde::Serialize;
 
 use super::Load;
+use super::connection_editor::{NEW_CONNECTION, NewConnectionDialog, new_connection_option};
 use crate::app::use_ui;
 use crate::icons::{Icon, icon};
 use crate::ipc::{NoArgs, call};
@@ -42,7 +43,7 @@ fn num(n: u64) -> String {
     out
 }
 
-fn bytes(n: u64) -> String {
+pub(super) fn bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = n as f64;
     let mut i = 0;
@@ -193,16 +194,24 @@ pub fn BackupsPage() -> impl IntoView {
             }
         });
     };
+    let load_connections = move |then: Option<Box<dyn FnOnce()>>| {
+        spawn_local(async move {
+            match call::<_, Vec<ConnectionSummary>>(
+                commands::LIST_CONNECTIONS,
+                &ListArgs { search: None },
+            )
+            .await
+            {
+                Ok(l) => connections.set(Load::Ready(l)),
+                Err(e) => connections.set(Load::Failed(e.message)),
+            }
+            if let Some(f) = then {
+                f();
+            }
+        });
+    };
+    load_connections(None);
     spawn_local(async move {
-        match call::<_, Vec<ConnectionSummary>>(
-            commands::LIST_CONNECTIONS,
-            &ListArgs { search: None },
-        )
-        .await
-        {
-            Ok(l) => connections.set(Load::Ready(l)),
-            Err(e) => connections.set(Load::Failed(e.message)),
-        }
         if let Ok(t) = call::<_, Vec<ToolDto>>(commands::BACKUP_TOOLS, &NoArgs {}).await {
             tools.set(t);
         }
@@ -469,6 +478,7 @@ pub fn BackupsPage() -> impl IntoView {
                     .into_any(),
                 _ => ().into_any(),
             }}
+            {new_connection_option()}
         }
     };
 
@@ -481,8 +491,34 @@ pub fn BackupsPage() -> impl IntoView {
         }
     };
 
+    // A connection made from this page: `Some(true)` for the backup side,
+    // `Some(false)` for the restore target.
+    let new_conn_for = RwSignal::new(None::<bool>);
+    let new_conn_open = RwSignal::new(false);
+    Effect::new(move |_| {
+        if new_conn_for.get().is_some() {
+            new_conn_open.set(true);
+        }
+    });
+    Effect::new(move |_| {
+        if !new_conn_open.get() {
+            new_conn_for.set(None);
+        }
+    });
+    let new_conn_created = Callback::new(move |id: String| {
+        let backup_side = new_conn_for.get_untracked().unwrap_or(true);
+        load_connections(Some(Box::new(move || {
+            if backup_side {
+                pick_conn(id)
+            } else {
+                r_conn.set(id)
+            }
+        })));
+    });
+
     view! {
             <section class="page page-wide backups" aria-labelledby="bk-title">
+            <NewConnectionDialog open=new_conn_open on_created=new_conn_created />
                 <h1 id="bk-title">{ui.tr("bk.title")}</h1>
                 <p class="muted">{ui.tr("bk.intro")}</p>
                 <div role="status" aria-live="polite">
@@ -494,7 +530,15 @@ pub fn BackupsPage() -> impl IntoView {
                         <h2 id="bk-new">{icon(Icon::Archive)}" "{ui.tr("bk.new")}</h2>
                         <label class="field">
                             <span>{ui.tr("mig.connection")}</span>
-                            <select class="input" on:change=move |e| pick_conn(event_target_value(&e))>{conn_options(conn_id, None)}</select>
+                            <select class="input" prop:value=move || conn_id.get() on:change=move |e| {
+                                let v = event_target_value(&e);
+                                if v == NEW_CONNECTION {
+                                    conn_id.set(conn_id.get_untracked());
+                                    new_conn_for.set(Some(true));
+                                } else {
+                                    pick_conn(v);
+                                }
+                            }>{conn_options(conn_id, None)}</select>
                         </label>
                         <Show when=move || !pg()>
                             <label class="field">
@@ -661,7 +705,15 @@ pub fn BackupsPage() -> impl IntoView {
                                 <div>
                                     <label class="field">
                                         <span>{ui.tr("bk.restore_into")}</span>
-                                        <select class="input" on:change=move |e| r_conn.set(event_target_value(&e))>{conn_options(r_conn, Some(fam.clone()))}</select>
+                                        <select class="input" prop:value=move || r_conn.get() on:change=move |e| {
+                                            let v = event_target_value(&e);
+                                            if v == NEW_CONNECTION {
+                                                r_conn.set(r_conn.get_untracked());
+                                                new_conn_for.set(Some(false));
+                                            } else {
+                                                r_conn.set(v);
+                                            }
+                                        }>{conn_options(r_conn, Some(fam.clone()))}</select>
                                     </label>
                                     <label class="field">
                                         <span>{if is_pg { ui.tr("bk.rename_schema") } else { ui.tr("bk.rename_db") }}</span>

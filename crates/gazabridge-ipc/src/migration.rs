@@ -249,3 +249,44 @@ impl RunDto {
         matches!(self.status.as_str(), "paused" | "failed")
     }
 }
+
+/// One stream of a running copy, for the Monitor page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StreamMonitorDto {
+    pub source: ObjectAddr,
+    pub target: ObjectAddr,
+    pub phase: String,
+    pub processed: u64,
+    pub total: Option<u64>,
+    pub failed: u64,
+    pub retries: u64,
+    pub bytes: u64,
+    pub records_per_sec: Option<f64>,
+    pub bytes_per_sec: Option<f64>,
+    pub eta_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunMonitorDto {
+    pub run_id: String,
+    pub name: String,
+    pub status: String,
+    pub dry_run: bool,
+    /// RFC 3339.
+    pub started_at: Option<String>,
+    pub processed: u64,
+    pub total: Option<u64>,
+    pub records_per_sec: Option<f64>,
+    pub bytes_per_sec: Option<f64>,
+    pub eta_secs: Option<u64>,
+    pub streams: Vec<StreamMonitorDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonitorDto {
+    /// RFC 3339.
+    pub at: String,
+    pub memory_bytes: Option<u64>,
+    pub cpu_percent: Option<f32>,
+    pub runs: Vec<RunMonitorDto>,
+}

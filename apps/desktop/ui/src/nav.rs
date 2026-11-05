@@ -94,6 +94,7 @@ impl Section {
                 | Self::QueryStudio
                 | Self::Migrations
                 | Self::Backups
+                | Self::Monitor
                 | Self::Logs
                 | Self::Settings
         )

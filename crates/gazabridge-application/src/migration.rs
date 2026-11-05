@@ -321,6 +321,8 @@ pub struct MigrationService {
     active: Arc<Mutex<HashMap<RunId, Handle>>>,
     validations: Arc<Mutex<HashMap<RunId, ValidationReport>>>,
     backups: Option<BackupService>,
+    rates: Arc<crate::monitor::Rates>,
+    probe: Arc<crate::monitor::ProcessProbe>,
 }
 
 impl std::fmt::Debug for MigrationService {
@@ -455,6 +457,8 @@ impl MigrationService {
             active: Arc::default(),
             validations: Arc::default(),
             backups: None,
+            rates: Arc::default(),
+            probe: Arc::default(),
         }
     }
 
@@ -1606,6 +1610,34 @@ impl MigrationService {
         {
             self.run_validation(run, Level::Basic).await;
         }
+    }
+
+    /// Live figures for every running copy, and the app's memory and CPU.
+    /// Rates come from the samples successive calls take.
+    pub async fn monitor(&self) -> AppResult<crate::monitor::MonitorSnapshot> {
+        let ids: Vec<RunId> = self
+            .active
+            .lock()
+            .map(|a| a.keys().copied().collect())
+            .unwrap_or_default();
+        let mut views = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(mut v) = self.view(id).await {
+                v.events.clear();
+                views.push(v);
+            }
+        }
+        views.sort_by_key(|v| v.created_at);
+        let probe = self.probe.clone();
+        let process = tokio::task::spawn_blocking(move || probe.sample())
+            .await
+            .ok()
+            .flatten();
+        Ok(crate::monitor::MonitorSnapshot {
+            at: Utc::now(),
+            process,
+            runs: self.rates.snapshot(views, std::time::Instant::now()),
+        })
     }
 
     /// Writes the run's report (never over an existing file).

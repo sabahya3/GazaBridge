@@ -643,5 +643,18 @@
   "mig.n_changes": "changes applied",
   "mig.n_deleted": "deleted",
   "mig.last_change": "last at",
-  "mig.stop_sync": "Stop sync"
+  "mig.stop_sync": "Stop sync",
+  "mon.intro": "Copies that are running now, refreshed every second. Rates cover the last 10 seconds.",
+  "mon.per_sec": "records/s",
+  "mon.eta": "Time left",
+  "mon.records": "Records",
+  "mon.rate": "Records per second",
+  "mon.throughput": "Data per second",
+  "mon.done": "Done",
+  "mon.app": "This app",
+  "mon.memory": "App memory",
+  "mon.cpu": "App CPU",
+  "mon.active": "Running copies",
+  "mon.empty": "Nothing is running. Start a copy on the Migrations page and follow it here.",
+  "conn.new_here": "New connection…"
 }

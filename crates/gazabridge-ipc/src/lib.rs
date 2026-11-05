@@ -68,6 +68,7 @@ pub mod commands {
     pub const MIGRATION_DRY_RUN: &str = "migration_dry_run";
     pub const MIGRATION_VALIDATE: &str = "migration_validate";
     pub const MIGRATION_REPORT: &str = "migration_report";
+    pub const MONITOR_SNAPSHOT: &str = "monitor_snapshot";
     pub const UNLOCK_CONNECTION: &str = "unlock_connection";
     pub const BACKUP_TOOLS: &str = "backup_tools";
     pub const BACKUP_LIST: &str = "backup_list";

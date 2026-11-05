@@ -6,6 +6,7 @@ mod explorer;
 mod home;
 mod logs;
 mod migrations;
+mod monitor;
 mod query_bar;
 mod query_studio;
 mod settings;
@@ -17,6 +18,7 @@ pub use explorer::ExplorerPage;
 pub use home::HomePage;
 pub use logs::LogsPage;
 pub use migrations::MigrationsPage;
+pub use monitor::MonitorPage;
 pub use query_studio::QueryStudioPage;
 pub use settings::SettingsPage;
 

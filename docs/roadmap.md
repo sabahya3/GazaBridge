@@ -216,7 +216,7 @@ types, deep nesting and missing vs null.
 | 6.4 | Retry classification with exponential backoff; quarantine (dead-letter) files | M |
 | 6.5 | Write modes orchestrated by the engine: Replace, Truncate-and-insert, Merge | M |
 | 6.6 | `gazabridge-jobs`: job runner, run lifecycle, events → monitor | M |
-| 6.7 | Monitor UI driven by engine events (no timers): throughput, ETA, queue pressure, latencies, memory/CPU | M |
+| 6.7 | Monitor UI driven by engine events (no timers): throughput, ETA, queue pressure, latencies, memory/CPU — **partial (2026-11-05)**: Monitor page shows every running copy with records/s and bytes/s over the last 10 s, time left per stream and per run, progress, rejected rows and retries, plus the app's memory and CPU (`gazabridge-application::monitor`, `monitor_snapshot` command). It reads a snapshot once a second while open (stops when left) rather than being pushed engine events; queue pressure and read/write latencies are not shown yet. Tested on a real rate-limited MongoDB copy | M |
 | 6.8 | Failure tests: network interruption, process kill and resume, duplicate keys, partial batches, disk full | M |
 | 6.9 | All 16 database directions tested end to end in CI — **partial (2026-11-05)**: tested end to end against real servers: MongoDB → MongoDB, MongoDB ⇄ PostgreSQL, MongoDB ⇄ MySQL, and table copies PostgreSQL ⇄ MySQL, PostgreSQL → PostgreSQL, MySQL → MySQL (deep validation, reruns, replace). SQLite directions are not offered | M |
 
@@ -320,4 +320,5 @@ recovery tests pass for each of them.
 2. MySQL/MariaDB (2.3–2.4) done 2026-11-05, with MongoDB ⇄ MySQL conversions and table copies between PostgreSQL and MySQL.
 3. MySQL backups/restores in the GazaBridge format done 2026-11-05.
 4. CSV import (4.2) and run reports (7.3) done 2026-11-05.
-5. Next: the Monitor page (6.7), SSH tunnels (2.7), Excel reading (4.4).
+5. Monitor page (6.7, without queue pressure/latencies) done 2026-11-05.
+6. Next: SSH tunnels (2.7), Excel reading (4.4).

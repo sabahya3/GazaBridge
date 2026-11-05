@@ -7,9 +7,10 @@ use gazabridge_application::{
 };
 use gazabridge_domain::ids::RunId;
 use gazabridge_ipc::{
-    CommandError, CopyItemDto, DifferenceDto, MigrationArgs, MigrationPlanDto, ObjectAddr,
-    PlanItemDto, ReportArgs, RunArgs, RunDto, RunEventDto, StreamDto, StreamValidationDto,
-    TablePreviewDto, TargetCheckDto, ValidateArgs, ValidationDto,
+    CommandError, CopyItemDto, DifferenceDto, MigrationArgs, MigrationPlanDto, MonitorDto,
+    ObjectAddr, PlanItemDto, ReportArgs, RunArgs, RunDto, RunEventDto, RunMonitorDto, StreamDto,
+    StreamMonitorDto, StreamValidationDto, TablePreviewDto, TargetCheckDto, ValidateArgs,
+    ValidationDto,
 };
 use gazabridge_mapping::doc_to_table::DocMode;
 use gazabridge_mapping::table_to_doc::TableMode;
@@ -330,6 +331,57 @@ pub async fn migration_validate(
         .migrations
         .validate(run_id(&args.run_id)?, level)
         .await
+        .map_err(|e| app_error(&state, e))
+}
+
+pub fn monitor_dto(m: gazabridge_application::monitor::MonitorSnapshot) -> MonitorDto {
+    MonitorDto {
+        at: m.at.to_rfc3339(),
+        memory_bytes: m.process.as_ref().map(|p| p.memory_bytes),
+        cpu_percent: m.process.as_ref().map(|p| p.cpu_percent),
+        runs: m
+            .runs
+            .into_iter()
+            .map(|r| RunMonitorDto {
+                run_id: r.run_id.to_string(),
+                name: r.name,
+                status: as_str(&r.status),
+                dry_run: r.dry_run,
+                started_at: r.started_at.map(|t| t.to_rfc3339()),
+                processed: r.processed,
+                total: r.total,
+                records_per_sec: r.records_per_sec,
+                bytes_per_sec: r.bytes_per_sec,
+                eta_secs: r.eta_secs,
+                streams: r
+                    .streams
+                    .into_iter()
+                    .map(|s| StreamMonitorDto {
+                        source: addr(&s.source),
+                        target: addr(&s.target),
+                        phase: as_str(&s.phase),
+                        processed: s.processed,
+                        total: s.total,
+                        failed: s.failed,
+                        retries: s.retries,
+                        bytes: s.bytes,
+                        records_per_sec: s.records_per_sec,
+                        bytes_per_sec: s.bytes_per_sec,
+                        eta_secs: s.eta_secs,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+#[tauri::command]
+pub async fn monitor_snapshot(state: State<'_, AppState>) -> Result<MonitorDto, CommandError> {
+    state
+        .migrations
+        .monitor()
+        .await
+        .map(monitor_dto)
         .map_err(|e| app_error(&state, e))
 }
 
