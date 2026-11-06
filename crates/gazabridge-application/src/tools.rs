@@ -50,10 +50,10 @@ impl ToolKind {
     pub fn install_hint(self) -> &'static str {
         match self {
             Self::MongoDump | Self::MongoRestore => {
-                "Install the MongoDB Database Tools (macOS: `brew install mongodb-database-tools`)."
+                "Install the MongoDB Database Tools (macOS: `brew install mongodb-database-tools`; Windows: the MSI from mongodb.com/try/download/database-tools; Linux: the `mongodb-database-tools` package)."
             }
             Self::PgDump | Self::PgRestore => {
-                "Install the PostgreSQL client tools (macOS: `brew install libpq`), matching or newer than the server version."
+                "Install the PostgreSQL client tools, matching or newer than the server version (macOS: `brew install libpq`; Windows: the PostgreSQL installer, \"Command Line Tools\" only; Linux: the `postgresql-client` package)."
             }
         }
     }
@@ -68,7 +68,7 @@ pub struct ToolInfo {
 }
 
 /// Where the tools usually live besides `PATH` (apps started from the Dock
-/// do not get the shell's `PATH`).
+/// or the Start menu do not get the shell's `PATH`).
 const EXTRA_DIRS: [&str; 6] = [
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -78,11 +78,47 @@ const EXTRA_DIRS: [&str; 6] = [
     "/usr/bin",
 ];
 
+/// Installers that put each version in its own folder: Windows
+/// (`Program Files\PostgreSQL\16\bin`, `Program Files\MongoDB\Tools\100\bin`)
+/// and Debian/Ubuntu (`/usr/lib/postgresql/16/bin`). Newest version first.
+fn versioned_dirs() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = vec![PathBuf::from("/usr/lib/postgresql")];
+    for var in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+        if let Some(pf) = std::env::var_os(var) {
+            let pf = PathBuf::from(pf);
+            roots.push(pf.join("PostgreSQL"));
+            roots.push(pf.join("MongoDB").join("Tools"));
+        }
+    }
+    roots.iter().flat_map(|r| versions_in(r)).collect()
+}
+
+/// `root/<version>/bin` for each version folder, newest first.
+fn versions_in(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut found: Vec<(Vec<u64>, PathBuf)> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let version: Vec<u64> = name
+                .split('.')
+                .map(|p| p.parse().ok())
+                .collect::<Option<_>>()?;
+            Some((version, e.path().join("bin")))
+        })
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
 fn find(program: &str) -> Option<PathBuf> {
+    let file = format!("{program}{}", std::env::consts::EXE_SUFFIX);
     let path = std::env::var_os("PATH").unwrap_or_default();
     std::env::split_paths(&path)
         .chain(EXTRA_DIRS.iter().map(PathBuf::from))
-        .map(|d| d.join(program))
+        .chain(versioned_dirs())
+        .map(|d| d.join(&file))
         .find(|p| p.is_file())
 }
 
@@ -577,6 +613,20 @@ mod tests {
     use zeroize::Zeroizing;
 
     use super::*;
+
+    #[test]
+    fn versioned_install_folders_are_searched_newest_first() {
+        let root = tempfile::tempdir().unwrap();
+        for v in ["9.6", "16", "13", "notes"] {
+            std::fs::create_dir_all(root.path().join(v).join("bin")).unwrap();
+        }
+        let found = versions_in(root.path());
+        assert_eq!(
+            found,
+            ["16", "13", "9.6"].map(|v| root.path().join(v).join("bin"))
+        );
+        assert!(versions_in(&root.path().join("missing")).is_empty());
+    }
 
     fn mongo(uri: Option<&str>) -> ConnectionProfile {
         ConnectionProfile::new(
