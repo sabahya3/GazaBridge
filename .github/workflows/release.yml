@@ -102,7 +102,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          # A normal release, so the README's releases/latest download links point to it.
+          make_latest: true
           generate_release_notes: true
           body: |
             > **Tested on macOS only.** The Windows and Linux files are built automatically but have not been tried on a real computer yet. Please open an issue if you try them.
