@@ -1,0 +1,116 @@
+# Builds GazaBridge for macOS, Windows and Linux, and publishes the files on a GitHub Release.
+# Runs when a version tag (v0.1.0, v0.2.0, …) is pushed, or by hand from the Actions tab
+# (then the files are kept as build artifacts and nothing is published).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAURI_CLI: "@tauri-apps/cli@2.9"
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-universal
+            os: macos-14
+            targets: wasm32-unknown-unknown,aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: windows-x86_64
+            os: windows-latest
+            targets: wasm32-unknown-unknown
+            args: --bundles nsis,msi
+          - name: linux-x86_64
+            # An older Ubuntu, so the build runs on older Linux versions too.
+            os: ubuntu-22.04
+            targets: wasm32-unknown-unknown
+            args: --bundles deb,appimage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: jetli/trunk-action@v0.5.0
+        with:
+          version: v0.21.14
+
+      - name: Linux libraries (WebKitGTK, Secret Service, AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libdbus-1-dev patchelf libfuse2 pkg-config
+
+      - name: Build
+        shell: bash
+        working-directory: apps/desktop/src-tauri
+        run: npx --yes "$TAURI_CLI" build ${{ matrix.args }}
+
+      - name: Collect the files
+        shell: bash
+        run: |
+          mkdir -p dist
+          one() { find target -path "*/release/bundle/*" -name "$1" | head -n 1; }
+          case "${{ matrix.name }}" in
+            macos-universal)
+              cp "$(one '*.dmg')" dist/GazaBridge-macos-universal.dmg
+              app="$(find target -path '*/release/bundle/macos/*' -name '*.app' -maxdepth 6 | head -n 1)"
+              ditto -c -k --keepParent "$app" dist/GazaBridge-macos-universal.zip
+              ;;
+            windows-x86_64)
+              cp "$(one '*-setup.exe')" dist/GazaBridge-Setup-windows-x86_64.exe
+              cp "$(one '*.msi')" dist/GazaBridge-windows-x86_64.msi
+              ;;
+            linux-x86_64)
+              cp "$(one '*.AppImage')" dist/GazaBridge-linux-x86_64.AppImage
+              cp "$(one '*.deb')" dist/GazaBridge-linux-x86_64.deb
+              ;;
+          esac
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          generate_release_notes: true
+          body: |
+            > **Tested on macOS only.** The Windows and Linux files are built automatically but have not been tried on a real computer yet. Please open an issue if you try them.
+
+            ## Download
+
+            | System | File |
+            |---|---|
+            | macOS 11+ (Apple Silicon and Intel) | `GazaBridge-macos-universal.dmg`: open it, drag GazaBridge to Applications, then right-click → **Open** the first time (also as a `.zip`) |
+            | Windows 10 / 11 | `GazaBridge-Setup-windows-x86_64.exe`: the installer (also as an `.msi`) |
+            | Linux (x86_64) | `GazaBridge-linux-x86_64.AppImage`: `chmod +x` it and run it (also as a `.deb`); needs WebKitGTK 4.1 |

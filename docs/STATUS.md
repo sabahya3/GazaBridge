@@ -115,7 +115,7 @@ model.
 
 | Area | Gap |
 |---|---|
-| Platforms | The code is written for macOS, Windows and Linux (Tauri paths for data and logs, the OS secret store on each, Ctrl or ⌘ shortcuts, `pg_dump`/`mongodump` found with `.exe` and in versioned install folders under Program Files and `/usr/lib/postgresql`), but only macOS has been built and run: Windows and Linux have never been compiled, since CI has never run (no remote). Known Windows gaps: SSH agent sign-in (password and key files work); the private file holding a tool's password relies on the user's temp folder permissions instead of `0600` |
+| Platforms | The code is written for macOS, Windows and Linux (Tauri paths for data and logs, the OS secret store on each, Ctrl or ⌘ shortcuts, `pg_dump`/`mongodump` found with `.exe` and in versioned install folders under Program Files and `/usr/lib/postgresql`), but only macOS has been built, run and tested by hand. CI (`.github/workflows/ci.yml`) builds and tests on Linux and Windows too, and `release.yml` builds installers for all three, but no one has run those on a real Windows or Linux computer. Known Windows gaps: SSH agent sign-in (password and key files work); the private file holding a tool's password relies on the user's temp folder permissions instead of `0600` |
 | PostgreSQL native tools | `pg_dump`/`pg_restore` are **not installed** on the build Mac; their command building and password file are unit-tested only. `pg_restore` cannot rename schemas or keep existing rows |
 | Sync | PostgreSQL logical replication not implemented (polling instead); polling does not see deletes; embedded child tables are not kept in sync; time series resumed batches may repeat (no unique `_id`) |
 | Conversions | Tables made by the flatten and normalize modes come back in their original shape only when their saved mapping is there (copies made before 2026-11-06 come back flat, as they are in SQL); after a rebuild key order follows the mapping, and a NULL becomes `null` for fields every sampled document had and is left out otherwise; JSONB does not keep key order; missing vs null both become NULL in typed columns; embedding is one level; MySQL unconstrained decimals become `decimal(65,30)`; MySQL `ON DUPLICATE KEY` reacts to any unique key; table copies of JSON columns into MySQL may round 16–17-digit doubles (warned in the plan); SQLite is not offered as a copy source or target |
@@ -125,7 +125,7 @@ model.
 | Validation | Key and deep checks read both sides fully (no sampling for huge objects); target-only extras are reported from counts |
 | Files | Excel **reading**, CSV in encodings other than UTF-8, Parquet/Arrow, zstd/ZIP, split output, fuzzing (roadmap 4.2–4.9) |
 | UI | Data grid is paged, not virtualized; Query Studio editor is plain text (no highlighting/autocomplete, question 4); no Schema Studio, Transformations or Schedules pages (still "Soon" in the menu); no UI smoke tests (3.6) |
-| Docs | `requirements-traceability.md` and `connector-guide.md` were not refreshed during the priority track — verify before relying on them |
+| Docs | `connector-guide.md` was not refreshed during the priority track — verify before relying on it |
 | macOS app | Signed for local use only; not notarized; no updater |
 
 ## 5. Not started
