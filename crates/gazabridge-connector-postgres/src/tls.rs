@@ -21,6 +21,7 @@ use gazabridge_plugin_sdk::{ConnectorError, ConnectorResult, ErrorKind};
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+use rustls::pki_types::pem::{self, PemObject};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{
     CertificateError, ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
@@ -38,7 +39,7 @@ fn provider() -> Arc<CryptoProvider> {
 fn load_certs(path: &Path) -> ConnectorResult<Vec<CertificateDer<'static>>> {
     let file = File::open(path)
         .map_err(|e| tls_error(format!("cannot open certificate {}: {e}", path.display())))?;
-    let certs = rustls_pemfile::certs(&mut BufReader::new(file))
+    let certs = CertificateDer::pem_reader_iter(BufReader::new(file))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| tls_error(format!("invalid PEM in {}: {e}", path.display())))?;
     if certs.is_empty() {
@@ -58,9 +59,12 @@ fn load_key(path: &Path) -> ConnectorResult<PrivateKeyDer<'static>> {
             "encrypted client keys are not supported yet; provide an unencrypted PKCS#8 or PKCS#1 key with restrictive file permissions",
         ));
     }
-    rustls_pemfile::private_key(&mut BufReader::new(text.as_bytes()))
-        .map_err(|e| tls_error(format!("invalid key PEM: {e}")))?
-        .ok_or_else(|| tls_error(format!("no private key found in {}", path.display())))
+    PrivateKeyDer::from_pem_slice(text.as_bytes()).map_err(|e| match e {
+        pem::Error::NoItemsFound => {
+            tls_error(format!("no private key found in {}", path.display()))
+        }
+        e => tls_error(format!("invalid key PEM: {e}")),
+    })
 }
 
 fn roots(tls: &TlsSettings) -> ConnectorResult<RootCertStore> {

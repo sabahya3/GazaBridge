@@ -7,7 +7,10 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
-  { id = "RUSTSEC-2023-0071", reason = "rsa is only a lockfile entry of sqlx-mysql via sqlx-macros and is not compiled; see .cargo/audit.toml" },
+  # Unmaintained, but no known vulnerability, and no maintained replacement upstream yet.
+  { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar: only used by testcontainers in tests, never shipped" },
+  { id = "RUSTSEC-2024-0436", reason = "paste: build-time macro pulled in by Leptos" },
+  { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: build-time macro pulled in by GTK (Tauri on Linux)" },
 ]
 
 [licenses]
@@ -35,6 +38,8 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Workspace crates refer to each other by path; they are never published.
+allow-wildcard-paths = true
 # OpenSSL is avoided in favour of rustls/native platform TLS.
 deny = [
   { name = "openssl-sys", reason = "use rustls or the platform TLS stack" },
