@@ -33,7 +33,19 @@ pub fn explain_selection(raw: &str) -> String {
         .nth(1)
         .and_then(|rest| rest.split([',', ' ']).next())
         .unwrap_or("the server");
-    let hint = if lower.contains("tls handshake")
+    let hint = if lower.contains("fatal alert: internalerror") {
+        // Atlas ends the TLS handshake this way for addresses outside the
+        // project's IP access list (the driver then labels it "overloaded").
+        if address.contains(".mongodb.net") {
+            format!(
+                "{address} closed the encrypted connection before it started. On MongoDB Atlas this usually means this computer's IP address is not in the project's IP Access List: add it in Atlas under Security → Network Access (your IP can change with your network or VPN), and check that the cluster is not paused."
+            )
+        } else {
+            format!(
+                "{address} closed the encrypted connection before it started (TLS alert \"internal error\"). The server may not allow connections from this address, or its TLS setup is broken."
+            )
+        }
+    } else if lower.contains("tls handshake")
         || lower.contains("invalidcontenttype")
         || lower.contains("corrupt message")
         || (lower.contains("tls") && lower.contains("eof"))
@@ -127,6 +139,18 @@ mod tests {
         assert!(
             explain_selection("Address: h:1, Error: Connection refused (os error 61)")
                 .starts_with("Nothing is accepting connections at h:1")
+        );
+        let atlas = "Server selection timeout: No available servers. Topology: { Type: ReplicaSetNoPrimary, Servers: [ { Address: ac-x-shard-00-01.abc.mongodb.net:27017, Type: Unknown, Error: Kind: I/O error: received fatal alert: InternalError, labels: {\"SystemOverloadedError\"} } ] }";
+        let msg = explain_selection(atlas);
+        assert!(
+            msg.starts_with(
+                "ac-x-shard-00-01.abc.mongodb.net:27017 closed the encrypted connection"
+            ) && msg.contains("IP Access List"),
+            "{msg}"
+        );
+        assert!(
+            explain_selection("Address: h:1, Error: received fatal alert: InternalError")
+                .contains("TLS alert")
         );
         assert!(
             explain_selection("something else")

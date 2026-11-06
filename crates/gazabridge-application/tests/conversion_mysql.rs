@@ -728,3 +728,153 @@ async fn mysql_tables_made_from_documents_come_back_as_the_original_documents() 
         "in `_index` order"
     );
 }
+
+/// `_id` values that are not ObjectIds: text becomes a `varchar` key (MySQL
+/// refuses TEXT keys), numbers stay numbers, and several types are refused
+/// by the plan with the reason.
+#[tokio::test]
+#[ignore = "needs Docker; run with cargo test -- --ignored"]
+async fn collections_keyed_by_text_or_numbers_become_mysql_tables() {
+    let (rs, my) = tokio::join!(common::mongo::start("8.0"), async {
+        Mysql::default()
+            .with_tag("8.4")
+            .start()
+            .await
+            .expect("mysql")
+    });
+    let mongo = mongodb::Client::with_uri_str(format!(
+        "mongodb://{}:{}/?directConnection=true",
+        rs.host, rs.port
+    ))
+    .await
+    .unwrap();
+    let app = mongo.database("app");
+    let counters: Vec<Document> = (0..20)
+        .map(|i| doc! { "_id": format!("form-{i}"), "seq": i, "items": [ { "n": i } ] })
+        .collect();
+    app.collection::<Document>("counters")
+        .insert_many(counters.clone())
+        .await
+        .unwrap();
+    app.collection::<Document>("numbered")
+        .insert_many((0..5).map(|i| doc! { "_id": i, "v": "x" }))
+        .await
+        .unwrap();
+    app.collection::<Document>("mixed")
+        .insert_many([doc! { "_id": 1, "v": 1 }, doc! { "_id": "one", "v": 2 }])
+        .await
+        .unwrap();
+
+    let e = env().await;
+    let m = &e.migrations;
+    let mongo_id = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "mongo",
+                "mongodb.community",
+                ConnectionSettings::MongoDb(MongoSettings {
+                    uri: None,
+                    hosts: vec![HostPort {
+                        host: rs.host.clone(),
+                        port: rs.port,
+                    }],
+                    replica_set: None,
+                    auth_source: None,
+                    username: None,
+                    password: SecretRef::None,
+                    default_database: None,
+                    tls: false,
+                    read_preference: ReadPreference::Primary,
+                    direct_connection: true,
+                    server_selection_timeout_ms: 10_000,
+                    connect_timeout_ms: 10_000,
+                }),
+            ),
+            PasswordInput::None,
+        )
+        .await
+        .unwrap()
+        .id;
+    let my_id = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "mysql",
+                "mysql.mysql",
+                ConnectionSettings::MySql(MySqlSettings {
+                    host: my.get_host().await.unwrap().to_string(),
+                    port: my.get_host_port_ipv4(3306).await.unwrap(),
+                    database: Some("test".into()),
+                    username: "root".into(),
+                    password: SecretRef::None,
+                    tls_mode: MySqlTlsMode::Disabled,
+                    charset: "utf8mb4".into(),
+                    connect_timeout_secs: 20,
+                    query_timeout_ms: 0,
+                    pool_size: 4,
+                }),
+            ),
+            PasswordInput::None,
+        )
+        .await
+        .unwrap()
+        .id;
+
+    let item = |name: &str| CopyItem {
+        source: ObjectRef::collection("app", name),
+        target: shop(name),
+    };
+    let mut mixed = request(mongo_id, my_id, vec![item("mixed")]);
+    mixed.doc_mode = DocMode::Normalize;
+    let plan = m.plan(&mixed).await.unwrap();
+    assert!(
+        plan.blockers.iter().any(|b| b.contains("primary key")),
+        "{:?}",
+        plan.blockers
+    );
+
+    let mut req = request(mongo_id, my_id, vec![item("counters"), item("numbered")]);
+    req.doc_mode = DocMode::Normalize;
+    let plan = m.plan(&req).await.unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert_eq!(plan.items[0].tables[0].types[0], "varchar(764)");
+    assert!(
+        plan.items[0]
+            .warnings
+            .iter()
+            .any(|w| w.contains("varchar(764)")),
+        "{:?}",
+        plan.items[0].warnings
+    );
+    let run = m.start(req, false).await.unwrap();
+    let v = finish(m, run).await;
+    assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+    m.validate(run, Level::Deep).await.unwrap();
+    assert_eq!(validated(m, run).await.passed, Some(true));
+
+    // And back, as they were.
+    let back = request(
+        my_id,
+        mongo_id,
+        vec![CopyItem {
+            source: shop("counters"),
+            target: ObjectRef::collection("back", "counters"),
+        }],
+    );
+    let v = finish(m, m.start(back, false).await.unwrap()).await;
+    assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+    let docs = all(&mongo, "back", "counters").await;
+    let mut want: Vec<Bson> = counters
+        .iter()
+        .map(|d| sorted(&Bson::Document(d.clone())))
+        .collect();
+    let mut got: Vec<Bson> = docs
+        .iter()
+        .map(|d| sorted(&Bson::Document(d.clone())))
+        .collect();
+    let key = |b: &Bson| b.as_document().unwrap().get_str("_id").unwrap().to_owned();
+    want.sort_by_key(key);
+    got.sort_by_key(key);
+    assert_eq!(got, want);
+}

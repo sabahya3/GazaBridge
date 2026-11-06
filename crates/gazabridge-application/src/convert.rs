@@ -613,6 +613,10 @@ pub async fn plan_doc_to_table(
             Vec::new()
         };
         let (mapping, indexes) = if target.manifest().family == EngineFamily::MySql {
+            let mut mapping = mapping;
+            if let Err(e) = fit_mysql_key(&mut mapping, &mut p.warnings) {
+                out.blockers.push(format!("{}: {e}", item.target));
+            }
             fit_mysql_indexes(mapping, indexes, &mut p.warnings)
         } else {
             (mapping, indexes)
@@ -689,6 +693,54 @@ pub async fn plan_doc_to_table(
 /// and other key columns take up to 16 bytes each.
 const MYSQL_KEY_BYTES: u64 = 3_072;
 
+/// MySQL cannot use TEXT, BLOB or JSON columns as a primary key. A text or
+/// binary `_id` becomes `varchar(n)` / `varbinary(n)` within the key limit
+/// (child tables key on `_parent_id` plus a 16-byte `_index`, and their
+/// `_parent_id` follows); an `_id` of several types cannot be a MySQL key.
+fn fit_mysql_key(mapping: &mut DocMapping, warnings: &mut Vec<String>) -> Result<(), String> {
+    let budget = MYSQL_KEY_BYTES - 16;
+    let id = mapping.tables[0].columns[0].canonical_type.clone();
+    let fitted = match id {
+        CanonicalType::String { max_chars: None } => CanonicalType::String {
+            max_chars: Some(budget / 4),
+        },
+        CanonicalType::String { max_chars: Some(n) } if n > budget / 4 => CanonicalType::String {
+            max_chars: Some(budget / 4),
+        },
+        CanonicalType::Binary { max_bytes: None } => CanonicalType::Binary {
+            max_bytes: Some(budget),
+        },
+        CanonicalType::Json
+        | CanonicalType::Object
+        | CanonicalType::Array(_)
+        | CanonicalType::Mixed(_) => {
+            return Err(
+                "`_id` values have several types (or are objects or arrays), and MySQL cannot use a JSON column as the primary key. Copy this collection to PostgreSQL, or give its documents `_id` values of one type".into(),
+            );
+        }
+        _ => return Ok(()),
+    };
+    let shown = match &fitted {
+        CanonicalType::String { max_chars: Some(n) } => format!("varchar({n})"),
+        CanonicalType::Binary { max_bytes: Some(n) } => format!("varbinary({n})"),
+        _ => String::new(),
+    };
+    warnings.push(format!(
+        "`_id` is the primary key, so it becomes {shown} in MySQL; longer values are rejected"
+    ));
+    for (i, t) in mapping.tables.iter_mut().enumerate() {
+        let key = if i == 0 {
+            doc_to_table::ID
+        } else {
+            doc_to_table::PARENT
+        };
+        if let Some(c) = t.columns.iter_mut().find(|c| c.name == key) {
+            c.canonical_type = fitted.clone();
+        }
+    }
+    Ok(())
+}
+
 /// MySQL cannot index TEXT or JSON columns without a prefix length (and a
 /// prefix would change what a unique index means). Indexed text columns
 /// become `varchar(n)`, with the key's byte budget shared between an
@@ -747,7 +799,6 @@ fn fit_mysql_indexes(
     (mapping, kept)
 }
 
-/// Plans tables → collections, embedding child tables when asked.
 /// Saved mappings (see [`shape`]) for the selected tables, by item index.
 async fn saved_shapes(source: &dyn Connection, items: &[CopyItem]) -> BTreeMap<usize, DocMapping> {
     let mut rows: BTreeMap<String, Vec<Record>> = BTreeMap::new();
@@ -854,6 +905,7 @@ async fn shape_mapping(
     ))
 }
 
+/// Plans tables → collections, embedding child tables when asked.
 pub async fn plan_table_to_doc(
     req: &MigrationRequest,
     source_conn: &Arc<dyn Connection>,
