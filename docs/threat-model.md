@@ -77,6 +77,7 @@ residual risk.
 | Threat | Mitigation | Status |
 |---|---|---|
 | Accidental writes through a "read-only" connection | Read-only manifests strip mutating capabilities; connectors refuse writes; contract suite verifies; session-level read-only where the engine supports it | M (manifest + contract), P (per connector) |
+| GazaBridge writing to a target beyond what the user asked | Copies write only the objects the plan lists; the one extra object, the `_gazabridge_shapes` table (the mapping of flatten/normalize copies, no data values), is listed in the plan's statements and created only by a copy the user starts | M |
 | Destructive jobs run without review | Dry Run mandatory for new destructive/cross-engine jobs; edits reset the Dry Run; confirmation dialogs | M (state), P (Dry Run, M7) |
 | Custom transformation expressions escaping the sandbox | Expression language without filesystem/network access; deterministic evaluation | P (M5) |
 | Malicious third-party connector | Plugins are compiled Rust with full process rights; only install trusted connectors; API version checks | D |

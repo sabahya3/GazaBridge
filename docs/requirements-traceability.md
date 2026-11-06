@@ -7,7 +7,7 @@ Legend: **Done** — implemented and tested; **Partial** — foundation in
 place, more work scheduled; **Not started**. "M*n*" is the milestone that
 completes the item (see [backlog.md](backlog.md)).
 
-_Last updated: Milestone 2 (in progress), 2026-10-24._
+_Last updated: Milestone 2 (in progress), 2026-11-06. [STATUS.md](STATUS.md) has the detail for each item._
 
 | § | Requirement | Status | Milestone | Evidence / notes |
 |---|---|---|---|---|
@@ -17,33 +17,33 @@ _Last updated: Milestone 2 (in progress), 2026-10-24._
 | 3 | 20 product modules | Partial | M2–M10 | Settings, Logs (viewer), connector catalogue, SDK done; remaining modules not started. |
 | 4 | Supported databases + compatibility profiles | Partial | M2 | 18 profiles in `crates/gazabridge-connectors/profiles.toml` with all required fields; detection and assessment implemented and tested. **SQLite connector implemented (Beta, contract evidence for 3.46). PostgreSQL connector implemented; contract suite passed on PostgreSQL 13–17 (Beta). Hosted and derivative PostgreSQL profiles stay Experimental until tested. MongoDB connector implemented; contract suite passed on MongoDB 6.0–8.0 (Beta). MySQL connector drafted, paused.** |
 | 4 | Status vocabulary; no untested Production Ready | Done | — | `CompatibilityStatus`; catalogue validation tests reject `production_ready` without evidence. |
-| 5 | File formats | Not started | M4 | |
-| 6 | Workspace architecture | Partial | M2–M10 | 10 crates; remaining crates created per milestone (ADR 0001). |
+| 5 | File formats | Partial | M4 | JSON, JSONL, BSON, CSV (read and write), Excel (write only), gzip, in `gazabridge-files`. Reading Excel is not done. |
+| 6 | Workspace architecture | Partial | M2–M10 | 19 crates (see [architecture.md](architecture.md)); the rest are created per milestone (ADR 0001). |
 | 7 | Connector SDK | Done (API) | M2 (impls) | `gazabridge-plugin-sdk`: capabilities, manifests, versioning, read/write/DDL/query/explain/CDC/transactions; 25-case contract suite in `gazabridge-testkit`, passed by SQLite. |
 | 8 | Canonical data model, loss classes, no silent loss | Done | — | `gazabridge-domain` value/types/conversion; 49 unit + property tests. |
 | 9 | Connection management | Partial | M2 | Profile model for all four engines with every listed setting; folders, tags, colours, favourites, search, recent, health storage, duplicate, connection-string parsing. UI create/edit/test and connectors pending. |
 | 10 | Secret management | Partial | M2 | Keychain/session/env stores, resolver, redaction, zeroization, schema-level plaintext rejection, secret cleanup index. Credential replacement UI pending. |
-| 11 | Database Explorer & Data Viewer | Not started | M3 | Bounded `PageRequest` API exists. |
-| 12 | Data Editor | Partial (API) | M3 | `UpdateRequest`/`DeleteRequest` with restrictive filters and optimistic concurrency; contract suite checks guards. |
-| 13 | Query Studio | Partial (storage) | M3 | Saved queries and history repositories. |
+| 11 | Database Explorer & Data Viewer | Done | — | Tree with counts; table, JSON and tree views; query bar (builder and mongosh text) and aggregations for MongoDB, PostgreSQL, MySQL/MariaDB (`pages/explorer.rs`). |
+| 12 | Data Editor | Done | — | Edit with preview and audit, restrictive filters, optimistic concurrency; contract suite checks the guards. |
+| 13 | Query Studio | Done | — | MongoDB and SQL: history, saved queries, parameters, cancel, explain (`pages/query_studio.rs`, `QueryService`). |
 | 14 | Schema Studio | Not started | M3 | |
 | 15 | MongoDB schema inference | Done | — | Sampled/random/full-scan inference with presence %, type and array-item distributions, mixed and conflicting paths, max depth; snapshots and drift detection (`SchemaService`). |
-| 16 | Schema mapping | Not started | M5 | Versioned `mappings` table exists. |
+| 16 | Schema mapping | Partial | M5 | Mappings planned automatically and shown as a preview (tables, columns, types, sample rows or documents), stored with each run; saved with flatten/normalize tables in `_gazabridge_shapes` to rebuild documents. Manual mapping editing (rename, exclude, derived fields) is not done. |
 | 17 | Transformation engine | Not started | M5 | Versioned `transformations` table exists. |
-| 18–19 | Document ⇄ relational conversion | Not started | M5 | |
-| 20 | Migration engine | Partial (foundations) | M6 | Write modes, checkpoints with fingerprints, runs, events, error classification for retry/quarantine. |
-| 21–22 | File import/export | Not started | M4 | |
-| 23 | Dry Run | Partial | M7 | `plan_ddl` contract is side-effect free (contract-tested); job edits invalidate Dry Run (tested). |
-| 24 | Validation engine | Not started | M7 | |
+| 18–19 | Document ⇄ relational conversion | Done | — | MongoDB ⇄ PostgreSQL and MongoDB ⇄ MySQL/MariaDB: JSONB, flatten, normalize, hybrid; reference and embed; ObjectId identity; tables made by flatten/normalize come back as the original documents (`crates/gazabridge-mapping`, `convert.rs`, `tests/conversion*.rs`). |
+| 20 | Migration engine | Done | — | Bounded pipeline, checkpoints, pause/resume/cancel, retries, quarantine; whole-database MongoDB copies; table copies between PostgreSQL and MySQL (`crates/gazabridge-migration`, `MigrationService`). |
+| 21–22 | File import/export | Partial | M4 | Export to JSON/JSONL/BSON/CSV/Excel following the query; import from JSON/JSONL/BSON/CSV with skip or quarantine. Excel import is not done. |
+| 23 | Dry Run | Done | — | Whole read → convert path with zero writes, proven by tests. |
+| 24 | Validation engine | Done | — | Counts, keys and deep checksums with named differences (`migration::validate`). |
 | 25 | Job management and states | Partial | M6 | All 13 states with validated transitions (domain + storage compare-and-set); clone, archive, run history, checkpoints survive restart (tested). |
-| 26 | Incremental sync and CDC | Partial (API) | M8 | `ChangeFeedRequest`/`ChangeEvent`/`SyncMethod` labels. |
+| 26 | Incremental sync and CDC | Partial | M8 | MongoDB change streams with resume tokens, or timestamp polling for any source; Sync Jobs page. No MySQL binlog or PostgreSQL logical decoding. |
 | 27 | Bidirectional sync | Not started | M9 | |
 | 28 | Scheduler | Partial (storage) | M8 | `schedules` table. |
-| 29 | Monitoring | Not started | M6 | |
-| 30 | Backup and recovery | Partial | M7 | Metadata backup (`VACUUM INTO`) and integrity check; recovery documented. |
+| 29 | Monitoring | Done | — | Monitor page pushed by engine events: rates, time left, queue fill, per-batch timings, memory and CPU. |
+| 30 | Backup and recovery | Partial | M7 | Metadata backup and integrity check; database backups and restores in the GazaBridge format (MongoDB, PostgreSQL, MySQL), `mongodump`/`pg_dump`, backup before replace. `pg_dump` is not tested on a real install. |
 | 31 | Local metadata storage | Done | — | `gazabridge-storage`, migrations, WAL, FKs, busy timeout, corruption detection, backup; 15 tests. |
 | 32 | Logging and observability | Partial | M6/M10 | Structured JSON logs, size rotation, retention, redaction, correlation fields, log viewer. Metrics and diagnostic bundle pending. |
-| 33 | Reporting | Not started | M7 | `reports` table. |
+| 33 | Reporting | Done | — | Run reports in JSON, HTML, Markdown, CSV; Reports page (`report.rs`, `pages/reports.rs`). |
 | 34 | Security | Partial | M10 | See [threat-model.md](threat-model.md); dependency/license audits and secret scanning in CI. |
 | 35 | User interface | Partial | M3+ | Shell with all 15 nav items (unbuilt ones disabled), command palette (Ctrl/⌘+K), light/dark/high-contrast, English + Arabic RTL with catalogue sync test, keyboard navigation, skip link, ARIA labels, responsive layout. |
 | 36 | Connector catalogue | Partial | M2 | Catalogue UI lists profiles by family with status, tested versions, limitations, auth, CDC availability. Connection states defined; external-tool detection pending. |
