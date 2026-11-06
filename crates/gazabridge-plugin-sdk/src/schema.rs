@@ -198,6 +198,17 @@ pub struct InferredField {
     /// For arrays: count per element kind.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub array_item_type_counts: IndexMap<ValueKind, u64>,
+    /// Of the integer values, how many were 32-bit (sources that tell them
+    /// apart, like BSON); `Int` kinds otherwise count 64-bit ones.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub int32_count: u64,
+    /// The same for array elements.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub array_item_int32_count: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl InferredField {

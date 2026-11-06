@@ -10,8 +10,11 @@
 //!   hybrid of typed columns plus the whole document.
 //! * [`table_to_doc`]: PostgreSQL tables → MongoDB collections, one document
 //!   per row with references kept, or child rows embedded in their parent.
+//! * [`shape`]: tables made by `doc_to_table` → the documents they came
+//!   from, using the mapping saved next to them.
 
 pub mod doc_to_table;
+pub mod shape;
 pub mod table_to_doc;
 
 use gazabridge_bson::bson::Bson;

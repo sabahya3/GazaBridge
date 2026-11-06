@@ -168,6 +168,26 @@ pub async fn load(conn: &mut Conn, object: &ObjectRef) -> ConnectorResult<TableM
             ordinal: cell_u64(r, 11).unwrap_or(0) as u32,
         });
     }
+    // MariaDB's JSON is `longtext` with a `json_valid(col)` check. MySQL has
+    // a real JSON type, and no TABLE_NAME in this view: the query fails there.
+    if let Ok(checks) = rows(
+        conn,
+        "SELECT CHECK_CLAUSE FROM information_schema.CHECK_CONSTRAINTS
+         WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ?",
+        p(),
+    )
+    .await
+    {
+        let json: Vec<String> = checks
+            .iter()
+            .filter_map(|r| json_valid_column(&cell_str(r, 0)?))
+            .collect();
+        for c in &mut columns {
+            if c.canonical_type == CanonicalType::TEXT && json.contains(&c.name) {
+                c.canonical_type = CanonicalType::Json;
+            }
+        }
+    }
     let pk = rows(
         conn,
         "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE
@@ -183,6 +203,16 @@ pub async fn load(conn: &mut Conn, object: &ObjectRef) -> ConnectorResult<TableM
         estimated_rows: cell_u64(t, 1),
         comment: cell_str(t, 2).filter(|c| !c.is_empty()),
     })
+}
+
+/// The column of a `json_valid(`col`)` check clause.
+fn json_valid_column(clause: &str) -> Option<String> {
+    let lower = clause.trim().to_ascii_lowercase();
+    let inner = lower.strip_prefix("json_valid(")?.strip_suffix(')')?;
+    let start = "json_valid(".len();
+    let raw = clause.trim().get(start..start + inner.len())?.trim();
+    let name = raw.strip_prefix('`')?.strip_suffix('`')?;
+    Some(name.replace("``", "`"))
 }
 
 pub async fn indexes(conn: &mut Conn, db: &str, table: &str) -> ConnectorResult<Vec<IndexInfo>> {
@@ -302,7 +332,21 @@ pub async fn constraints(
 
 #[cfg(test)]
 mod tests {
-    use super::default_sql;
+    use super::{default_sql, json_valid_column};
+
+    #[test]
+    fn mariadb_json_checks_name_their_column() {
+        assert_eq!(
+            json_valid_column("json_valid(`doc`)").as_deref(),
+            Some("doc")
+        );
+        assert_eq!(
+            json_valid_column("JSON_VALID(`a``b`)").as_deref(),
+            Some("a`b")
+        );
+        assert_eq!(json_valid_column("`n` > 0"), None);
+        assert_eq!(json_valid_column("json_valid(`a`) and `b` > 0"), None);
+    }
 
     #[test]
     fn defaults_become_sql_expressions() {

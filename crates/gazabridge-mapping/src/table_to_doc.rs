@@ -70,7 +70,8 @@ pub struct Columns {
 }
 
 impl Columns {
-    fn of(schema: &ObjectSchema) -> Self {
+    /// How the columns of a live table read back.
+    pub fn of(schema: &ObjectSchema) -> Self {
         let mut c = Self::default();
         for col in &schema.columns {
             let native = col.native_type.to_lowercase();
@@ -93,7 +94,8 @@ impl Columns {
         c
     }
 
-    fn value(&self, column: &str, v: &Value) -> Value {
+    /// A column's value as a document value.
+    pub fn value(&self, column: &str, v: &Value) -> Value {
         match v {
             Value::String(s) if self.object_ids.contains(column) => match hex24(s.trim_end()) {
                 Some(b) => Value::ObjectId(b),
@@ -145,6 +147,11 @@ pub struct TableDocMapping {
     pub stored_document: Option<String>,
     pub embeds: Vec<EmbedMap>,
     pub warnings: Vec<String>,
+    /// For tables made by flattening or normalizing documents: the saved
+    /// mapping that turns rows back into those documents. `embeds` then
+    /// lists the mapping's child tables in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<crate::shape::Shape>,
 }
 
 /// Plans one table → collection. Fails for tables without a primary key:
@@ -202,6 +209,7 @@ pub fn plan(schema: &ObjectSchema, target: ObjectRef) -> Result<TableDocMapping,
         stored_document,
         embeds: Vec::new(),
         warnings,
+        shape: None,
     })
 }
 
@@ -313,6 +321,9 @@ pub fn document(m: &TableDocMapping, row: &Record, children: &[Vec<Record>]) -> 
             gazabridge_bson::bson::Bson::try_from(j.clone())
     {
         return gazabridge_bson::document_to_record(&d);
+    }
+    if let Some(shape) = &m.shape {
+        return crate::shape::rebuild(shape, row, children);
     }
     let mut doc = Record::with_capacity(row.fields.len() + 1);
     let id = match m.key.as_slice() {

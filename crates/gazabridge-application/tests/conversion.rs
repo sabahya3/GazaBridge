@@ -713,6 +713,11 @@ async fn array_items_with_repeated_or_missing_ids_survive_the_way_back() {
     let v = finish(m, m.start(to_pg, false).await.unwrap()).await;
     assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
 
+    // Tables made before shapes were saved come back flat: drop the saved
+    // shape to copy them back that way.
+    let pgc = e.svc.open(pg_id).await.unwrap();
+    sql(&pgc, "DROP TABLE _gazabridge_shapes").await;
+
     // Back, each table to its own collection, as the owner did.
     let back = request(
         pg_id,
@@ -783,4 +788,281 @@ async fn array_items_with_repeated_or_missing_ids_survive_the_way_back() {
         .insert_one(doc! { "title": "dup", "serial": "S-0" })
         .await;
     assert!(dup.is_err(), "the index is still unique");
+}
+
+/// A document with most of what MongoDB documents hold: 32- and 64-bit
+/// integers, nested objects, arrays of objects and of strings, a mixed
+/// array, a field of the wrong type and a field only some documents have.
+fn shaped(i: i32) -> Document {
+    let mut d = doc! {
+        "_id": ObjectId::new(),
+        "title": format!("عنصر {i} 🚀"),
+        "count": i,
+        "big": 5_000_000_000_i64 + i64::from(i),
+        "small_long": i64::from(i),
+        "price": 1.5 * f64::from(i),
+        "done": i % 2 == 0,
+        "note": Bson::Null,
+        "when": DateTime::from_millis(1_767_225_600_000 + i64::from(i) * 1_000),
+        "address": { "city": "Gaza", "geo": { "lat": 31.5, "lng": 34.25 } },
+        "tags": (0..i % 3).map(|t| Bson::String(format!("t{t}"))).collect::<Vec<_>>(),
+        "tours": (0..i % 4).map(|k| {
+            let mut t = doc! { "_id": ObjectId::new(), "title": format!("tour {i}.{k}"), "n": k };
+            if k == 1 {
+                t.insert("rare", "x");
+            }
+            Bson::Document(t)
+        }).collect::<Vec<_>>(),
+        "mixed": if i % 2 == 0 { vec![Bson::Int32(1), Bson::String("two".into())] } else { vec![] },
+        "scores": (0..i % 3).map(|k| Bson::Int32(k * 10)).collect::<Vec<_>>(),
+    };
+    if i == 3 {
+        d.insert("only_here", doc! { "deep": { "x": 1 } });
+    }
+    if i == 5 {
+        d.insert("count", "five");
+    }
+    d
+}
+
+/// Keys sorted at every level: SQL keeps no key order.
+fn sorted(b: &Bson) -> Bson {
+    match b {
+        Bson::Document(d) => {
+            let mut keys: Vec<&String> = d.keys().collect();
+            keys.sort();
+            Bson::Document(
+                keys.into_iter()
+                    .map(|k| (k.clone(), sorted(&d[k])))
+                    .collect(),
+            )
+        }
+        Bson::Array(a) => Bson::Array(a.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Collections normalized or flattened into tables come back as the same
+/// documents, rows added in SQL included, using the mapping saved with the
+/// tables.
+#[tokio::test]
+#[ignore = "needs Docker; run with cargo test -- --ignored"]
+async fn flattened_and_normalized_tables_come_back_as_the_original_documents() {
+    let (rs, pg) = tokio::join!(common::mongo::start("8.0"), async {
+        Postgres::default()
+            .with_tag("16-alpine")
+            .start()
+            .await
+            .expect("postgres")
+    });
+    let mongo = mongodb::Client::with_uri_str(format!(
+        "mongodb://{}:{}/?directConnection=true",
+        rs.host, rs.port
+    ))
+    .await
+    .unwrap();
+    let originals: Vec<Document> = (0..12).map(shaped).collect();
+    mongo
+        .database("app")
+        .collection::<Document>("items")
+        .insert_many(originals.clone())
+        .await
+        .unwrap();
+
+    let e = env().await;
+    let m = &e.migrations;
+    let mongo_id = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "mongo",
+                "mongodb.community",
+                ConnectionSettings::MongoDb(MongoSettings {
+                    uri: None,
+                    hosts: vec![HostPort {
+                        host: rs.host.clone(),
+                        port: rs.port,
+                    }],
+                    replica_set: None,
+                    auth_source: None,
+                    username: None,
+                    password: SecretRef::None,
+                    default_database: None,
+                    tls: false,
+                    read_preference: ReadPreference::Primary,
+                    direct_connection: true,
+                    server_selection_timeout_ms: 10_000,
+                    connect_timeout_ms: 10_000,
+                }),
+            ),
+            PasswordInput::None,
+        )
+        .await
+        .unwrap()
+        .id;
+    let pg_id = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "pg",
+                "postgres.postgresql",
+                ConnectionSettings::Postgres(PostgresSettings {
+                    host: pg.get_host().await.unwrap().to_string(),
+                    port: pg.get_host_port_ipv4(5432).await.unwrap(),
+                    database: "postgres".into(),
+                    username: "postgres".into(),
+                    password: SecretRef::None,
+                    ssl_mode: PgSslMode::Disable,
+                    search_path: None,
+                    application_name: "GazaBridge".into(),
+                    connect_timeout_secs: 10,
+                    statement_timeout_ms: 0,
+                    pool_size: 2,
+                }),
+            ),
+            // The image's documented default password.
+            PasswordInput::SessionOnly(Zeroizing::new("postgres".into())),
+        )
+        .await
+        .unwrap()
+        .id;
+
+    for (mode, table) in [(DocMode::Normalize, "items"), (DocMode::Flatten, "flat")] {
+        let mut to_pg = request(
+            mongo_id,
+            pg_id,
+            vec![CopyItem {
+                source: ObjectRef::collection("app", "items"),
+                target: public(table),
+            }],
+        );
+        to_pg.doc_mode = mode;
+        let v = finish(m, m.start(to_pg, false).await.unwrap()).await;
+        assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+        assert!(
+            v.events
+                .iter()
+                .any(|ev| ev.message.contains("_gazabridge_shapes")),
+            "{:#?}",
+            v.events
+        );
+    }
+
+    // Rows written in SQL after the copy.
+    let pgc = e.svc.open(pg_id).await.unwrap();
+    let new_id = "aaaaaaaaaaaaaaaaaaaaaaaa";
+    let tour_id = "bbbbbbbbbbbbbbbbbbbbbbbb";
+    sql(&pgc, &format!("INSERT INTO items (_id, title, count, address_city) VALUES ('{new_id}', 'from sql', '7', 'Rafah')")).await;
+    sql(&pgc, &format!("INSERT INTO items_tours (_parent_id, _index, _id, title, n) VALUES ('{new_id}', 0, '{tour_id}', 'sql tour', 9)")).await;
+    sql(&pgc, &format!("INSERT INTO items_tags (_parent_id, _index, value) VALUES ('{new_id}', 1, 'second'), ('{new_id}', 0, 'first')")).await;
+    sql(&pgc, &format!("INSERT INTO flat (_id, title, tours) VALUES ('{new_id}', 'from sql', '[{{\"title\": \"j\", \"n\": 1}}]')")).await;
+
+    let back = request(
+        pg_id,
+        mongo_id,
+        vec![
+            CopyItem {
+                source: public("items"),
+                target: ObjectRef::collection("back", "items"),
+            },
+            CopyItem {
+                source: public("items_tags"),
+                target: ObjectRef::collection("back", "items_tags"),
+            },
+            CopyItem {
+                source: public("items_tours"),
+                target: ObjectRef::collection("back", "items_tours"),
+            },
+            // The child tables are read even when not selected.
+            CopyItem {
+                source: public("flat"),
+                target: ObjectRef::collection("back", "flat"),
+            },
+        ],
+    );
+    let plan = m.plan(&back).await.unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    for i in [0, 3] {
+        assert!(
+            plan.items[i]
+                .warnings
+                .iter()
+                .any(|w| w.contains("original shape")),
+            "{:?}",
+            plan.items[i].warnings
+        );
+    }
+    assert_eq!(plan.items[1].kind, "embedded");
+    assert_eq!(plan.items[2].kind, "embedded");
+    let run = m.start(back, false).await.unwrap();
+    let v = finish(m, run).await;
+    assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+    m.validate(run, Level::Deep).await.unwrap();
+    let report = validated(m, run).await;
+    assert_eq!(report.passed, Some(true), "{report:#?}");
+
+    let names = mongo
+        .database("back")
+        .list_collection_names()
+        .await
+        .unwrap();
+    assert!(
+        !names.iter().any(|n| n.starts_with("items_")),
+        "child tables are arrays again: {names:?}"
+    );
+    let new_oid = ObjectId::parse_str(new_id).unwrap();
+    for coll in ["items", "flat"] {
+        let docs = all(&mongo, "back", coll).await;
+        assert_eq!(docs.len(), originals.len() + 1, "{coll}");
+        for o in &originals {
+            let id = o.get_object_id("_id").unwrap();
+            let got = docs
+                .iter()
+                .find(|d| d.get_object_id("_id").ok() == Some(id))
+                .unwrap_or_else(|| panic!("{coll}: {id} is missing"));
+            assert_eq!(
+                sorted(&Bson::Document(got.clone())),
+                sorted(&Bson::Document(o.clone())),
+                "{coll}: {id} changed\noriginal: {o}\nback:     {got}"
+            );
+        }
+        let added = docs
+            .iter()
+            .find(|d| d.get_object_id("_id").ok() == Some(new_oid))
+            .unwrap();
+        assert_eq!(added.get_str("title").unwrap(), "from sql", "{added}");
+        assert!(!added.contains_key("_parent_id") && !added.contains_key("_index"));
+        let tours = added.get_array("tours").unwrap();
+        if coll == "items" {
+            assert_eq!(added.get_i32("count").unwrap(), 7, "{added}");
+            assert_eq!(
+                added
+                    .get_document("address")
+                    .unwrap()
+                    .get_str("city")
+                    .unwrap(),
+                "Rafah"
+            );
+            assert_eq!(
+                tours,
+                &vec![Bson::Document(doc! {
+                    "_id": ObjectId::parse_str(tour_id).unwrap(),
+                    "title": "sql tour",
+                    "n": 9,
+                })],
+                "{added}"
+            );
+            assert_eq!(
+                added.get_array("tags").unwrap(),
+                &vec![Bson::String("first".into()), Bson::String("second".into())],
+                "in `_index` order"
+            );
+        } else {
+            assert_eq!(
+                tours,
+                &vec![Bson::Document(doc! { "title": "j", "n": 1 })],
+                "{added}"
+            );
+        }
+    }
 }

@@ -11,6 +11,7 @@ use futures::StreamExt;
 use gazabridge_domain::connection::EngineFamily;
 use gazabridge_domain::{CanonicalType, Record, Value};
 use gazabridge_mapping::doc_to_table::{self, DocMapping, PlanOptions};
+use gazabridge_mapping::shape;
 use gazabridge_mapping::table_to_doc::{self, TableDocMapping, TableMode};
 use gazabridge_migration::{TargetSpec, Transform, Transformed};
 use gazabridge_plugin_sdk::ConnectorError;
@@ -98,6 +99,15 @@ pub enum ItemMapping {
 
 /// Whether the target needs `CREATE SCHEMA` (PostgreSQL, other than
 /// `public`) or `CREATE DATABASE` (MySQL namespaces have no schema level).
+/// `database.schema.name` of an object, for messages and saved shapes.
+fn object_label(o: &ObjectRef) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    parts.extend(o.namespace.database.as_deref());
+    parts.extend(o.namespace.schema.as_deref());
+    parts.push(&o.name);
+    parts.join(".")
+}
+
 fn needs_namespace(ns: &gazabridge_plugin_sdk::schema::NamespacePath) -> bool {
     match (&ns.schema, &ns.database) {
         (Some(s), _) => s != "public" && s != "main",
@@ -119,6 +129,17 @@ impl ItemMapping {
     }
 
     /// Target preparation: drop (when replacing) and create.
+    /// The row saving how flattened or normalized tables were made, for
+    /// [`shape::SHAPES_TABLE`], so a copy back rebuilds the documents.
+    pub fn shape_row(&self, item: &CopyItem) -> Option<Record> {
+        match self {
+            Self::DocToTable { mapping, .. } if shape::rebuildable(mapping) => {
+                shape::shape_row(mapping, &object_label(&item.source))
+            }
+            _ => None,
+        }
+    }
+
     pub fn prepare_ops(&self, item: &CopyItem, existing: ExistingData) -> Vec<SchemaOperation> {
         let replace = existing == ExistingData::Replace;
         match self {
@@ -161,6 +182,13 @@ impl ItemMapping {
                 for table in doc_to_table::table_definitions(mapping) {
                     ops.push(SchemaOperation::CreateTable {
                         table,
+                        if_not_exists: true,
+                    });
+                }
+                // Shared by every copy into this namespace: never dropped.
+                if shape::rebuildable(mapping) {
+                    ops.push(SchemaOperation::CreateTable {
+                        table: shape::shapes_table(&item.target.namespace),
                         if_not_exists: true,
                     });
                 }
@@ -720,6 +748,112 @@ fn fit_mysql_indexes(
 }
 
 /// Plans tables → collections, embedding child tables when asked.
+/// Saved mappings (see [`shape`]) for the selected tables, by item index.
+async fn saved_shapes(source: &dyn Connection, items: &[CopyItem]) -> BTreeMap<usize, DocMapping> {
+    let mut rows: BTreeMap<String, Vec<Record>> = BTreeMap::new();
+    let mut out = BTreeMap::new();
+    for (i, item) in items.iter().enumerate() {
+        if item.source.name == shape::SHAPES_TABLE {
+            continue;
+        }
+        let key = format!("{:?}", item.source.namespace);
+        if !rows.contains_key(&key) {
+            // Most databases have none: a missing table is no error.
+            let table = ObjectRef::table(item.source.namespace.clone(), shape::SHAPES_TABLE);
+            let saved = read_all(source, ReadRequest::new(table, 1_000))
+                .await
+                .unwrap_or_default();
+            rows.insert(key.clone(), saved);
+        }
+        if let Some(m) = rows[&key]
+            .iter()
+            .find_map(|r| shape::mapping_of(r, &item.source.name))
+        {
+            out.insert(i, m);
+        }
+    }
+    out
+}
+
+/// The shape for a root table and the embeds that read its child tables,
+/// checked against the live tables. Notes say what changed since.
+async fn shape_mapping(
+    source: &dyn Connection,
+    schema: &ObjectSchema,
+    m: &DocMapping,
+    mapping: &TableDocMapping,
+    options: &InspectOptions,
+) -> Result<(shape::Shape, Vec<table_to_doc::EmbedMap>, Vec<String>), String> {
+    if mapping.key != [doc_to_table::ID] {
+        return Err(format!(
+            "its primary key is no longer `{}`",
+            doc_to_table::ID
+        ));
+    }
+    let gone = |t: &doc_to_table::TableMap, s: &ObjectSchema| -> Vec<String> {
+        t.columns
+            .iter()
+            .filter(|c| !s.columns.iter().any(|l| l.name == c.name))
+            .map(|c| c.name.clone())
+            .collect()
+    };
+    let mut notes = Vec::new();
+    let missing = gone(&m.tables[0], schema);
+    if !missing.is_empty() {
+        notes.push(format!(
+            "columns dropped since the copy ({}) leave their fields out",
+            missing.join(", ")
+        ));
+    }
+    let mut columns = vec![mapping.columns.clone()];
+    let mut embeds = Vec::new();
+    for t in &m.tables[1..] {
+        let child = ObjectRef::table(schema.object.namespace.clone(), t.target.name.clone());
+        let live = source
+            .inspect(&child, options)
+            .await
+            .map_err(|_| format!("its child table `{}` is gone", t.target.name))?;
+        let missing = gone(t, &live);
+        if missing.iter().any(|c| c == doc_to_table::PARENT) {
+            return Err(format!(
+                "its child table `{}` no longer has `{}`",
+                t.target.name,
+                doc_to_table::PARENT
+            ));
+        }
+        if !missing.is_empty() {
+            notes.push(format!(
+                "columns dropped from `{}` since the copy ({}) leave their fields out",
+                t.target.name,
+                missing.join(", ")
+            ));
+        }
+        let cols = table_to_doc::Columns::of(&live);
+        let has_index = live.columns.iter().any(|c| c.name == doc_to_table::INDEX);
+        embeds.push(table_to_doc::EmbedMap {
+            child,
+            field: t.array.clone().unwrap_or_default(),
+            foreign_key: doc_to_table::PARENT.into(),
+            parent_key: doc_to_table::ID.into(),
+            order_by: if has_index {
+                vec![doc_to_table::INDEX.into()]
+            } else {
+                live.primary_key.clone()
+            },
+            columns: cols.clone(),
+        });
+        columns.push(cols);
+    }
+    Ok((
+        shape::Shape {
+            mapping: m.clone(),
+            columns,
+        },
+        embeds,
+        notes,
+    ))
+}
+
 pub async fn plan_table_to_doc(
     req: &MigrationRequest,
     source_conn: &Arc<dyn Connection>,
@@ -741,6 +875,20 @@ pub async fn plan_table_to_doc(
     let mut schemas: Vec<ObjectSchema> = Vec::with_capacity(req.items.len());
     for item in &req.items {
         schemas.push(source.inspect(&item.source, &options).await?);
+    }
+    // Tables made from documents by flattening or normalizing: their saved
+    // mappings, and which selected tables are their child tables.
+    let shaped = saved_shapes(source, &req.items).await;
+    let mut shape_child: BTreeMap<usize, (usize, String)> = BTreeMap::new();
+    for (root, m) in &shaped {
+        for t in &m.tables[1..] {
+            if let Some(j) = req.items.iter().position(|it| {
+                it.source.namespace == req.items[*root].source.namespace
+                    && it.source.name == t.target.name
+            }) {
+                shape_child.insert(j, (*root, t.array.clone().unwrap_or_default()));
+            }
+        }
     }
     // One level of embedding: a child goes into the first selected parent it
     // references, unless it is a parent itself.
@@ -767,6 +915,8 @@ pub async fn plan_table_to_doc(
             embedded_into.entry(c).or_insert((p, e));
         }
     }
+    // A saved shape decides where its own child tables go.
+    embedded_into.retain(|c, (p, _)| !shape_child.contains_key(c) && !shaped.contains_key(p));
     let mut existing = Existing::default();
     for (i, item) in req.items.iter().enumerate() {
         let schema = &schemas[i];
@@ -781,6 +931,25 @@ pub async fn plan_table_to_doc(
                 "`{}` is a view; copy its tables instead",
                 item.source
             ));
+        }
+        if item.source.name == shape::SHAPES_TABLE {
+            p.warnings.push(
+                "holds the saved mappings GazaBridge uses to rebuild documents; it is not needed in MongoDB"
+                    .into(),
+            );
+        }
+        if let Some((root, field)) = shape_child.get(&i) {
+            p.kind = "embedded".into();
+            p.embedded_into = Some(req.items[*root].target.clone());
+            p.warnings.push(format!(
+                "rebuilt as the `{field}` array of `{}` documents, as it was before",
+                req.items[*root].target
+            ));
+            out.items.push(p);
+            out.mappings.push(ItemMapping::Embedded {
+                into: req.items[*root].target.clone(),
+            });
+            continue;
         }
         if let Some((parent, _)) = embedded_into.get(&i) {
             p.kind = "embedded".into();
@@ -811,6 +980,22 @@ pub async fn plan_table_to_doc(
                     schemas[*c].object.name, e.field
                 ));
                 mapping.embeds.push(e.clone());
+            }
+        }
+        if let Some(m) = shaped.get(&i) {
+            match shape_mapping(source, schema, m, &mapping, &options).await {
+                Ok((shape, embeds, notes)) => {
+                    p.warnings.push(format!(
+                        "documents are rebuilt in their original shape, from the mapping saved when `{}` was made from MongoDB",
+                        item.source.name
+                    ));
+                    p.warnings.extend(notes);
+                    mapping.embeds = embeds;
+                    mapping.shape = Some(shape);
+                }
+                Err(why) => p.warnings.push(format!(
+                    "a mapping was saved when this table was made from MongoDB, but {why}; rows are copied as flat documents"
+                )),
             }
         }
         p.warnings.extend(mapping.warnings.iter().cloned());

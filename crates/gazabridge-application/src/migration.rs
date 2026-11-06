@@ -1372,6 +1372,44 @@ impl MigrationService {
                     .await;
                 return StreamEnd::Failed(m);
             }
+            if let Some(row) = mapping.shape_row(item) {
+                // Without it a copy back gives flat documents, not a failure.
+                let batch = gazabridge_plugin_sdk::write::WriteBatch {
+                    object: ObjectRef::table(
+                        item.target.namespace.clone(),
+                        gazabridge_mapping::shape::SHAPES_TABLE,
+                    ),
+                    mode: WriteMode::Upsert,
+                    records: vec![row],
+                    key_fields: vec![gazabridge_mapping::shape::SHAPE_TABLE_COLUMN.into()],
+                    atomic: false,
+                };
+                let saved = match target.write_batch(batch, CancellationToken::new()).await {
+                    Ok(o) if o.failures.is_empty() => Ok(()),
+                    Ok(o) => Err(o.failures[0].message.clone()),
+                    Err(e) => Err(e.to_string()),
+                };
+                let (level, code, m) = match saved {
+                    Ok(()) => (
+                        EventLevel::Info,
+                        "shape_saved",
+                        format!(
+                            "Saved how {} was split into tables (in {}), so copying them back to MongoDB rebuilds the documents",
+                            item.source.name,
+                            gazabridge_mapping::shape::SHAPES_TABLE
+                        ),
+                    ),
+                    Err(e) => (
+                        EventLevel::Warning,
+                        "shape_not_saved",
+                        format!(
+                            "Could not save how {} was split into tables ({e}); copying them back will give flat documents",
+                            item.source.name
+                        ),
+                    ),
+                };
+                self.event(run.id, level, code, Some(&key), &m).await;
+            }
         }
         // Indexes are read before copying so a later failure still reports them.
         if let ItemMapping::View { .. } = mapping {

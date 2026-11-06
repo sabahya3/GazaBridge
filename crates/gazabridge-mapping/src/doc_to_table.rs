@@ -95,7 +95,8 @@ pub struct TableMap {
 }
 
 impl TableMap {
-    fn column(&self, source: &ColumnSource) -> Option<usize> {
+    /// The column holding `source` (the key, parent, index or `_extra`).
+    pub fn column(&self, source: &ColumnSource) -> Option<usize> {
         self.columns.iter().position(|c| &c.source == source)
     }
 }
@@ -106,6 +107,68 @@ pub struct DocMapping {
     /// The root table first, then child tables.
     pub tables: Vec<TableMap>,
     pub warnings: Vec<String>,
+    /// What the sample said about fields, for rebuilding documents from the
+    /// tables (older stored mappings lack it).
+    #[serde(default)]
+    pub hints: ShapeHints,
+}
+
+/// Facts from the sample that SQL columns cannot hold. Paths are dotted,
+/// with `[]` for array items (`tours[].title`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShapeHints {
+    /// Fields present in every sampled document (or item): a NULL there
+    /// was a `null`, and an empty child table an empty array. Other fields
+    /// are left out when NULL, as they were missing more often than not.
+    #[serde(default)]
+    pub always: BTreeSet<String>,
+    /// Fields holding 32-bit integers (columns are 64-bit).
+    #[serde(default)]
+    pub int32: BTreeSet<String>,
+}
+
+/// How many objects could hold the field at `path` in the sample.
+fn parent_total(by_path: &BTreeMap<&str, &InferredField>, path: &str, sampled: u64) -> u64 {
+    let Some((parent, _)) = path.rsplit_once('.') else {
+        return sampled;
+    };
+    let objects = |kinds: &IndexMap<ValueKind, u64>| kinds.get(&ValueKind::Object).copied();
+    match parent.strip_suffix("[]") {
+        Some(array) => by_path
+            .get(array)
+            .and_then(|f| objects(&f.array_item_type_counts)),
+        None => by_path.get(parent).and_then(|f| objects(&f.type_counts)),
+    }
+    .unwrap_or(0)
+}
+
+fn shape_hints(structure: &InferredStructure) -> ShapeHints {
+    let by_path: BTreeMap<&str, &InferredField> = structure
+        .fields
+        .iter()
+        .map(|f| (f.path.as_str(), f))
+        .collect();
+    let mut hints = ShapeHints::default();
+    for f in &structure.fields {
+        if f.path.ends_with("[]") {
+            continue;
+        }
+        let total = parent_total(&by_path, &f.path, structure.sampled_documents);
+        if total > 0 && f.present_count >= total {
+            hints.always.insert(f.path.clone());
+        }
+        // Every integer seen there was 32-bit.
+        let ints = |counts: &IndexMap<ValueKind, u64>| counts.get(&ValueKind::Int).copied();
+        if f.int32_count > 0 && ints(&f.type_counts) == Some(f.int32_count) {
+            hints.int32.insert(f.path.clone());
+        }
+        if f.array_item_int32_count > 0
+            && ints(&f.array_item_type_counts) == Some(f.array_item_int32_count)
+        {
+            hints.int32.insert(format!("{}[]", f.path));
+        }
+    }
+    hints
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +269,29 @@ fn json_value(v: &Value) -> Value {
     match v {
         Value::Null | Value::Missing => Value::Null,
         other => Value::Json(ext_json(other)),
+    }
+}
+
+/// JSON for a value, from its BSON form when known: that form still tells
+/// 32-bit from 64-bit integers, which [`Value`] does not.
+fn json_of(v: &Value, node: Option<&Bson>) -> serde_json::Value {
+    match node {
+        Some(b) => crate::stored_json(b),
+        None => ext_json(v),
+    }
+}
+
+fn json_value_of(v: &Value, node: Option<&Bson>) -> Value {
+    match v {
+        Value::Null | Value::Missing => Value::Null,
+        other => Value::Json(json_of(other, node)),
+    }
+}
+
+fn field<'b>(node: Option<&'b Bson>, key: &str) -> Option<&'b Bson> {
+    match node? {
+        Bson::Document(d) => d.get(key),
+        _ => None,
     }
 }
 
@@ -526,6 +612,7 @@ pub fn plan(
         mode,
         tables: p.tables,
         warnings: p.warnings,
+        hints: shape_hints(structure),
     }
 }
 
@@ -658,6 +745,7 @@ impl Builder<'_> {
         &mut self,
         t: usize,
         entries: impl Iterator<Item = (&'v String, &'v Value)>,
+        node: Option<&Bson>,
         fields: &BTreeMap<String, Handling>,
         path: &str,
         row: &mut [Value],
@@ -672,9 +760,10 @@ impl Builder<'_> {
             } else {
                 format!("{path}.{k}")
             };
+            let own = field(node, k);
             let spill = |extra: &mut serde_json::Map<_, _>, v: &Value| {
                 if keep_extra && !matches!(v, Value::Missing) {
-                    extra.insert(here.clone(), ext_json(v));
+                    extra.insert(here.clone(), json_of(v, own));
                 }
             };
             match fields.get(k) {
@@ -682,7 +771,7 @@ impl Builder<'_> {
                     let c = &table.columns[*column];
                     row[*column] = match (&c.source, v) {
                         (_, Value::Null | Value::Missing) => Value::Null,
-                        (ColumnSource::Json, v) => json_value(v),
+                        (ColumnSource::Json, v) => json_value_of(v, own),
                         (_, v) if fits(v, &c.canonical_type) => column_value(v),
                         (_, v) => {
                             spill(extra, v);
@@ -691,14 +780,18 @@ impl Builder<'_> {
                     };
                 }
                 Some(Handling::Flatten { fields: sub }) => match v {
-                    Value::Object(o) => self.walk(t, o.iter(), sub, &here, row, extra, parent),
+                    Value::Object(o) => self.walk(t, o.iter(), own, sub, &here, row, extra, parent),
                     Value::Null | Value::Missing => {}
                     other => spill(extra, other),
                 },
                 Some(Handling::Child { table: ct }) => match v {
                     Value::Array(items) => {
                         for (i, item) in items.iter().enumerate() {
-                            self.child(*ct, item, i, parent);
+                            let item_node = match own {
+                                Some(Bson::Array(a)) => a.get(i),
+                                _ => None,
+                            };
+                            self.child(*ct, item, item_node, i, parent);
                         }
                     }
                     Value::Null | Value::Missing => {}
@@ -709,7 +802,7 @@ impl Builder<'_> {
         }
     }
 
-    fn child(&mut self, t: usize, item: &Value, index: usize, parent: &Value) {
+    fn child(&mut self, t: usize, item: &Value, node: Option<&Bson>, index: usize, parent: &Value) {
         let table = &self.m.tables[t];
         let mut row = self.row(t);
         let mut extra = serde_json::Map::new();
@@ -726,16 +819,16 @@ impl Builder<'_> {
                     Value::Null => Value::Null,
                     v if fits(v, &table.columns[c].canonical_type) => column_value(v),
                     v => {
-                        extra.insert("$item".into(), ext_json(v));
+                        extra.insert("$item".into(), json_of(v, node));
                         Value::Null
                     }
                 };
             }
             (None, Value::Object(o)) => {
-                self.walk(t, o.iter(), &fields, "", &mut row, &mut extra, parent)
+                self.walk(t, o.iter(), node, &fields, "", &mut row, &mut extra, parent)
             }
             (None, other) => {
-                extra.insert("$item".into(), ext_json(other));
+                extra.insert("$item".into(), json_of(other, node));
             }
         }
         self.finish(t, row, extra);
@@ -812,10 +905,26 @@ pub fn rows(m: &DocMapping, doc: &Record) -> Result<Rows, String> {
         .map(|(k, v)| (k.clone(), v.value.clone()))
         .collect();
     let fields = root.fields.clone();
-    b.walk(0, entries.iter(), &fields, "", &mut row, &mut extra, &key);
+    // The BSON form keeps 32-bit integers apart for JSON columns.
+    let bson = gazabridge_bson::record_to_document(doc)
+        .ok()
+        .map(Bson::Document);
+    b.walk(
+        0,
+        entries.iter(),
+        bson.as_ref(),
+        &fields,
+        "",
+        &mut row,
+        &mut extra,
+        &key,
+    );
     row[0] = key;
     if let Some(c) = root.column(&ColumnSource::Document) {
-        let d = gazabridge_bson::record_to_document(doc).map_err(|e| e.to_string())?;
+        let d = match bson {
+            Some(Bson::Document(d)) => d,
+            _ => gazabridge_bson::record_to_document(doc).map_err(|e| e.to_string())?,
+        };
         row[c] = Value::Json(crate::stored_json(&Bson::Document(d)));
     }
     b.finish(0, row, extra);
@@ -892,6 +1001,8 @@ mod tests {
                     type_counts: IndexMap::new(),
                     canonical_type: CanonicalType::Null,
                     array_item_type_counts: IndexMap::new(),
+                    int32_count: 0,
+                    array_item_int32_count: 0,
                 });
             f.present_count += 1;
             *f.type_counts.entry(v.kind()).or_default() += 1;

@@ -23,6 +23,8 @@ struct Stats {
     nulls: u64,
     kinds: BTreeMap<ValueKind, u64>,
     items: BTreeMap<ValueKind, u64>,
+    int32: u64,
+    item_int32: u64,
     canonical: Option<CanonicalType>,
 }
 
@@ -69,6 +71,9 @@ impl Inferrer {
             if kind == ValueKind::Null {
                 s.nulls += 1;
             }
+            if matches!(b, Bson::Int32(_)) {
+                s.int32 += 1;
+            }
             *s.kinds.entry(kind).or_default() += 1;
             let t = shallow_type(&value);
             s.canonical = Some(match s.canonical.take() {
@@ -85,7 +90,11 @@ impl Inferrer {
             Bson::Array(items) => {
                 for item in items {
                     let item_kind = from_bson(item).kind();
-                    *self.stats(path).items.entry(item_kind).or_default() += 1;
+                    let s = self.stats(path);
+                    *s.items.entry(item_kind).or_default() += 1;
+                    if matches!(item, Bson::Int32(_)) {
+                        s.item_int32 += 1;
+                    }
                     if let Bson::Document(d) = item {
                         for (k, v) in d {
                             self.visit(&format!("{path}[].{k}"), v, depth + 1);
@@ -130,6 +139,8 @@ impl Inferrer {
                     .collect::<IndexMap<_, _>>(),
                 canonical_type: s.canonical.clone().unwrap_or(CanonicalType::Null),
                 array_item_type_counts: s.items.iter().map(|(k, v)| (*k, *v)).collect(),
+                int32_count: s.int32,
+                array_item_int32_count: s.item_int32,
             });
         }
         InferredStructure {

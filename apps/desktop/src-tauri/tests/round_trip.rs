@@ -393,7 +393,16 @@ async fn data_travels_through_every_engine_and_comes_back_the_same() {
     .iter()
     .map(|r| text(r.get("t")))
     .collect();
-    assert_eq!(tables, ["people", "people_orders", "people_tags"]);
+    // With the mapping saved to rebuild the documents later.
+    assert_eq!(
+        tables,
+        [
+            "_gazabridge_shapes",
+            "people",
+            "people_orders",
+            "people_tags"
+        ]
+    );
 
     // ---- 2. PostgreSQL → MySQL → MariaDB → PostgreSQL ---------------------
     let hop = |s: ConnectionId,
