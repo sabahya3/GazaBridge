@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - name: macos-universal
-            os: macos-14
+            os: macos-latest
             targets: wasm32-unknown-unknown,aarch64-apple-darwin,x86_64-apple-darwin
             args: --target universal-apple-darwin --bundles app,dmg
           - name: windows-x86_64
