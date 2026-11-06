@@ -36,8 +36,8 @@ Sizes are relative, not calendar estimates:
 
 | Need | Why | Options |
 |---|---|---|
-| ✅ A PostgreSQL server | Run the PostgreSQL contract suite | Provided by Testcontainers on Colima |
-| ✅ Docker (Colima) | Testcontainers for PostgreSQL, MySQL, MariaDB, MongoDB | Installed 2026-10-24; run `colima start` after a reboot |
+| ✅ A PostgreSQL server | Run the PostgreSQL contract suite | Provided by Testcontainers |
+| ✅ Docker | Testcontainers for PostgreSQL, MySQL, MariaDB, MongoDB | Any Docker engine (Docker Desktop, Colima, …) |
 | ✅ `rustup` with `wasm32-unknown-unknown`, Trunk | Build and run the desktop UI | Installed 2026-10-25 (`brew install rustup trunk`); release app runs; Tauri CLI not installed (not required, see README) |
 
 Until these exist locally, network connectors can only be verified in CI.
@@ -93,7 +93,7 @@ the app, and prove each connector with the contract suite.
 ### Done so far
 - SQLite connector, contract suite passed, profile promoted to Beta.
 - PostgreSQL connector implemented; contract suite passed on 13, 14, 15, 16, 17 plus PostgreSQL-specific behaviour tests; profile promoted to Beta.
-- Local Docker (Colima) installed, so Testcontainers suites run on this machine.
+- Docker set up for development, so the Testcontainers suites run locally.
 
 ### Remaining tasks, in order
 | # | Task | Size |

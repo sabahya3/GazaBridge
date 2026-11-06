@@ -551,14 +551,14 @@ mod tests {
             unreachable!()
         };
         m.tls = true; // the form default must not override the URI
-        m.uri = Some("mongodb://ahmed:secret-pw@localhost:27017/dev".into());
+        m.uri = Some("mongodb://dev:secret-pw@localhost:27017/dev".into());
         let f = form(EngineForm::MongoDb(m), "mongodb.community");
         let (prepared, input) = prepare(&f, &PasswordChoice::Keep, None).unwrap();
         let EngineForm::MongoDb(m) = &prepared.engine else {
             unreachable!()
         };
         assert_eq!(m.uri.as_deref(), Some("mongodb://localhost:27017/dev"));
-        assert_eq!(m.username.as_deref(), Some("ahmed"));
+        assert_eq!(m.username.as_deref(), Some("dev"));
         assert_eq!(m.default_database.as_deref(), Some("dev"));
         assert!(!m.tls, "plain mongodb:// means no TLS");
         assert!(matches!(input, PasswordInput::Remember(ref p) if p.as_str() == "secret-pw"));

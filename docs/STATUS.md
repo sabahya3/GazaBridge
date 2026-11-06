@@ -40,13 +40,13 @@ servers** (MongoDB 6.0–8.0, PostgreSQL 13–17 in Docker via Testcontainers).
 | What | How |
 |---|---|
 | Toolchain | `export PATH=/opt/homebrew/opt/rustup/bin:$PATH` (rustup has the `wasm32-unknown-unknown` target; Homebrew Rust does not) |
-| Docker | Colima. After a reboot: `colima start` |
-| Integration tests | `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock cargo test --workspace -- --include-ignored` (Docker tests are `#[ignore]`d by default) |
+| Docker | Any Docker engine (Docker Desktop, Colima, …) |
+| Integration tests | `cargo test --workspace -- --include-ignored` (Docker tests are `#[ignore]`d by default). With Colima, first set `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` |
 | Lint | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets`, and for the UI `cd apps/desktop/ui && cargo clippy --target wasm32-unknown-unknown` |
 | Audit | `cargo audit` |
 | UI only | `cd apps/desktop/ui && trunk build --release` |
 | macOS app | `scripts/build-mac-app.sh` (low priority, half the cores; `dmg` argument adds a DMG) |
-| Signing | The script reads `.signing-identity` (repository root, **git-ignored**; the SHA-1 of your own code-signing certificate from `security find-identity -v -p codesigning`) or `GAZABRIDGE_SIGNING_IDENTITY`. Without it the app is signed ad hoc and macOS stops releasing saved keychain passwords after every rebuild. |
+| Signing | The script reads `.signing-identity` (repository root, **git-ignored**; the SHA-1 of your own code-signing certificate from `security find-identity -v -p codesigning`) or `GAZABRIDGE_SIGNING_IDENTITY`. Without it the app is signed ad hoc and macOS stops releasing saved keychain passwords after every rebuild |
 | UI checks without the backend | Copy `apps/desktop/ui/dist` to a scratch folder, inject a `mock.js` that defines `window.__TAURI__.core.invoke` returning stub data per command, serve it with `python3 -m http.server`, and drive it in a browser |
 | End-to-end through the app's wiring | `apps/desktop/src-tauri/tests/e2e.rs` uses `AppState::initialize` against real MongoDB and PostgreSQL containers |
 
