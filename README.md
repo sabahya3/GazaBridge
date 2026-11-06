@@ -22,6 +22,8 @@ MongoDB, PostgreSQL, MySQL / MariaDB and SQLite: explore, query, export, copy, c
 
 <p align="center"><b>English</b> · <a href="README.ar.md">العربية</a></p>
 
+<p align="center"><img src="docs/screenshots/04-migration-setup.png" alt="GazaBridge: converting MongoDB collections to PostgreSQL tables" width="900"></p>
+
 GazaBridge connects to MongoDB, PostgreSQL, MySQL / MariaDB and SQLite, lets you browse and edit the data, run queries, and export or import files. It can also copy whole databases, convert MongoDB collections into SQL tables and back, check that a copy is complete, take backups and keep a target in sync. Everything runs on your computer: there is no account, no server and no telemetry. The interface is in English and Arabic (right to left).
 
 > [!IMPORTANT]
@@ -79,6 +81,18 @@ From the [**Releases**](../../releases/latest) page:
 ### Backups and sync
 - Backups and restores in GazaBridge's own format (with a manifest and SHA-256) for MongoDB, PostgreSQL and MySQL, or with `mongodump` / `pg_dump`. A backup is taken automatically before a copy replaces existing data.
 - **Continuous sync** after a copy: MongoDB change streams, or polling a timestamp column for any source. Pause, resume and stop from the **Sync Jobs** page.
+
+## Screenshots
+
+The screenshots use made-up sample data in local test databases.
+
+| | |
+|---|---|
+| ![Connections](docs/screenshots/01-connections.png) **Connections, each tested with one click** | ![Explorer](docs/screenshots/02-explorer.png) **Browse and filter a MongoDB collection** |
+| ![Query Studio](docs/screenshots/03-query-studio.png) **Query Studio: SQL with results and history** | ![Copy and convert](docs/screenshots/04-migration-setup.png) **Copy MongoDB to PostgreSQL: choose how documents become rows** |
+| ![Plan](docs/screenshots/05-migration-plan.png) **The plan: target tables and a preview, before anything is written** | ![Deep check](docs/screenshots/06-migration-result.png) **Deep check: every row compared with checksums** |
+| ![Reports](docs/screenshots/07-reports.png) **Reports for every copy** | ![Backups](docs/screenshots/08-backups.png) **Backups with checksums, and restore** |
+| ![Arabic](docs/screenshots/09-arabic.png) **Arabic interface, right to left** | |
 
 ## Supported databases
 
@@ -174,7 +188,7 @@ cargo test --workspace -- --include-ignored  # also the tests that need Docker
 | `crates/gazabridge-secrets` | Keychain, session and environment secrets, and hiding them in logs |
 | `crates/gazabridge-storage` | The app's own SQLite database (connections, jobs, history) |
 | `crates/gazabridge-application` | The app's features, shared by the desktop app and a future CLI |
-| `docs/` | Status, roadmap, architecture, decisions (ADRs), threat model |
+| `docs/` | Status, roadmap, architecture, decisions (ADRs), threat model, screenshots |
 
 ## Security
 

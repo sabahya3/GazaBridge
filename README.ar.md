@@ -22,6 +22,8 @@ MongoDB و PostgreSQL و MySQL / MariaDB و SQLite: تصفّح، استعلام�
 
 <p align="center"><a href="README.md">English</a> · <b>العربية</b></p>
 
+<p align="center"><img src="docs/screenshots/04-migration-setup.png" alt="GazaBridge: تحويل كولكشنز MongoDB لجداول PostgreSQL" width="900"></p>
+
 GazaBridge بيتوصل بـ MongoDB و PostgreSQL و MySQL / MariaDB و SQLite. تقدر تتصفح البيانات وتعدّلها، وتكتب استعلامات، وتصدّر وتستورد ملفات. وكمان بينسخ قواعد بيانات كاملة، ويحوّل كولكشنز MongoDB لجداول SQL ويرجّعها تاني، ويتأكد إن النسخ كامل، ويعمل نسخ احتياطي، ويفضل يزامن الهدف مع المصدر. كله بيشتغل على جهازك: مفيش حساب، ولا سيرفر، ولا تتبّع (telemetry). الواجهة بالإنجليزي والعربي (من اليمين للشمال).
 
 > [!IMPORTANT]
@@ -79,6 +81,18 @@ GazaBridge بيتوصل بـ MongoDB و PostgreSQL و MySQL / MariaDB و SQLite.
 ### النسخ الاحتياطي والمزامنة
 - نسخ احتياطي واسترجاع بصيغة GazaBridge (فيها manifest و SHA-256) لـ MongoDB و PostgreSQL و MySQL، أو بـ `mongodump` / `pg_dump`. وبيتعمل نسخة احتياطية لوحده قبل ما نسخ يستبدل بيانات موجودة.
 - **مزامنة مستمرة** بعد النسخ: change streams في MongoDB، أو متابعة عمود وقت (timestamp) لأي مصدر. إيقاف وكمّل ووقف من صفحة **Sync Jobs**.
+
+## صور من البرنامج
+
+الصور فيها بيانات تجريبية متألّفة في قواعد بيانات تجربة على الجهاز.
+
+| | |
+|---|---|
+| ![الاتصالات](docs/screenshots/01-connections.png) **الاتصالات، وكل واحد بيتجرّب بضغطة** | ![المستكشف](docs/screenshots/02-explorer.png) **تصفّح كولكشن MongoDB وفلترته** |
+| ![استوديو الاستعلامات](docs/screenshots/03-query-studio.png) **استوديو الاستعلامات: SQL بالنتايج والتاريخ** | ![النسخ والتحويل](docs/screenshots/04-migration-setup.png) **نسخ MongoDB لـ PostgreSQL: تختار المستندات تبقى صفوف إزاي** |
+| ![الخطة](docs/screenshots/05-migration-plan.png) **الخطة: الجداول اللي هتتعمل ومعاينة، قبل ما أي حاجة تتكتب** | ![الفحص العميق](docs/screenshots/06-migration-result.png) **فحص عميق: كل صف بيتقارن بالـ checksums** |
+| ![التقارير](docs/screenshots/07-reports.png) **تقرير لكل عملية نسخ** | ![النسخ الاحتياطي](docs/screenshots/08-backups.png) **نسخ احتياطي بـ checksums، واسترجاع** |
+| ![الواجهة العربي](docs/screenshots/09-arabic.png) **الواجهة بالعربي، من اليمين للشمال** | |
 
 ## قواعد البيانات المدعومة
 
@@ -174,7 +188,7 @@ cargo test --workspace -- --include-ignored  # ومعاها اللي محتاج�
 | `crates/gazabridge-secrets` | الأسرار في Keychain والجلسة والبيئة، وإخفاؤها من اللوجز |
 | `crates/gazabridge-storage` | قاعدة بيانات SQLite بتاعة التطبيق (الاتصالات، المهام، التاريخ) |
 | `crates/gazabridge-application` | مميزات التطبيق، مشتركة بين تطبيق الديسكتوب و CLI بعدين |
-| `docs/` | الحالة، والخطة، والمعمارية، والقرارات (ADRs)، ونموذج التهديدات |
+| `docs/` | الحالة، والخطة، والمعمارية، والقرارات (ADRs)، ونموذج التهديدات، والصور |
 
 ## الأمان
 
