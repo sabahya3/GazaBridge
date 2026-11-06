@@ -82,6 +82,52 @@ GazaBridge بيتوصل بـ MongoDB و PostgreSQL و MySQL / MariaDB و SQLite.
 - نسخ احتياطي واسترجاع بصيغة GazaBridge (فيها manifest و SHA-256) لـ MongoDB و PostgreSQL و MySQL، أو بـ `mongodump` / `pg_dump`. وبيتعمل نسخة احتياطية لوحده قبل ما نسخ يستبدل بيانات موجودة.
 - **مزامنة مستمرة** بعد النسخ: change streams في MongoDB، أو متابعة عمود وقت (timestamp) لأي مصدر. إيقاف وكمّل ووقف من صفحة **Sync Jobs**.
 
+## اتجاهات النسخ
+
+من صفحة **Migrations** بتختار المصدر والهدف. كل اتجاه بيوريك خطة ومعاينة قبل ما أي حاجة تتكتب، وبعد النسخ تقدر تتأكد (العدد، أو كل مفتاح، أو مقارنة عميقة بالـ checksums).
+
+| من ↓ · إلى ← | MongoDB | PostgreSQL | MySQL / MariaDB |
+|---|:---:|:---:|:---:|
+| **MongoDB** | ✅ نسخ | ✅ تحويل (4 طرق) | ✅ تحويل (4 طرق) |
+| **PostgreSQL** | ✅ تحويل | ✅ نسخ جداول | ✅ نسخ جداول |
+| **MySQL / MariaDB** | ✅ تحويل | ✅ نسخ جداول | ✅ نسخ جداول |
+
+SQLite مدعوم في التصفح والاستعلامات والتصدير والاستيراد، بس لسه مش مصدر أو هدف للنسخ.
+
+### من MongoDB لـ MongoDB
+
+لنفس السيرفر أو سيرفر تاني، بنفس اسم قاعدة البيانات أو باسم جديد. الـ indexes والـ views وإعدادات الكولكشنز وقواعد الـ validation بتتنقل معاها.
+
+![من MongoDB لـ MongoDB](docs/screenshots/10-mongo-to-mongo.png)
+
+### من MongoDB لـ PostgreSQL أو MySQL: 4 طرق تحوّل بيها المستندات لصفوف
+
+| الطريقة | النتيجة | |
+|---|---|---|
+| **عمود لكل حقل** | `address.city` ← `address_city`. المصفوفات بتفضل JSON. الحقول اللي برّه الخطة بتروح `_extra` | [صورة](docs/screenshots/11-mode-columns.png) |
+| **أعمدة + جداول فرعية للمصفوفات** | زي الأولى، وكل مصفوفة بتبقى جدول لوحدها مربوط بـ `_parent_id` (مثلاً `orders` + `orders_items`) | [صورة](docs/screenshots/05-migration-plan.png) |
+| **عمود JSON واحد** | `_id` والمستند كله في `doc`. دقيق وبسيط | [صورة](docs/screenshots/12-mode-jsonb.png) |
+| **أعمدة بأنواعها + المستند كله** | الحقول البسيطة في المستوى الأول أعمدة لاستعلام سريع، والمستند كله في `_doc` | [صورة](docs/screenshots/13-mode-hybrid.png) |
+
+| | |
+|---|---|
+| ![عمود لكل حقل](docs/screenshots/11-mode-columns.png) **عمود لكل حقل** | ![جداول فرعية](docs/screenshots/05-migration-plan.png) **أعمدة + جداول فرعية للمصفوفات** |
+| ![عمود JSON واحد](docs/screenshots/12-mode-jsonb.png) **عمود JSON واحد** | ![أعمدة + المستند كله](docs/screenshots/13-mode-hybrid.png) **أعمدة بأنواعها + المستند كله** |
+
+### من PostgreSQL أو MySQL لـ MongoDB
+
+كولكشن لكل جدول، أو **دمج الجداول المرتبطة**: الصفوف اللي بتشاور على جدول تاني متختار بتدخل جوه مستنداته كمصفوفة. والجداول اللي GazaBridge عملها من MongoDB (أعمدة أو جداول فرعية) بترجع **زي المستندات الأصلية بالظبط**: objects جوه بعض، ومصفوفات، و ObjectIds.
+
+| | |
+|---|---|
+| ![دمج الجداول](docs/screenshots/14-sql-embed.png) **`suppliers` + `inventory` ← مستند لكل مورّد جواه مصفوفة `inventory`** | ![رجوع المستندات الأصلية](docs/screenshots/15-sql-rebuild.png) **`orders` + `orders_items` ← مستندات `orders` الأصلية بمصفوفة `items`** |
+
+### PostgreSQL ⇄ MySQL
+
+الجداول بتتنسخ بأنواع مناسبة (مثلاً `text` اللي في مفتاح بيبقى `varchar` في MySQL)، ومعاها الـ primary keys والـ indexes، في الاتجاهين أو جوه نفس النوع. الـ foreign keys لسه مش بتتنسخ.
+
+![من PostgreSQL لـ MySQL](docs/screenshots/16-pg-to-mysql.png)
+
 ## صور من البرنامج
 
 الصور فيها بيانات تجريبية متألّفة في قواعد بيانات تجربة على الجهاز.

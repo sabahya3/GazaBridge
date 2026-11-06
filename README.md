@@ -82,6 +82,52 @@ From the [**Releases**](../../releases/latest) page:
 - Backups and restores in GazaBridge's own format (with a manifest and SHA-256) for MongoDB, PostgreSQL and MySQL, or with `mongodump` / `pg_dump`. A backup is taken automatically before a copy replaces existing data.
 - **Continuous sync** after a copy: MongoDB change streams, or polling a timestamp column for any source. Pause, resume and stop from the **Sync Jobs** page.
 
+## Copy routes
+
+Pick a source and a target on the **Migrations** page. Every route shows a plan with a preview before anything is written, and can be checked afterwards (counts, every key, or a deep checksum compare).
+
+| From ↓ · To → | MongoDB | PostgreSQL | MySQL / MariaDB |
+|---|:---:|:---:|:---:|
+| **MongoDB** | ✅ copy | ✅ convert (4 ways) | ✅ convert (4 ways) |
+| **PostgreSQL** | ✅ convert | ✅ table copy | ✅ table copy |
+| **MySQL / MariaDB** | ✅ convert | ✅ table copy | ✅ table copy |
+
+SQLite is supported for browsing, queries, export and import, but not yet as a copy source or target.
+
+### MongoDB → MongoDB
+
+The same server or another one, into the same database name or a new one. Indexes, views, collection options and validation rules come along.
+
+![MongoDB to MongoDB](docs/screenshots/10-mongo-to-mongo.png)
+
+### MongoDB → PostgreSQL or MySQL: four ways to turn documents into rows
+
+| Way | What you get | |
+|---|---|---|
+| **Columns per field** | `address.city` → `address_city`. Arrays stay as JSON. Fields outside the plan go to `_extra` | [screenshot](docs/screenshots/11-mode-columns.png) |
+| **Columns + child tables for arrays** | Like the first, and each array becomes its own table linked by `_parent_id` (e.g. `orders` + `orders_items`) | [screenshot](docs/screenshots/05-migration-plan.png) |
+| **One JSON column** | `_id` plus the whole document in `doc`. Exact and simple | [screenshot](docs/screenshots/12-mode-jsonb.png) |
+| **Typed columns + whole document** | Top-level simple fields as columns for fast queries, plus the whole document in `_doc` | [screenshot](docs/screenshots/13-mode-hybrid.png) |
+
+| | |
+|---|---|
+| ![Columns per field](docs/screenshots/11-mode-columns.png) **Columns per field** | ![Child tables](docs/screenshots/05-migration-plan.png) **Columns + child tables for arrays** |
+| ![One JSON column](docs/screenshots/12-mode-jsonb.png) **One JSON column** | ![Typed columns + whole document](docs/screenshots/13-mode-hybrid.png) **Typed columns + whole document** |
+
+### PostgreSQL or MySQL → MongoDB
+
+One collection per table, or **embed related tables**: rows that reference another selected table go inside its documents as an array. Tables that GazaBridge made from MongoDB (columns or child tables) come back **as the original documents**: nested objects, arrays and ObjectIds.
+
+| | |
+|---|---|
+| ![Embed related tables](docs/screenshots/14-sql-embed.png) **`suppliers` + `inventory` → one document per supplier with an `inventory` array** | ![Original documents rebuilt](docs/screenshots/15-sql-rebuild.png) **`orders` + `orders_items` → the original `orders` documents with their `items` array** |
+
+### PostgreSQL ⇄ MySQL
+
+Tables are copied with matching types (for example `text` in a key becomes `varchar` in MySQL), primary keys and indexes, in either direction or within the same engine. Foreign keys are not copied yet.
+
+![PostgreSQL to MySQL](docs/screenshots/16-pg-to-mysql.png)
+
 ## Screenshots
 
 The screenshots use made-up sample data in local test databases.
