@@ -1107,3 +1107,30 @@ button.module:disabled { cursor: default; color: var(--muted); background: var(-
 .sync-job { display: grid; gap: 8px; }
 .sync-job p { margin: 0; }
 .sync-objects { margin: 0; padding-inline-start: 18px; }
+
+/* A button whose command is waiting for the backend (see ipc.rs). */
+button.is-busy {
+  pointer-events: none;
+  cursor: progress;
+  opacity: 0.8;
+}
+button.is-busy::before {
+  content: "";
+  display: inline-block;
+  inline-size: 0.9em;
+  block-size: 0.9em;
+  margin-inline-end: 0.45em;
+  vertical-align: -0.12em;
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  animation: gb-spin 0.7s linear infinite;
+}
+@keyframes gb-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  button.is-busy::before { animation-duration: 2s; }
+}
+.icon-btn.is-busy svg { display: none; }
+.icon-btn.is-busy::before { margin-inline-end: 0; }

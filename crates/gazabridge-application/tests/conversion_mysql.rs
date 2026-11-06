@@ -454,4 +454,61 @@ async fn mongodb_and_mysql_convert_both_ways() {
         let deep = validated(m, run).await;
         assert_eq!(deep.passed, Some(true), "{deep:#?}");
     }
+
+    // ---- an account limited to one database is told before copying -------
+    for stmt in [
+        // Test-only account in a throwaway container.
+        "CREATE USER 'limited'@'%' IDENTIFIED BY 'limited-test-pw'",
+        "GRANT ALL ON test.* TO 'limited'@'%'",
+    ] {
+        sql(&myc, stmt).await;
+    }
+    let limited = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "limited",
+                "mysql.mysql",
+                ConnectionSettings::MySql(MySqlSettings {
+                    host: my.get_host().await.unwrap().to_string(),
+                    port: my.get_host_port_ipv4(3306).await.unwrap(),
+                    database: Some("test".into()),
+                    username: "limited".into(),
+                    password: SecretRef::None,
+                    tls_mode: MySqlTlsMode::Disabled,
+                    charset: "utf8mb4".into(),
+                    connect_timeout_secs: 20,
+                    query_timeout_ms: 0,
+                    pool_size: 2,
+                }),
+            ),
+            PasswordInput::SessionOnly(zeroize::Zeroizing::new("limited-test-pw".into())),
+        )
+        .await
+        .unwrap()
+        .id;
+    let into = |db: &str| {
+        request(
+            mongo_id,
+            limited,
+            vec![CopyItem {
+                source: ObjectRef::collection("shop", "customers"),
+                target: ObjectRef::table(NamespacePath::database(db), "customers_again"),
+            }],
+        )
+    };
+    let refused = m.plan(&into("elsewhere")).await.unwrap();
+    assert!(
+        refused.blockers.iter().any(|b| b.contains("`elsewhere`")
+            && b.contains("can write to: test")
+            && b.contains("GRANT ALL ON `elsewhere`.* TO 'limited'@'%'")),
+        "{:?}",
+        refused.blockers
+    );
+    let allowed = m.plan(&into("test")).await.unwrap();
+    assert!(allowed.blockers.is_empty(), "{:?}", allowed.blockers);
+    // Root may create anything.
+    let mut as_root = into("elsewhere");
+    as_root.target = my_id;
+    assert!(m.plan(&as_root).await.unwrap().blockers.is_empty());
 }

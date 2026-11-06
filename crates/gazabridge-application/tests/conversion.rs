@@ -586,3 +586,201 @@ async fn mongodb_and_postgresql_convert_both_ways() {
         plan.blockers
     );
 }
+
+/// Array items whose own `_id`s repeat or are missing (as in data written
+/// by Mongoose), and a unique field that many documents lack, survive
+/// MongoDB → PostgreSQL (normalized) → MongoDB with child tables copied as
+/// their own collections. Found on the owner's data: rows were lost and the
+/// unique index failed.
+#[tokio::test]
+#[ignore = "needs Docker; run with cargo test -- --ignored"]
+async fn array_items_with_repeated_or_missing_ids_survive_the_way_back() {
+    let (rs, pg) = tokio::join!(common::mongo::start("8.0"), async {
+        Postgres::default()
+            .with_tag("16-alpine")
+            .start()
+            .await
+            .expect("postgres")
+    });
+    let mongo = mongodb::Client::with_uri_str(format!(
+        "mongodb://{}:{}/?directConnection=true",
+        rs.host, rs.port
+    ))
+    .await
+    .unwrap();
+    let app = mongo.database("app");
+    let shared = ObjectId::new();
+    let tasks: Vec<Document> = (0..40)
+        .map(|i| {
+            let mut d = doc! {
+                "_id": ObjectId::new(),
+                "title": format!("task {i}"),
+                "tours": (0..3).map(|k| {
+                    let mut t = doc! { "title": format!("tour {i}.{k}") };
+                    match (i, k) {
+                        // The same item copied into two tasks.
+                        (0 | 1, 0) => { t.insert("_id", shared); }
+                        // Items without an id.
+                        (_, 2) => {}
+                        _ => { t.insert("_id", ObjectId::new()); }
+                    }
+                    Bson::Document(t)
+                }).collect::<Vec<_>>(),
+            };
+            if i % 4 == 0 {
+                d.insert("serial", format!("S-{i}"));
+            }
+            d
+        })
+        .collect();
+    app.collection::<Document>("tasks")
+        .insert_many(tasks)
+        .await
+        .unwrap();
+    app.run_command(doc! { "createIndexes": "tasks", "indexes": [
+        { "key": { "serial": 1 }, "name": "serial_1", "unique": true, "sparse": true },
+    ]})
+    .await
+    .unwrap();
+
+    let e = env().await;
+    let m = &e.migrations;
+    let mongo_id = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "mongo",
+                "mongodb.community",
+                ConnectionSettings::MongoDb(MongoSettings {
+                    uri: None,
+                    hosts: vec![HostPort {
+                        host: rs.host.clone(),
+                        port: rs.port,
+                    }],
+                    replica_set: None,
+                    auth_source: None,
+                    username: None,
+                    password: SecretRef::None,
+                    default_database: None,
+                    tls: false,
+                    read_preference: ReadPreference::Primary,
+                    direct_connection: true,
+                    server_selection_timeout_ms: 10_000,
+                    connect_timeout_ms: 10_000,
+                }),
+            ),
+            PasswordInput::None,
+        )
+        .await
+        .unwrap()
+        .id;
+    let pg_id = e
+        .svc
+        .create(
+            ConnectionProfile::new(
+                "pg",
+                "postgres.postgresql",
+                ConnectionSettings::Postgres(PostgresSettings {
+                    host: pg.get_host().await.unwrap().to_string(),
+                    port: pg.get_host_port_ipv4(5432).await.unwrap(),
+                    database: "postgres".into(),
+                    username: "postgres".into(),
+                    password: SecretRef::None,
+                    ssl_mode: PgSslMode::Disable,
+                    search_path: None,
+                    application_name: "GazaBridge".into(),
+                    connect_timeout_secs: 10,
+                    statement_timeout_ms: 0,
+                    pool_size: 2,
+                }),
+            ),
+            // The image's documented default password.
+            PasswordInput::SessionOnly(Zeroizing::new("postgres".into())),
+        )
+        .await
+        .unwrap()
+        .id;
+
+    let mut to_pg = request(
+        mongo_id,
+        pg_id,
+        vec![CopyItem {
+            source: ObjectRef::collection("app", "tasks"),
+            target: public("tasks"),
+        }],
+    );
+    to_pg.doc_mode = DocMode::Normalize;
+    let v = finish(m, m.start(to_pg, false).await.unwrap()).await;
+    assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+
+    // Back, each table to its own collection, as the owner did.
+    let back = request(
+        pg_id,
+        mongo_id,
+        vec![
+            CopyItem {
+                source: public("tasks"),
+                target: ObjectRef::collection("back", "tasks"),
+            },
+            CopyItem {
+                source: public("tasks_tours"),
+                target: ObjectRef::collection("back", "tasks_tours"),
+            },
+        ],
+    );
+    let plan = m.plan(&back).await.unwrap();
+    assert!(
+        plan.items[1]
+            .warnings
+            .iter()
+            .any(|w| w.contains("_id_column")),
+        "{:?}",
+        plan.items[1].warnings
+    );
+    let run = m.start(back, false).await.unwrap();
+    let v = finish(m, run).await;
+    assert_eq!(v.status, JobStatus::Completed, "{v:#?}");
+    assert!(
+        !v.events.iter().any(|ev| ev.level != "info"),
+        "{:#?}",
+        v.events
+    );
+    assert_eq!(v.streams[0].stats.inserted, 40);
+    assert_eq!(v.streams[1].stats.inserted, 120, "no item is lost");
+    m.validate(run, Level::Deep).await.unwrap();
+    let report = validated(m, run).await;
+    assert_eq!(report.passed, Some(true), "{report:#?}");
+
+    let tours = all(&mongo, "back", "tasks_tours").await;
+    assert_eq!(tours.len(), 120);
+    let with_shared = tours
+        .iter()
+        .filter(|t| t.get_object_id("_id_column").ok() == Some(shared))
+        .count();
+    assert_eq!(with_shared, 2);
+    assert_eq!(
+        tours
+            .iter()
+            .filter(|t| matches!(t.get("_id_column"), Some(Bson::Null) | None))
+            .count(),
+        40
+    );
+    let key = tours[0].get_document("_id").unwrap();
+    assert!(key.get_object_id("_parent_id").is_ok() && key.get("_index").is_some());
+
+    // The unique index is back and still lets documents go without a serial.
+    let tasks = mongo.database("back").collection::<Document>("tasks");
+    let names: Vec<String> = tasks.list_index_names().await.unwrap();
+    assert!(names.iter().any(|n| n.contains("serial")), "{names:?}");
+    tasks
+        .insert_many([
+            doc! { "title": "no serial" },
+            doc! { "title": "none either" },
+        ])
+        .await
+        .unwrap();
+    let dup = tasks
+        .insert_one(doc! { "title": "dup", "serial": "S-0" })
+        .await;
+    assert!(dup.is_err(), "the index is still unique");
+}

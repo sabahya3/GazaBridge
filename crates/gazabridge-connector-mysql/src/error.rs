@@ -27,7 +27,14 @@ pub fn kind_for_code(code: u16) -> ErrorKind {
 pub fn map_mysql(e: mysql_async::Error) -> ConnectorError {
     match e {
         mysql_async::Error::Server(s) => {
-            ConnectorError::from_driver(kind_for_code(s.code), s.message, Some(s.code.to_string()))
+            let message = match s.code {
+                1044 | 1142 => format!(
+                    "{} (choose a target database this MySQL user can write to, or have an administrator grant access with GRANT ALL ON `database`.* TO the user)",
+                    s.message
+                ),
+                _ => s.message,
+            };
+            ConnectorError::from_driver(kind_for_code(s.code), message, Some(s.code.to_string()))
         }
         mysql_async::Error::Io(io) => {
             ConnectorError::from_driver(ErrorKind::Connection, io.to_string(), None)

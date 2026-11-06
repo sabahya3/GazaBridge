@@ -415,6 +415,126 @@ fn family(conn: &dyn Connection) -> EngineFamily {
     conn.manifest().family
 }
 
+/// The MySQL account's own `'user'@'host'`, as the privilege tables name it.
+const MYSQL_GRANTEE: &str = "CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''')";
+
+fn as_count(v: &gazabridge_domain::Value) -> Option<i64> {
+    use gazabridge_domain::Value;
+    match v {
+        Value::Int(n) => Some(*n),
+        Value::UInt(n) => i64::try_from(*n).ok(),
+        Value::Decimal(d) => d.to_plain_string().split('.').next()?.parse().ok(),
+        Value::String(t) => t.parse().ok(),
+        _ => None,
+    }
+}
+
+fn mysql_query(
+    text: String,
+    params: Vec<gazabridge_domain::Value>,
+) -> gazabridge_plugin_sdk::query::QueryRequest {
+    gazabridge_plugin_sdk::query::QueryRequest {
+        language: gazabridge_plugin_sdk::capability::QueryLanguage::MySql,
+        text,
+        params,
+        max_rows: 1_000,
+        timeout: None,
+        database: None,
+        collection: None,
+    }
+}
+
+/// Refuses a copy into MySQL databases the account may not create tables
+/// in, naming the databases it can use, before anything is written. Only
+/// privileges granted directly are visible here; when none at all are (for
+/// example with roles), nothing is decided.
+async fn check_mysql_access(
+    target: &dyn Connection,
+    req: &MigrationRequest,
+    blockers: &mut Vec<String>,
+) {
+    use gazabridge_domain::Value;
+    let databases: BTreeSet<String> = req
+        .items
+        .iter()
+        .filter_map(|i| i.target.namespace.database.clone())
+        .collect();
+    let Ok(seen) = target
+        .execute(
+            mysql_query(
+                format!(
+                    "SELECT CURRENT_USER(), \
+                       (SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = {MYSQL_GRANTEE}) + \
+                       (SELECT COUNT(*) FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE = {MYSQL_GRANTEE}), \
+                       (SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE GRANTEE = {MYSQL_GRANTEE} AND PRIVILEGE_TYPE = 'CREATE'), \
+                       (SELECT GROUP_CONCAT(DISTINCT TABLE_SCHEMA ORDER BY TABLE_SCHEMA SEPARATOR ', ') FROM information_schema.SCHEMA_PRIVILEGES \
+                          WHERE GRANTEE = {MYSQL_GRANTEE} AND PRIVILEGE_TYPE = 'CREATE')"
+                ),
+                Vec::new(),
+            ),
+            CancellationToken::new(),
+        )
+        .await
+    else {
+        return;
+    };
+    let Some(row) = seen.rows.first() else {
+        return;
+    };
+    let cell = |i: usize| row.fields.get_index(i).map(|(_, v)| v.value.clone());
+    let Some(Value::String(user)) = cell(0) else {
+        return;
+    };
+    let any = cell(1).as_ref().and_then(as_count).unwrap_or(0);
+    let global_create = cell(2).as_ref().and_then(as_count).unwrap_or(0);
+    if any == 0 || global_create > 0 {
+        return;
+    }
+    let usable = match cell(3) {
+        Some(Value::String(list)) => list.replace("\\_", "_").replace("\\%", "%"),
+        _ => String::new(),
+    };
+    for db in databases {
+        let allowed = target
+            .execute(
+                mysql_query(
+                    format!(
+                        "SELECT COUNT(*) FROM information_schema.SCHEMA_PRIVILEGES \
+                         WHERE GRANTEE = {MYSQL_GRANTEE} AND PRIVILEGE_TYPE = 'CREATE' AND ? LIKE TABLE_SCHEMA"
+                    ),
+                    vec![Value::String(db.clone())],
+                ),
+                CancellationToken::new(),
+            )
+            .await
+            .ok()
+            .and_then(|r| {
+                r.rows
+                    .first()
+                    .and_then(|r| r.fields.get_index(0).and_then(|(_, v)| as_count(&v.value)))
+            });
+        if allowed == Some(0) {
+            let choose = if usable.is_empty() {
+                String::new()
+            } else {
+                format!(" Databases it can write to: {usable}.")
+            };
+            blockers.push(format!(
+                "the MySQL user `{user}` may not create tables in database `{db}`.{choose} Choose one of those as the target database, or have an administrator run: GRANT ALL ON `{db}`.* TO {}",
+                grantee_text(&user)
+            ));
+        }
+    }
+}
+
+/// `app@%` → `'app'@'%'`.
+fn grantee_text(user: &str) -> String {
+    match user.rsplit_once('@') {
+        Some((u, h)) => format!("'{u}'@'{h}'"),
+        None => format!("'{user}'"),
+    }
+}
+
 fn view_for(item: &CopyItem) -> StreamView {
     StreamView {
         source: item.source.clone(),
@@ -604,6 +724,9 @@ impl MigrationService {
             plan.items = planned.items;
             plan.blockers.extend(planned.blockers);
             plan.destructive = planned.destructive;
+            if tf == EngineFamily::MySql {
+                check_mysql_access(target.as_ref(), req, &mut plan.blockers).await;
+            }
             return Ok((plan, planned.mappings));
         }
         let mut mappings = Vec::new();

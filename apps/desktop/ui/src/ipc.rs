@@ -9,12 +9,52 @@ use wasm_bindgen::prelude::*;
 // is missing, so a missing backend is an ordinary error, never an exception
 // that unwinds through the reactive runtime.
 #[wasm_bindgen(inline_js = r#"
+// The button the user just pressed: a command it starts marks it busy
+// (spinner, no second click) until the backend answers.
+let lastPress = null;
+document.addEventListener("click", (e) => {
+    const b = e.target && e.target.closest ? e.target.closest("button") : null;
+    lastPress = b ? { button: b, at: performance.now() } : null;
+}, true);
+
+function markBusy() {
+    const p = lastPress;
+    if (!p || performance.now() - p.at > 400 || !p.button.isConnected) {
+        return () => {};
+    }
+    const b = p.button;
+    const n = (Number(b.dataset.busy) || 0) + 1;
+    b.dataset.busy = String(n);
+    if (n === 1) {
+        b.dataset.ariaBusyBefore = b.getAttribute("aria-busy") || "";
+        b.classList.add("is-busy");
+        b.setAttribute("aria-busy", "true");
+    }
+    return () => {
+        const left = (Number(b.dataset.busy) || 1) - 1;
+        if (left > 0) {
+            b.dataset.busy = String(left);
+            return;
+        }
+        delete b.dataset.busy;
+        b.classList.remove("is-busy");
+        const before = b.dataset.ariaBusyBefore;
+        delete b.dataset.ariaBusyBefore;
+        if (before) { b.setAttribute("aria-busy", before); } else { b.removeAttribute("aria-busy"); }
+    };
+}
+
 export async function gazabridge_invoke(cmd, args) {
     const core = window.__TAURI__ && window.__TAURI__.core;
     if (!core || typeof core.invoke !== "function") {
         throw { code: "ipc", message: "backend unavailable" };
     }
-    return await core.invoke(cmd, args);
+    const done = markBusy();
+    try {
+        return await core.invoke(cmd, args);
+    } finally {
+        done();
+    }
 }
 "#)]
 extern "C" {

@@ -22,6 +22,29 @@ use serde::{Deserialize, Serialize};
 use crate::doc_to_table::{DOC, HYBRID_DOC, ID};
 use crate::from_ext_json;
 
+/// Field that keeps an `_id` column which is not the table's primary key
+/// (for example the subdocument ids of a child table made from an array):
+/// the key becomes `_id`, so the column needs another name.
+pub const ID_COLUMN: &str = "_id_column";
+
+/// BSON types a unique index counts. Leaving out null keeps PostgreSQL and
+/// MySQL semantics, where any number of rows may be NULL in a unique column.
+const NON_NULL_TYPES: [&str; 13] = [
+    "double",
+    "string",
+    "object",
+    "array",
+    "binData",
+    "objectId",
+    "bool",
+    "date",
+    "regex",
+    "int",
+    "timestamp",
+    "long",
+    "decimal",
+];
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TableMode {
@@ -143,6 +166,17 @@ pub fn plan(schema: &ObjectSchema, target: ObjectRef) -> Result<TableDocMapping,
         None
     };
     let mut warnings = Vec::new();
+    if stored_document.is_none() && names.contains(ID) && schema.primary_key != [ID] {
+        warnings.push(format!(
+            "`_id` is not the primary key here, so it may repeat or be empty: documents get the key ({}) as `_id` and keep the column as `{ID_COLUMN}`. To rebuild arrays made from this table, copy its parent with Embed",
+            schema
+                .primary_key
+                .iter()
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     if stored_document.is_some() {
         warnings.push(
             "the table holds whole documents (JSONB/hybrid copy): they are restored as stored"
@@ -200,29 +234,52 @@ pub fn embed(parent: &ObjectSchema, child: &ObjectSchema) -> Option<EmbedMap> {
     })
 }
 
+/// The document field a column becomes.
+fn field_of(m: &TableDocMapping, column: &str) -> String {
+    match m.key.as_slice() {
+        [k] if k == column => ID.to_owned(),
+        _ if column == ID => ID_COLUMN.to_owned(),
+        _ => column.to_owned(),
+    }
+}
+
 /// MongoDB indexes for the table's plain indexes (the primary key is `_id`).
+/// A unique index over columns that may be NULL skips null values, as in
+/// SQL; otherwise MongoDB would allow only one document without a value.
 pub fn indexes(schema: &ObjectSchema, m: &TableDocMapping) -> Vec<IndexDefinition> {
-    let single_key = (m.key.len() == 1).then(|| m.key[0].clone());
     schema
         .indexes
         .iter()
         .filter(|i| !i.primary && i.predicate.is_none() && !i.columns.is_empty())
         .filter(|i| i.columns.iter().all(|c| schema.column(c).is_some()))
-        .map(|i| IndexDefinition {
-            name: i.name.clone(),
-            columns: i
+        .map(|i| {
+            let fields: Vec<String> = i.columns.iter().map(|c| field_of(m, c)).collect();
+            let nullable: Vec<&String> = i
                 .columns
                 .iter()
-                .map(|c| {
-                    if Some(c) == single_key.as_ref() {
-                        ID.to_owned()
-                    } else {
-                        c.clone()
-                    }
+                .zip(&fields)
+                .filter(|(c, _)| schema.column(c).is_some_and(|col| col.nullable))
+                .map(|(_, f)| f)
+                .collect();
+            let native = (i.unique && !nullable.is_empty()).then(|| {
+                let key: serde_json::Map<String, serde_json::Value> =
+                    fields.iter().map(|f| (f.clone(), 1.into())).collect();
+                let filter: serde_json::Map<String, serde_json::Value> = nullable
+                    .iter()
+                    .map(|f| ((*f).clone(), serde_json::json!({ "$type": NON_NULL_TYPES })))
+                    .collect();
+                serde_json::json!({
+                    "key": key,
+                    "unique": true,
+                    "partialFilterExpression": filter,
                 })
-                .collect(),
-            unique: i.unique,
-            native: None,
+            });
+            IndexDefinition {
+                name: i.name.clone(),
+                columns: fields,
+                unique: i.unique,
+                native,
+            }
         })
         .filter(|i| i.columns != [ID])
         .collect()
@@ -271,8 +328,10 @@ pub fn document(m: &TableDocMapping, row: &Record, children: &[Vec<Record>]) -> 
         if m.key.contains(name) {
             continue;
         }
+        // An `_id` column that is not the key must not replace the key.
+        let field = if name == ID { ID_COLUMN } else { name };
         doc.fields.insert(
-            name.clone(),
+            field.to_owned(),
             with_int32(
                 m.columns.value(name, &v.value),
                 m.columns.int32.contains(name),
@@ -329,7 +388,7 @@ pub fn group_children(e: &EmbedMap, rows: Vec<Record>) -> BTreeMap<String, Vec<R
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use gazabridge_plugin_sdk::schema::{ColumnInfo, ConstraintInfo, NamespacePath};
+    use gazabridge_plugin_sdk::schema::{ColumnInfo, ConstraintInfo, IndexInfo, NamespacePath};
 
     use super::*;
 
@@ -507,5 +566,102 @@ mod tests {
             d.get("n"),
             Some(gazabridge_bson::bson::Bson::Decimal128(_))
         ));
+    }
+
+    #[test]
+    fn a_child_table_keeps_its_key_as_id_and_its_id_column_aside() {
+        let oid = |name: &str| {
+            col(
+                name,
+                "character(24)",
+                CanonicalType::String {
+                    max_chars: Some(24),
+                },
+            )
+        };
+        let mut reviews = table(
+            "reviews",
+            vec![
+                oid("_parent_id"),
+                col("_index", "integer", CanonicalType::Int { bits: 32 }),
+                oid("_id"),
+                col("serial", "text", CanonicalType::TEXT),
+            ],
+            &["_parent_id", "_index"],
+            vec![],
+        );
+        reviews.indexes = vec![
+            IndexInfo {
+                name: "by_serial".into(),
+                columns: vec!["serial".into()],
+                unique: true,
+                primary: false,
+                method: None,
+                predicate: None,
+                definition: None,
+                native: None,
+            },
+            IndexInfo {
+                name: "by_sub_id".into(),
+                columns: vec!["_id".into()],
+                unique: false,
+                primary: false,
+                method: None,
+                predicate: None,
+                definition: None,
+                native: None,
+            },
+        ];
+        let m = plan(&reviews, ObjectRef::collection("db", "reviews")).unwrap();
+        assert!(
+            m.warnings.iter().any(|w| w.contains(ID_COLUMN)),
+            "{:?}",
+            m.warnings
+        );
+        let parent = "65134b87d147eab2a5d15d10";
+        // Two array items sharing a subdocument id, and one without.
+        let rows = [
+            (0, Value::String("65134b87d147eab2a5d15d11".into())),
+            (1, Value::String("65134b87d147eab2a5d15d11".into())),
+            (2, Value::Null),
+        ];
+        let ids: Vec<Value> = rows
+            .iter()
+            .map(|(i, sub)| {
+                let d = document(
+                    &m,
+                    &Record::from_pairs([
+                        ("_parent_id", Value::String(parent.into())),
+                        ("_index", Value::Int(*i)),
+                        ("_id", sub.clone()),
+                        ("serial", Value::Null),
+                    ]),
+                    &[],
+                );
+                assert_eq!(d.get(ID_COLUMN), &m.columns.value("_id", sub));
+                d.get(ID).clone()
+            })
+            .collect();
+        // Every row keeps its own identity.
+        assert_eq!(ids.iter().map(match_key).collect::<BTreeSet<_>>().len(), 3);
+        let Value::Object(first) = &ids[0] else {
+            panic!("{:?}", ids[0])
+        };
+        assert!(matches!(first.get("_parent_id"), Some(Value::ObjectId(_))));
+        assert_eq!(first.get("_index"), Some(&Value::Int(0)));
+
+        let idx = indexes(&reviews, &m);
+        assert_eq!(idx[0].columns, ["serial"]);
+        let native = idx[0].native.as_ref().unwrap();
+        assert_eq!(native["unique"], true);
+        assert!(
+            native["partialFilterExpression"]["serial"]["$type"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|t| t != "null")
+        );
+        assert_eq!(idx[1].columns, [ID_COLUMN]);
+        assert!(idx[1].native.is_none());
     }
 }
