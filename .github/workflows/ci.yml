@@ -51,10 +51,15 @@ jobs:
 
   integration:
     name: Connector integration (Testcontainers)
-    runs-on: ubuntu-24.04
+    # MongoDB 8.0 refuses to start on Linux 6.19 and newer (SERVER-125742,
+    # SERVER-136848), and the ubuntu-24.04 runners now have such a kernel.
+    # Ubuntu 22.04 runners still have an older one.
+    runs-on: ubuntu-22.04
     needs: lint-test
     steps:
       - uses: actions/checkout@v4
+      - name: Kernel version
+        run: uname -r
       - uses: dtolnay/rust-toolchain@stable
       - name: Linux system libraries
         run: |
